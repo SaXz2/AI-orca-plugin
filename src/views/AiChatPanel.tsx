@@ -57,7 +57,9 @@ function safeText(block: any): string {
   if (typeof block.text === "string" && block.text.trim()) return block.text.trim();
   if (Array.isArray(block.content)) {
     return block.content
-      .map((f: any) => (f?.t === "text" && typeof f.v === "string" ? f.v : ""))
+      .map((f: any) =>
+        (f?.t === "text" || f?.t === "t") && typeof f.v === "string" ? f.v : "",
+      )
       .join("")
       .trim();
   }
@@ -164,20 +166,27 @@ export default function AiChatPanel({ panelId }: PanelProps) {
           return `No notes found with tag "${tagName}".`;
         }
 
+        // Optimized format: remove redundant fields (tags, date) and simplify output
         const summary = results.map((r, i) => {
-          const dateStr = r.modified ? new Date(r.modified).toLocaleDateString() : "";
-          return `${i + 1}. ${r.title}\n   Content: ${r.content}\n   Modified: ${dateStr}\n   Tags: ${r.tags?.join(", ") || "none"}`;
+          const body = r.fullContent ?? r.content;
+          return `${i + 1}.\n${body}`;
         }).join("\n\n");
 
-        return `Found ${results.length} note(s) with tag "${tagName}":\n\n${summary}`;
+        return `Found ${results.length} note(s) with tag "${tagName}":\n${summary}`;
       } else if (toolName === "searchBlocksByText") {
-        // Support multiple parameter names: searchText, text, query
-        const searchText = args.searchText || args.text || args.query;
+        // Support multiple parameter names: searchText, text, query, queries
+        let searchText = args.searchText || args.text || args.query || args.queries;
+
+        // Handle array parameters (AI sometimes sends ["text"] instead of "text")
+        if (Array.isArray(searchText)) {
+          searchText = searchText[0];
+        }
+
         const maxResults = args.maxResults || 50;
         console.log("[executeTool] searchBlocksByText params:", { searchText, maxResults });
 
-        if (!searchText) {
-          console.error("[executeTool] Missing searchText parameter, args:", args);
+        if (!searchText || typeof searchText !== "string") {
+          console.error("[executeTool] Missing or invalid searchText parameter, args:", args);
           return "Error: Missing search text parameter";
         }
 
@@ -188,12 +197,14 @@ export default function AiChatPanel({ panelId }: PanelProps) {
           return `No notes found containing "${searchText}".`;
         }
 
+        // Optimized format: remove redundant fields (tags, date) and simplify output
         const summary = results.map((r, i) => {
-          const dateStr = r.modified ? new Date(r.modified).toLocaleDateString() : "";
-          return `${i + 1}. ${r.title}\n   Content: ${r.content}\n   Modified: ${dateStr}\n   Tags: ${r.tags?.join(", ") || "none"}`;
+          // Use fullContent (includes children) or fallback to content
+          const body = r.fullContent ?? r.content;
+          return `${i + 1}.\n${body}`;
         }).join("\n\n");
 
-        return `Found ${results.length} note(s) containing "${searchText}":\n\n${summary}`;
+        return `Found ${results.length} note(s) containing "${searchText}":\n${summary}`;
       } else {
         console.error("[executeTool] Unknown tool:", toolName);
         return `Unknown tool: ${toolName}`;

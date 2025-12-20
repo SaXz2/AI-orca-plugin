@@ -40,6 +40,7 @@ The build outputs to `dist/main.js` as a single-file plugin.
 | OpenAI Client | `src/services/openai-client.ts` | OpenAI-compatible chat completions (SSE streaming) |
 | Settings | `src/settings/ai-chat-settings.ts` | OpenAI-compatible API settings schema |
 | Context Menu | `src/ui/ai-chat-context-menu.ts` | Block/tag right-click menu entries |
+| **Search Service** | `src/services/search-service.ts` | AI tool functions: searchBlocksByTag, searchBlocksByText (with child blocks) |
 
 ### State Management
 
@@ -106,7 +107,15 @@ const blocks = await orca.invokeBackend("get-blocks", blockIds);
 
 // Get blocks with specific tags
 const taggedBlocks = await orca.invokeBackend("get-blocks-with-tags", [tagName]);
+
+// Search blocks by text (returns [aliasMatches, contentMatches])
+const result = await orca.invokeBackend("search-blocks-by-text", searchText);
 ```
+
+**Important**: Backend APIs return different data formats. Always use adapter functions:
+- `unwrapBlocks()` for search results (handles `[aliasMatches, contentMatches]` tuples)
+- `unwrapBackendResult<T>()` for wrapped responses (handles `[status, data]` pairs)
+- See `TROUBLESHOOTING.md` for common pitfalls and solutions
 
 ### Panel Tree Traversal
 Use `findViewPanelById` from `src/utils/panel-tree.ts` to locate panels in the nested panel structure.
