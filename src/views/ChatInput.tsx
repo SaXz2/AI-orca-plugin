@@ -88,8 +88,8 @@ export default function ChatInput({
         padding: "16px",
         borderTop: "1px solid var(--orca-color-border)",
         background: "var(--orca-color-bg-1)",
-        // Glassmorphism effect
-        backdropFilter: "blur(10px)",
+        // Glassmorphism effect removed to fix fixed-position child (ContextPicker)
+        // backdropFilter: "blur(10px)", 
         position: "relative",
         zIndex: 20,
       },
@@ -104,7 +104,7 @@ export default function ChatInput({
       onClose: handlePickerClose,
       currentPageId,
       currentPageTitle,
-      anchorRef: addContextBtnRef,
+      anchorRef: addContextBtnRef as any,
     }),
 
     // Input Wrapper
