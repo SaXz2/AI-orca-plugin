@@ -2,36 +2,30 @@ import type { PanelProps } from "../orca.d.ts";
 
 import { openAIChatCompletionsStream, type OpenAIChatMessage, type OpenAITool } from "../services/openai-client";
 import { buildContextForSend } from "../services/context-builder";
-import { contextStore } from "../store/context-store";
+import { contextStore, type ContextRef } from "../store/context-store";
 import { closeAiChatPanel, getAiChatPluginName } from "../ui/ai-chat-ui";
 import { uiStore } from "../store/ui-store";
 import { findViewPanelById } from "../utils/panel-tree";
 import ChatInput from "./ChatInput";
 import MarkdownMessage from "../components/MarkdownMessage";
+import ChatHistoryMenu from "./ChatHistoryMenu";
 import {
   getAiChatSettings,
   resolveAiModel,
   validateAiChatSettings,
 } from "../settings/ai-chat-settings";
 import { searchBlocksByTag, searchBlocksByText, queryBlocksByTag } from "../services/search-service";
-
-type Message = {
-  id: string;
-  role: "user" | "assistant" | "tool";
-  content: string;
-  createdAt: number;
-  localOnly?: boolean;
-  tool_calls?: Array<{
-    id: string;
-    type: "function";
-    function: {
-      name: string;
-      arguments: string;
-    };
-  }>;
-  tool_call_id?: string;
-  name?: string;
-};
+import {
+  loadSessions,
+  saveSession,
+  deleteSession,
+  clearAllSessions,
+  createNewSession,
+  shouldAutoSave,
+  type SavedSession,
+  type Message,
+} from "../services/session-service";
+import { sessionStore, updateSessionStore, markSessionSaved, clearSessionStore } from "../store/session-store";
 
 const React = window.React as unknown as {
   createElement: typeof window.React.createElement;
@@ -41,8 +35,9 @@ const React = window.React as unknown as {
   useState: <T>(
     initial: T | (() => T),
   ) => [T, (next: T | ((prev: T) => T)) => void];
+  useCallback: <T extends (...args: any[]) => any>(fn: T, deps: any[]) => T;
 };
-const { createElement, useEffect, useMemo, useRef, useState } = React;
+const { createElement, useEffect, useMemo, useRef, useState, useCallback } = React;
 
 const { useSnapshot } = (window as any).Valtio as {
   useSnapshot: <T extends object>(obj: T) => T;
@@ -116,6 +111,11 @@ export default function AiChatPanel({ panelId }: PanelProps) {
   // Track which message is currently streaming to add typewriter cursor
   const [streamingMessageId, setStreamingMessageId] = useState<string | null>(null);
 
+  // Session management state
+  const [currentSession, setCurrentSession] = useState<SavedSession>(() => createNewSession());
+  const [sessions, setSessions] = useState<SavedSession[]>([]);
+  const [sessionsLoaded, setSessionsLoaded] = useState(false);
+
   const [messages, setMessages] = useState<Message[]>(() => [
     {
       id: nowId(),
@@ -128,6 +128,111 @@ export default function AiChatPanel({ panelId }: PanelProps) {
 
   const listRef = useRef<HTMLDivElement | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+
+  // Load sessions on mount
+  useEffect(() => {
+    loadSessions().then((data) => {
+      setSessions(data.sessions);
+      // If there's an active session, load it
+      if (data.activeSessionId) {
+        const active = data.sessions.find((s) => s.id === data.activeSessionId);
+        if (active && active.messages.length > 0) {
+          setCurrentSession(active);
+          setMessages(active.messages);
+          // Restore context if available
+          if (active.contexts && active.contexts.length > 0) {
+            contextStore.selected = active.contexts;
+          }
+        }
+      }
+      setSessionsLoaded(true);
+    });
+  }, []);
+
+  // Save session helper
+  const handleSaveSession = useCallback(async () => {
+    const filteredMessages = messages.filter((m) => !m.localOnly);
+    if (filteredMessages.length === 0) {
+      orca.notify("info", "No messages to save");
+      return;
+    }
+
+    const sessionToSave: SavedSession = {
+      ...currentSession,
+      messages: filteredMessages,
+      contexts: [...contextStore.selected],
+      updatedAt: Date.now(),
+    };
+
+    await saveSession(sessionToSave);
+    markSessionSaved();
+    // Refresh sessions list
+    const data = await loadSessions();
+    setSessions(data.sessions);
+    orca.notify("success", "Session saved");
+  }, [messages, currentSession]);
+
+  // Handle session selection from history
+  const handleSelectSession = useCallback(async (sessionId: string) => {
+    const session = sessions.find((s) => s.id === sessionId);
+    if (!session) return;
+
+    setCurrentSession(session);
+    setMessages(session.messages.length > 0 ? session.messages : []);
+    // Restore context
+    contextStore.selected = session.contexts || [];
+  }, [sessions]);
+
+  // Handle session deletion
+  const handleDeleteSession = useCallback(async (sessionId: string) => {
+    await deleteSession(sessionId);
+    const data = await loadSessions();
+    setSessions(data.sessions);
+
+    // If deleted current session, create a new one
+    if (currentSession.id === sessionId) {
+      handleNewSession();
+    }
+  }, [currentSession.id]);
+
+  // Handle clear all sessions
+  const handleClearAllSessions = useCallback(async () => {
+    await clearAllSessions();
+    setSessions([]);
+    handleNewSession();
+  }, []);
+
+  // Handle new session
+  const handleNewSession = useCallback(() => {
+    const newSession = createNewSession();
+    setCurrentSession(newSession);
+    setMessages([
+      {
+        id: nowId(),
+        role: "assistant",
+        content: "New chat started. How can I help you?",
+        createdAt: Date.now(),
+        localOnly: true,
+      },
+    ]);
+    contextStore.selected = [];
+  }, []);
+
+  // Sync state to session store for auto-save on close
+  useEffect(() => {
+    // Only sync if there are non-localOnly messages
+    const hasRealMessages = messages.some((m) => !m.localOnly);
+    if (hasRealMessages) {
+      updateSessionStore(currentSession, messages, [...contextStore.selected]);
+    }
+  }, [messages, currentSession]);
+
+  // Clear session store on unmount
+  useEffect(() => {
+    return () => {
+      clearSessionStore();
+    };
+  }, []);
 
   // Inject styles on mount
   useEffect(() => {
@@ -857,6 +962,25 @@ export default function AiChatPanel({ panelId }: PanelProps) {
         { style: { fontWeight: 600, flex: 1, fontFamily: "var(--chat-font-sans)" } },
         "AI Chat",
       ),
+      // Save button
+      createElement(
+        Button,
+        {
+          variant: "plain",
+          onClick: handleSaveSession,
+          title: "Save session",
+        },
+        createElement("i", { className: "ti ti-device-floppy" }),
+      ),
+      // History menu
+      createElement(ChatHistoryMenu, {
+        sessions,
+        activeSessionId: currentSession.id,
+        onSelectSession: handleSelectSession,
+        onDeleteSession: handleDeleteSession,
+        onClearAll: handleClearAllSessions,
+        onNewSession: handleNewSession,
+      }),
       createElement(
         Button,
         {

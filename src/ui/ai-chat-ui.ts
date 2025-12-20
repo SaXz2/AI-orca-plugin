@@ -1,4 +1,5 @@
 import { uiStore } from "../store/ui-store";
+import { sessionStore } from "../store/session-store";
 import { findViewPanelById } from "../utils/panel-tree";
 import AiChatPanel from "../views/AiChatPanel";
 import AiChatSidetool from "../views/AiChatSidetool";
@@ -6,6 +7,8 @@ import {
   registerAiChatContextMenus,
   unregisterAiChatContextMenus,
 } from "./ai-chat-context-menu";
+import { getAiChatSettings } from "../settings/ai-chat-settings";
+import { saveSession, type SavedSession } from "../services/session-service";
 
 let pluginName = "";
 let aiChatViewId = "";
@@ -43,7 +46,12 @@ export function openAiChatPanel(): void {
 export function toggleAiChatPanel(): void {
   if (isAiChatPanelOpen()) {
     const panelId = uiStore.aiChatPanelId;
-    if (panelId) orca.nav.close(panelId);
+    if (panelId) {
+      // Auto-save before closing
+      autoSaveOnClose().then(() => {
+        orca.nav.close(panelId);
+      });
+    }
     uiStore.aiChatPanelId = null;
     return;
   }
@@ -65,9 +73,51 @@ export function toggleAiChatPanel(): void {
   orca.nav.switchFocusTo(panelId);
 }
 
+/**
+ * Auto-save session on close if enabled and there are unsaved changes
+ */
+async function autoSaveOnClose(): Promise<void> {
+  const settings = getAiChatSettings(pluginName);
+
+  // Check if auto-save is enabled
+  if (settings.autoSaveChat !== "on_close") {
+    return;
+  }
+
+  // Check if there's a session with messages to save
+  const { currentSession, messages, contexts, isDirty } = sessionStore;
+  if (!currentSession || !isDirty) {
+    return;
+  }
+
+  // Filter out local-only messages
+  const filteredMessages = messages.filter((m) => !m.localOnly);
+  if (filteredMessages.length === 0) {
+    return;
+  }
+
+  // Save the session
+  const sessionToSave: SavedSession = {
+    ...currentSession,
+    messages: filteredMessages,
+    contexts: [...contexts],
+    updatedAt: Date.now(),
+  };
+
+  try {
+    await saveSession(sessionToSave);
+    console.log("[ai-chat-ui] Auto-saved session on close:", sessionToSave.id);
+  } catch (err) {
+    console.error("[ai-chat-ui] Failed to auto-save session:", err);
+  }
+}
+
 export function closeAiChatPanel(panelId: string): void {
-  if (uiStore.aiChatPanelId === panelId) uiStore.aiChatPanelId = null;
-  orca.nav.close(panelId);
+  // Auto-save before closing
+  autoSaveOnClose().then(() => {
+    if (uiStore.aiChatPanelId === panelId) uiStore.aiChatPanelId = null;
+    orca.nav.close(panelId);
+  });
 }
 
 export function registerAiChatUI(name: string): void {

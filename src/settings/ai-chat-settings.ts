@@ -42,6 +42,23 @@ export async function registerAiChatSettingsSchema(
       type: "number",
       defaultValue: 4096,
     },
+    autoSaveChat: {
+      label: "Auto Save Chat",
+      description: "When to automatically save chat history",
+      type: "singleChoice",
+      choices: [
+        { label: "On Close", value: "on_close" },
+        { label: "Manual Only", value: "manual" },
+        { label: "Never", value: "never" },
+      ],
+      defaultValue: "manual",
+    },
+    maxSavedSessions: {
+      label: "Max Saved Sessions",
+      description: "Maximum number of saved chat sessions (oldest will be deleted when exceeded)",
+      type: "number",
+      defaultValue: 10,
+    },
   });
 }
 
@@ -53,6 +70,8 @@ export type AiChatSettings = {
   systemPrompt: string;
   temperature: number;
   maxTokens: number;
+  autoSaveChat: "on_close" | "manual" | "never";
+  maxSavedSessions: number;
 };
 
 export const DEFAULT_AI_CHAT_SETTINGS: AiChatSettings = {
@@ -63,6 +82,8 @@ export const DEFAULT_AI_CHAT_SETTINGS: AiChatSettings = {
   systemPrompt: "",
   temperature: 0.7,
   maxTokens: 4096,
+  autoSaveChat: "manual",
+  maxSavedSessions: 10,
 };
 
 function toNumber(value: unknown, fallback: number): number {
@@ -79,6 +100,16 @@ function toString(value: unknown, fallback: string): string {
   return fallback;
 }
 
+function toAutoSaveChoice(
+  value: unknown,
+  fallback: "on_close" | "manual" | "never",
+): "on_close" | "manual" | "never" {
+  if (value === "on_close" || value === "manual" || value === "never") {
+    return value;
+  }
+  return fallback;
+}
+
 export function getAiChatSettings(pluginName: string): AiChatSettings {
   const raw = (orca.state.plugins as any)?.[pluginName]?.settings ?? {};
   const merged: AiChatSettings = {
@@ -89,6 +120,8 @@ export function getAiChatSettings(pluginName: string): AiChatSettings {
     systemPrompt: toString(raw.systemPrompt, DEFAULT_AI_CHAT_SETTINGS.systemPrompt),
     temperature: toNumber(raw.temperature, DEFAULT_AI_CHAT_SETTINGS.temperature),
     maxTokens: toNumber(raw.maxTokens, DEFAULT_AI_CHAT_SETTINGS.maxTokens),
+    autoSaveChat: toAutoSaveChoice(raw.autoSaveChat, DEFAULT_AI_CHAT_SETTINGS.autoSaveChat),
+    maxSavedSessions: toNumber(raw.maxSavedSessions, DEFAULT_AI_CHAT_SETTINGS.maxSavedSessions),
   };
 
   merged.apiUrl = merged.apiUrl.trim();
@@ -97,6 +130,7 @@ export function getAiChatSettings(pluginName: string): AiChatSettings {
   merged.customModel = merged.customModel.trim();
   merged.temperature = Math.max(0, Math.min(2, merged.temperature));
   merged.maxTokens = Math.max(1, Math.floor(merged.maxTokens));
+  merged.maxSavedSessions = Math.max(1, Math.floor(merged.maxSavedSessions));
 
   return merged;
 }
