@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cask-w:*)",
+      "Bash(npm run build)"
+    ]
+  }
+}

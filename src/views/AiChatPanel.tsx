@@ -1,0 +1,652 @@
+import type { PanelProps } from "../orca.d.ts";
+
+import { openAIChatCompletionsStream, type OpenAIChatMessage, type OpenAITool } from "../services/openai-client";
+import { buildContextForSend } from "../services/context-builder";
+import { contextStore } from "../store/context-store";
+import { closeAiChatPanel, getAiChatPluginName } from "../ui/ai-chat-ui";
+import { uiStore } from "../store/ui-store";
+import { findViewPanelById } from "../utils/panel-tree";
+import ChatInput from "./ChatInput";
+import {
+  getAiChatSettings,
+  resolveAiModel,
+  validateAiChatSettings,
+} from "../settings/ai-chat-settings";
+import { searchBlocksByTag, searchBlocksByText } from "../services/search-service";
+
+type Message = {
+  id: string;
+  role: "user" | "assistant" | "tool";
+  content: string;
+  createdAt: number;
+  localOnly?: boolean;
+  tool_calls?: Array<{
+    id: string;
+    type: "function";
+    function: {
+      name: string;
+      arguments: string;
+    };
+  }>;
+  tool_call_id?: string;
+  name?: string;
+};
+
+const React = window.React as unknown as {
+  createElement: typeof window.React.createElement;
+  useEffect: (fn: () => void | (() => void), deps: any[]) => void;
+  useMemo: <T>(fn: () => T, deps: any[]) => T;
+  useRef: <T>(value: T) => { current: T };
+  useState: <T>(
+    initial: T | (() => T),
+  ) => [T, (next: T | ((prev: T) => T)) => void];
+};
+const { createElement, useEffect, useMemo, useRef, useState } = React;
+
+const { useSnapshot } = (window as any).Valtio as {
+  useSnapshot: <T extends object>(obj: T) => T;
+};
+const { Button } = orca.components;
+
+function nowId(): string {
+  return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function safeText(block: any): string {
+  if (!block) return "";
+  if (typeof block.text === "string" && block.text.trim()) return block.text.trim();
+  if (Array.isArray(block.content)) {
+    return block.content
+      .map((f: any) => (f?.t === "text" && typeof f.v === "string" ? f.v : ""))
+      .join("")
+      .trim();
+  }
+  return "";
+}
+
+export default function AiChatPanel({ panelId }: PanelProps) {
+  const orcaSnap = useSnapshot(orca.state);
+  const uiSnap = useSnapshot(uiStore);
+  const [sending, setSending] = useState(false);
+  const [messages, setMessages] = useState<Message[]>(() => [
+    {
+      id: nowId(),
+      role: "assistant",
+      content: "Hello! Please configure API Key / URL / Model in Settings first, then start chatting.",
+      createdAt: Date.now(),
+      localOnly: true,
+    },
+  ]);
+
+  const listRef = useRef<HTMLDivElement | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+
+  function scrollToBottom() {
+    const el = listRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+  }
+
+  async function buildContextForRequest(): Promise<string> {
+    const contexts = contextStore.selected;
+    if (!contexts.length) {
+      return "";
+    }
+    return await buildContextForSend(contexts);
+  }
+
+  // Define available tools for the AI
+  const TOOLS: OpenAITool[] = [
+    {
+      type: "function",
+      function: {
+        name: "searchBlocksByTag",
+        description: "Search for notes/blocks that have a specific tag. Use this when the user asks to find notes with a particular tag or category.",
+        parameters: {
+          type: "object",
+          properties: {
+            tagName: {
+              type: "string",
+              description: "The tag name to search for (e.g., '爱情', 'work', 'ideas')",
+            },
+            maxResults: {
+              type: "number",
+              description: "Maximum number of results to return (default: 50, max: 50)",
+            },
+          },
+          required: ["tagName"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "searchBlocksByText",
+        description: "Search for notes/blocks containing specific text or keywords. Use this when the user wants to find notes by content.",
+        parameters: {
+          type: "object",
+          properties: {
+            searchText: {
+              type: "string",
+              description: "The text or keywords to search for",
+            },
+            maxResults: {
+              type: "number",
+              description: "Maximum number of results to return (default: 50, max: 50)",
+            },
+          },
+          required: ["searchText"],
+        },
+      },
+    },
+  ];
+
+  // Execute tool calls
+  async function executeTool(toolName: string, args: any): Promise<string> {
+    console.log("[executeTool] Called with:", { toolName, args });
+
+    try {
+      if (toolName === "searchBlocksByTag") {
+        // Support multiple parameter names: tagName, tag, query
+        const tagName = args.tagName || args.tag || args.query;
+        const maxResults = args.maxResults || 50;
+        console.log("[executeTool] searchBlocksByTag params:", { tagName, maxResults });
+
+        if (!tagName) {
+          console.error("[executeTool] Missing tagName parameter, args:", args);
+          return "Error: Missing tag name parameter";
+        }
+
+        const results = await searchBlocksByTag(tagName, Math.min(maxResults, 50));
+        console.log("[executeTool] searchBlocksByTag results:", results);
+
+        if (results.length === 0) {
+          return `No notes found with tag "${tagName}".`;
+        }
+
+        const summary = results.map((r, i) => {
+          const dateStr = r.modified ? new Date(r.modified).toLocaleDateString() : "";
+          return `${i + 1}. ${r.title}\n   Content: ${r.content}\n   Modified: ${dateStr}\n   Tags: ${r.tags?.join(", ") || "none"}`;
+        }).join("\n\n");
+
+        return `Found ${results.length} note(s) with tag "${tagName}":\n\n${summary}`;
+      } else if (toolName === "searchBlocksByText") {
+        // Support multiple parameter names: searchText, text, query
+        const searchText = args.searchText || args.text || args.query;
+        const maxResults = args.maxResults || 50;
+        console.log("[executeTool] searchBlocksByText params:", { searchText, maxResults });
+
+        if (!searchText) {
+          console.error("[executeTool] Missing searchText parameter, args:", args);
+          return "Error: Missing search text parameter";
+        }
+
+        const results = await searchBlocksByText(searchText, Math.min(maxResults, 50));
+        console.log("[executeTool] searchBlocksByText results:", results);
+
+        if (results.length === 0) {
+          return `No notes found containing "${searchText}".`;
+        }
+
+        const summary = results.map((r, i) => {
+          const dateStr = r.modified ? new Date(r.modified).toLocaleDateString() : "";
+          return `${i + 1}. ${r.title}\n   Content: ${r.content}\n   Modified: ${dateStr}\n   Tags: ${r.tags?.join(", ") || "none"}`;
+        }).join("\n\n");
+
+        return `Found ${results.length} note(s) containing "${searchText}":\n\n${summary}`;
+      } else {
+        console.error("[executeTool] Unknown tool:", toolName);
+        return `Unknown tool: ${toolName}`;
+      }
+    } catch (error: any) {
+      console.error("[executeTool] Error:", error);
+      return `Error executing ${toolName}: ${error?.message ?? error ?? "unknown error"}`;
+    }
+  }
+
+  async function handleSend(content: string) {
+    if (!content) return;
+    if (sending) return;
+
+    const pluginName = getAiChatPluginName();
+    const settings = getAiChatSettings(pluginName);
+    const validationError = validateAiChatSettings(settings);
+    if (validationError) {
+      orca.notify("warn", validationError);
+      return;
+    }
+
+    const model = resolveAiModel(settings);
+    setSending(true);
+
+    const userMsg: Message = {
+      id: nowId(),
+      role: "user",
+      content,
+      createdAt: Date.now(),
+    };
+
+    setMessages((prev: Message[]) => [...prev, userMsg]);
+    queueMicrotask(scrollToBottom);
+
+    const aborter = new AbortController();
+    abortRef.current = aborter;
+
+    try {
+      let contextText = "";
+      try {
+        contextText = await buildContextForRequest();
+      } catch (err: any) {
+        orca.notify("warn", `Context build failed: ${String(err?.message ?? err ?? "unknown error")}`);
+      }
+
+      const systemParts: string[] = [];
+      if (settings.systemPrompt.trim()) systemParts.push(settings.systemPrompt.trim());
+      if (contextText.trim()) systemParts.push(`Context:\n${contextText.trim()}`);
+
+      // Build message history for the API
+      const buildMessages = (currentMessages?: Message[]): OpenAIChatMessage[] => {
+        const msgsToUse = currentMessages || messages;
+        const history = msgsToUse
+          .filter((m) => !m.localOnly)
+          .map((m) => {
+            const msg: OpenAIChatMessage = {
+              role: m.role as any,
+              content: m.content,
+            };
+            if (m.tool_calls) msg.tool_calls = m.tool_calls;
+            if (m.tool_call_id) {
+              msg.tool_call_id = m.tool_call_id;
+              msg.name = m.name;
+            }
+            return msg;
+          });
+
+        const requestMessages: OpenAIChatMessage[] = [
+          ...(systemParts.length
+            ? [{ role: "system" as const, content: systemParts.join("\n\n") }]
+            : []),
+          ...history,
+          { role: "user" as const, content },
+        ];
+
+        return requestMessages;
+      };
+
+      // Call AI with tools enabled
+      const assistantId = nowId();
+      setMessages((prev: Message[]) => [
+        ...prev,
+        {
+          id: assistantId,
+          role: "assistant",
+          content: "",
+          createdAt: Date.now(),
+        },
+      ]);
+      queueMicrotask(scrollToBottom);
+
+      let gotAny = false;
+      let toolCalls: any[] = [];
+      let currentContent = "";
+
+      for await (const chunk of openAIChatCompletionsStream({
+        apiUrl: settings.apiUrl,
+        apiKey: settings.apiKey,
+        model,
+        messages: buildMessages(),
+        temperature: settings.temperature,
+        maxTokens: settings.maxTokens,
+        signal: aborter.signal,
+        tools: TOOLS,
+      })) {
+        gotAny = true;
+
+        if (chunk.type === "content" && chunk.content) {
+          currentContent += chunk.content;
+          setMessages((prev: Message[]) =>
+            prev.map((m: Message) =>
+              m.id === assistantId ? { ...m, content: currentContent } : m,
+            ),
+          );
+          queueMicrotask(scrollToBottom);
+        } else if (chunk.type === "tool_calls" && chunk.tool_calls) {
+          // Merge tool calls (streaming may send them in chunks)
+          for (const tc of chunk.tool_calls) {
+            const existing = toolCalls.find((t) => t.id === tc.id);
+            if (existing) {
+              if (tc.function?.arguments) {
+                existing.function.arguments = (existing.function.arguments || "") + tc.function.arguments;
+              }
+            } else {
+              toolCalls.push({
+                id: tc.id || nowId(),
+                type: tc.type || "function",
+                function: {
+                  name: tc.function?.name || "",
+                  arguments: tc.function?.arguments || "",
+                },
+              });
+            }
+          }
+        }
+      }
+
+      if (!gotAny) {
+        setMessages((prev: Message[]) =>
+          prev.map((m: Message) =>
+            m.id === assistantId && !m.content ? { ...m, content: "(empty response)" } : m,
+          ),
+        );
+      }
+
+      // If there are tool calls, save them to the assistant message and execute them
+      if (toolCalls.length > 0) {
+        setMessages((prev: Message[]) =>
+          prev.map((m: Message) =>
+            m.id === assistantId ? { ...m, tool_calls: toolCalls } : m,
+          ),
+        );
+
+        // Collect all tool results
+        const toolResultMessages: Message[] = [];
+
+        // Execute each tool call and collect results
+        for (const toolCall of toolCalls) {
+          const toolName = toolCall.function.name;
+          let args: any = {};
+
+          console.log("[handleSend] Processing tool call:", toolCall);
+          console.log("[handleSend] Tool function arguments string:", toolCall.function.arguments);
+
+          try {
+            args = JSON.parse(toolCall.function.arguments);
+            console.log("[handleSend] Parsed arguments:", args);
+          } catch (err) {
+            console.error("[handleSend] Failed to parse tool arguments:", toolCall.function.arguments, err);
+          }
+
+          const result = await executeTool(toolName, args);
+          console.log("[handleSend] Tool result:", result);
+
+          // Create tool result message
+          const toolResultMsg: Message = {
+            id: nowId(),
+            role: "tool",
+            content: result,
+            tool_call_id: toolCall.id,
+            name: toolName,
+            createdAt: Date.now(),
+          };
+
+          toolResultMessages.push(toolResultMsg);
+        }
+
+        // Add all tool results to messages
+        setMessages((prev: Message[]) => [...prev, ...toolResultMessages]);
+        queueMicrotask(scrollToBottom);
+
+        // Build the complete message history including tool results
+        const messagesWithTools: OpenAIChatMessage[] = [
+          ...(systemParts.length
+            ? [{ role: "system" as const, content: systemParts.join("\n\n") }]
+            : []),
+          ...messages.filter((m) => !m.localOnly).map((m) => {
+            const msg: OpenAIChatMessage = {
+              role: m.role as any,
+              content: m.content,
+            };
+            if (m.tool_calls) msg.tool_calls = m.tool_calls;
+            if (m.tool_call_id) {
+              msg.tool_call_id = m.tool_call_id;
+              msg.name = m.name;
+            }
+            return msg;
+          }),
+          { role: "user" as const, content },
+          {
+            role: "assistant" as const,
+            content: currentContent || null,  // Must be null if there are tool_calls
+            tool_calls: toolCalls,
+          },
+          ...toolResultMessages.map((msg) => ({
+            role: "tool" as const,
+            content: msg.content,
+            tool_call_id: msg.tool_call_id!,
+            name: msg.name!,
+          })),
+        ];
+
+        console.log("[handleSend] Messages with tool results:", JSON.stringify(messagesWithTools, null, 2));
+
+        // Call AI again with the tool results to get final response
+        const finalAssistantId = nowId();
+        setMessages((prev: Message[]) => [
+          ...prev,
+          {
+            id: finalAssistantId,
+            role: "assistant",
+            content: "",
+            createdAt: Date.now(),
+          },
+        ]);
+        queueMicrotask(scrollToBottom);
+
+        console.log("[handleSend] Calling AI again with tool results...");
+        console.log("[handleSend] Final messages for AI:", JSON.stringify(messagesWithTools, null, 2));
+
+        let finalContent = "";
+        let chunkCount = 0;
+        for await (const chunk of openAIChatCompletionsStream({
+          apiUrl: settings.apiUrl,
+          apiKey: settings.apiKey,
+          model,
+          messages: messagesWithTools,
+          temperature: settings.temperature,
+          maxTokens: settings.maxTokens,
+          signal: aborter.signal,
+          tools: TOOLS,
+        })) {
+          chunkCount++;
+          console.log(`[handleSend] Final response chunk #${chunkCount}:`, chunk);
+
+          if (chunk.type === "content" && chunk.content) {
+            finalContent += chunk.content;
+            setMessages((prev: Message[]) =>
+              prev.map((m: Message) =>
+                m.id === finalAssistantId ? { ...m, content: finalContent } : m,
+              ),
+            );
+            queueMicrotask(scrollToBottom);
+          }
+        }
+
+        console.log("[handleSend] Final response complete. Total chunks:", chunkCount, "Content:", finalContent);
+      }
+    } catch (err: any) {
+      const isAbort = String(err?.name ?? "") === "AbortError";
+      const msg = String(err?.message ?? err ?? "unknown error");
+      if (!isAbort) orca.notify("error", msg);
+
+      // Find the last assistant message and update it with error
+      setMessages((prev: Message[]) => {
+        const lastAssistantIndex = prev.findIndex(
+          (m, i) => m.role === "assistant" && i === prev.length - 1
+        );
+        if (lastAssistantIndex >= 0) {
+          return prev.map((m, i) =>
+            i === lastAssistantIndex
+              ? { ...m, content: m.content || (isAbort ? "(stopped)" : `(error) ${msg}`) }
+              : m
+          );
+        }
+        return prev;
+      });
+    } finally {
+      if (abortRef.current === aborter) abortRef.current = null;
+      setSending(false);
+      queueMicrotask(scrollToBottom);
+    }
+  }
+
+  function clear() {
+    if (abortRef.current) abortRef.current.abort();
+    setMessages([]);
+  }
+
+  function stop() {
+    if (!abortRef.current) return;
+    abortRef.current.abort();
+  }
+
+  useEffect(() => {
+    return () => {
+      if (abortRef.current) abortRef.current.abort();
+    };
+  }, []);
+
+  const rootBlockId: number | null = useMemo(() => {
+    const vp = findViewPanelById(orcaSnap.panels, panelId);
+    const arg = (vp?.viewArgs as any)?.rootBlockId;
+    if (typeof arg === "number") return arg;
+    if (typeof uiSnap.lastRootBlockId === "number") return uiSnap.lastRootBlockId;
+    return null;
+  }, [orcaSnap.panels, panelId, uiSnap.lastRootBlockId]);
+
+  const currentPageTitle = useMemo(() => {
+    if (rootBlockId == null) return "";
+    const block = (orca.state.blocks as any)?.[rootBlockId];
+    return safeText(block) || "";
+  }, [rootBlockId]);
+
+  return createElement(
+    "div",
+    {
+      style: {
+        height: "100%",
+        width: "100%",
+        display: "flex",
+        flexDirection: "column",
+        background: "var(--orca-color-bg-1)",
+        color: "var(--orca-color-text-1)",
+      },
+    },
+    // Header
+    createElement(
+      "div",
+      {
+        style: {
+          padding: 12,
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          borderBottom: "1px solid var(--orca-color-border)",
+        },
+      },
+      createElement(
+        "div",
+        { style: { fontWeight: 600, flex: 1 } },
+        "AI Chat",
+      ),
+      createElement(
+        Button,
+        {
+          variant: "plain",
+          onClick: () => void orca.commands.invokeCommand("core.openSettings"),
+        },
+        createElement("i", { className: "ti ti-settings" }),
+      ),
+      createElement(
+        Button,
+        { variant: "plain", disabled: !sending, onClick: stop },
+        createElement("i", { className: "ti ti-player-stop" }),
+      ),
+      createElement(
+        Button,
+        { variant: "plain", onClick: clear },
+        createElement("i", { className: "ti ti-trash" }),
+      ),
+      createElement(
+        Button,
+        { variant: "plain", onClick: () => closeAiChatPanel(panelId) },
+        createElement("i", { className: "ti ti-x" }),
+      ),
+    ),
+    // Message List
+    createElement(
+      "div",
+      {
+        ref: listRef as any,
+        style: {
+          flex: 1,
+          overflow: "auto",
+          padding: 12,
+          display: "flex",
+          flexDirection: "column",
+          gap: 10,
+        },
+      },
+      ...messages.map((m: Message) => {
+        // Skip tool messages from display (they're internal)
+        if (m.role === "tool") {
+          return null;
+        }
+
+        return createElement(
+          "div",
+          {
+            key: m.id,
+            style: {
+              width: "100%",
+              display: "flex",
+              justifyContent: m.role === "user" ? "flex-end" : "flex-start",
+            },
+          },
+          createElement(
+            "div",
+            {
+              style: {
+                maxWidth: "85%",
+                padding: "8px 12px",
+                borderRadius: 10,
+                border: "1px solid var(--orca-color-border)",
+                background:
+                  m.role === "user"
+                    ? "var(--orca-color-bg-2)"
+                    : "var(--orca-color-bg-1)",
+                whiteSpace: "pre-wrap",
+                wordBreak: "break-word",
+              },
+            },
+            // Show content if available
+            m.content || "",
+            // Show tool calls if present
+            m.tool_calls && m.tool_calls.length > 0
+              ? createElement(
+                  "div",
+                  {
+                    style: {
+                      marginTop: 8,
+                      padding: 8,
+                      background: "var(--orca-color-bg-3)",
+                      borderRadius: 4,
+                      fontSize: "0.85em",
+                      opacity: 0.7,
+                    },
+                  },
+                  `🔧 Calling tool: ${m.tool_calls.map((tc) => tc.function.name).join(", ")}`
+                )
+              : null,
+          ),
+        );
+      }).filter(Boolean),
+    ),
+    // Chat Input
+    createElement(ChatInput, {
+      onSend: handleSend,
+      disabled: sending,
+      currentPageId: rootBlockId,
+      currentPageTitle,
+    }),
+  );
+}
