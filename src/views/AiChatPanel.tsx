@@ -10,9 +10,10 @@ import ChatInput from "./ChatInput";
 import MarkdownMessage from "../components/MarkdownMessage";
 import ChatHistoryMenu from "./ChatHistoryMenu";
 import {
+  buildAiModelOptions,
   getAiChatSettings,
   resolveAiModel,
-  validateAiChatSettings,
+  validateAiChatSettingsWithModel,
 } from "../settings/ai-chat-settings";
 import { searchBlocksByTag, searchBlocksByText, queryBlocksByTag } from "../services/search-service";
 import {
@@ -112,7 +113,12 @@ export default function AiChatPanel({ panelId }: PanelProps) {
   const [streamingMessageId, setStreamingMessageId] = useState<string | null>(null);
 
   // Session management state
-  const [currentSession, setCurrentSession] = useState<SavedSession>(() => createNewSession());
+  const [currentSession, setCurrentSession] = useState<SavedSession>(() => {
+    const pluginName = getAiChatPluginName();
+    const settings = getAiChatSettings(pluginName);
+    const model = resolveAiModel(settings);
+    return { ...createNewSession(), model };
+  });
   const [sessions, setSessions] = useState<SavedSession[]>([]);
   const [sessionsLoaded, setSessionsLoaded] = useState(false);
 
@@ -131,13 +137,20 @@ export default function AiChatPanel({ panelId }: PanelProps) {
 
   // Load sessions on mount
   useEffect(() => {
+    const pluginName = getAiChatPluginName();
+    const settings = getAiChatSettings(pluginName);
+    const defaultModel = resolveAiModel(settings);
+
     loadSessions().then((data) => {
       setSessions(data.sessions);
       // If there's an active session, load it
       if (data.activeSessionId) {
         const active = data.sessions.find((s) => s.id === data.activeSessionId);
         if (active && active.messages.length > 0) {
-          setCurrentSession(active);
+          setCurrentSession({
+            ...active,
+            model: (active.model || "").trim() || defaultModel,
+          });
           setMessages(active.messages);
           // Restore context if available
           if (active.contexts && active.contexts.length > 0) {
@@ -174,10 +187,17 @@ export default function AiChatPanel({ panelId }: PanelProps) {
 
   // Handle session selection from history
   const handleSelectSession = useCallback(async (sessionId: string) => {
+    const pluginName = getAiChatPluginName();
+    const settings = getAiChatSettings(pluginName);
+    const defaultModel = resolveAiModel(settings);
+
     const session = sessions.find((s) => s.id === sessionId);
     if (!session) return;
 
-    setCurrentSession(session);
+    setCurrentSession({
+      ...session,
+      model: (session.model || "").trim() || defaultModel,
+    });
     setMessages(session.messages.length > 0 ? session.messages : []);
     // Restore context
     contextStore.selected = session.contexts || [];
@@ -204,7 +224,11 @@ export default function AiChatPanel({ panelId }: PanelProps) {
 
   // Handle new session
   const handleNewSession = useCallback(() => {
-    const newSession = createNewSession();
+    const pluginName = getAiChatPluginName();
+    const settings = getAiChatSettings(pluginName);
+    const defaultModel = resolveAiModel(settings);
+
+    const newSession = { ...createNewSession(), model: defaultModel };
     setCurrentSession(newSession);
     setMessages([
       {
@@ -498,13 +522,13 @@ export default function AiChatPanel({ panelId }: PanelProps) {
 
     const pluginName = getAiChatPluginName();
     const settings = getAiChatSettings(pluginName);
-    const validationError = validateAiChatSettings(settings);
+    const model = (currentSession.model || "").trim() || resolveAiModel(settings);
+    const validationError = validateAiChatSettingsWithModel(settings, model);
     if (validationError) {
       orca.notify("warn", validationError);
       return;
     }
 
-    const model = resolveAiModel(settings);
     setSending(true);
 
     const userMsg: Message = {
@@ -824,6 +848,16 @@ export default function AiChatPanel({ panelId }: PanelProps) {
     return safeText(block) || "";
   }, [rootBlockId]);
 
+  const pluginNameForUi = getAiChatPluginName();
+  const settingsForUi = getAiChatSettings(pluginNameForUi);
+  const defaultModelForUi = resolveAiModel(settingsForUi);
+  const selectedModel = (currentSession.model || "").trim() || defaultModelForUi;
+  const modelOptions = buildAiModelOptions(settingsForUi, [selectedModel]);
+
+  const handleModelChange = useCallback((nextModel: string) => {
+    setCurrentSession((prev: SavedSession) => ({ ...prev, model: nextModel }));
+  }, []);
+
   // Construct message elements to properly handle loading state
   const messageElements = messages.map((m: Message) => {
       // Skip tool messages from display (they're internal)
@@ -1029,7 +1063,9 @@ export default function AiChatPanel({ panelId }: PanelProps) {
       disabled: sending,
       currentPageId: rootBlockId,
       currentPageTitle,
+      modelOptions,
+      selectedModel,
+      onModelChange: handleModelChange,
     }),
   );
 }
-

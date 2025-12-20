@@ -29,6 +29,7 @@ export type Message = {
 export type SavedSession = {
   id: string;
   title: string;
+  model?: string;
   messages: Message[];
   contexts: ContextRef[];
   createdAt: number;
@@ -78,6 +79,7 @@ export function createNewSession(): SavedSession {
   return {
     id: generateId(),
     title: "",
+    model: "",
     messages: [],
     contexts: [],
     createdAt: now,

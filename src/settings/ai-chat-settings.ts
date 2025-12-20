@@ -27,6 +27,25 @@ export async function registerAiChatSettingsSchema(
       type: "string",
       defaultValue: "",
     },
+    customModels: {
+      label: "Saved Custom Models",
+      description:
+        "Saved model names for quick switching in Chat Panel (models share the same API URL/Key for now).",
+      type: "array",
+      defaultValue: [],
+      arrayItemSchema: {
+        label: {
+          label: "Label (optional)",
+          type: "string",
+          defaultValue: "",
+        },
+        model: {
+          label: "Model Name",
+          type: "string",
+          defaultValue: "",
+        },
+      },
+    },
     systemPrompt: {
       label: "System Prompt",
       type: "string",
@@ -67,6 +86,7 @@ export type AiChatSettings = {
   apiUrl: string;
   model: string;
   customModel: string;
+  customModels: AiModelPreset[];
   systemPrompt: string;
   temperature: number;
   maxTokens: number;
@@ -74,11 +94,17 @@ export type AiChatSettings = {
   maxSavedSessions: number;
 };
 
+export type AiModelPreset = {
+  label: string;
+  model: string;
+};
+
 export const DEFAULT_AI_CHAT_SETTINGS: AiChatSettings = {
   apiKey: "",
   apiUrl: "https://api.openai.com/v1",
   model: "gpt-4o-mini",
   customModel: "",
+  customModels: [],
   systemPrompt: "",
   temperature: 0.7,
   maxTokens: 4096,
@@ -100,6 +126,31 @@ function toString(value: unknown, fallback: string): string {
   return fallback;
 }
 
+function toModelPresets(value: unknown, fallback: AiModelPreset[]): AiModelPreset[] {
+  if (!Array.isArray(value)) return fallback;
+
+  const out: AiModelPreset[] = [];
+  for (const item of value) {
+    if (!item || typeof item !== "object") continue;
+    const rawLabel = (item as any).label;
+    const rawModel = (item as any).model;
+    const model = typeof rawModel === "string" ? rawModel.trim() : "";
+    if (!model) continue;
+    const label = typeof rawLabel === "string" ? rawLabel.trim() : "";
+    out.push({ label, model });
+  }
+
+  const seen = new Set<string>();
+  const unique: AiModelPreset[] = [];
+  for (const item of out) {
+    if (seen.has(item.model)) continue;
+    seen.add(item.model);
+    unique.push(item);
+  }
+
+  return unique;
+}
+
 function toAutoSaveChoice(
   value: unknown,
   fallback: "on_close" | "manual" | "never",
@@ -117,6 +168,7 @@ export function getAiChatSettings(pluginName: string): AiChatSettings {
     apiUrl: toString(raw.apiUrl, DEFAULT_AI_CHAT_SETTINGS.apiUrl),
     model: toString(raw.model, DEFAULT_AI_CHAT_SETTINGS.model),
     customModel: toString(raw.customModel, DEFAULT_AI_CHAT_SETTINGS.customModel),
+    customModels: toModelPresets(raw.customModels, DEFAULT_AI_CHAT_SETTINGS.customModels),
     systemPrompt: toString(raw.systemPrompt, DEFAULT_AI_CHAT_SETTINGS.systemPrompt),
     temperature: toNumber(raw.temperature, DEFAULT_AI_CHAT_SETTINGS.temperature),
     maxTokens: toNumber(raw.maxTokens, DEFAULT_AI_CHAT_SETTINGS.maxTokens),
@@ -135,6 +187,44 @@ export function getAiChatSettings(pluginName: string): AiChatSettings {
   return merged;
 }
 
+export type AiModelOption = {
+  value: string;
+  label: string;
+  group?: string;
+};
+
+const BUILTIN_MODEL_OPTIONS: AiModelOption[] = [
+  { value: "gpt-4o-mini", label: "GPT-4o Mini", group: "Built-in" },
+  { value: "gpt-4o", label: "GPT-4o", group: "Built-in" },
+];
+
+export function buildAiModelOptions(
+  settings: AiChatSettings,
+  extraModels: string[] = [],
+): AiModelOption[] {
+  const seen = new Set<string>();
+  const out: AiModelOption[] = [];
+
+  const add = (value: string, label: string, group: string) => {
+    const v = value.trim();
+    if (!v) return;
+    if (seen.has(v)) return;
+    seen.add(v);
+    out.push({ value: v, label: label.trim() || v, group });
+  };
+
+  for (const opt of BUILTIN_MODEL_OPTIONS) add(opt.value, opt.label, opt.group ?? "Built-in");
+
+  for (const item of settings.customModels) {
+    add(item.model, item.label || item.model, "Custom");
+  }
+  if (settings.customModel.trim()) add(settings.customModel, settings.customModel, "Custom");
+
+  for (const m of extraModels) add(m, m, "Other");
+
+  return out;
+}
+
 export function resolveAiModel(settings: AiChatSettings): string {
   if (settings.model === "custom") return settings.customModel.trim();
   return settings.model.trim();
@@ -145,6 +235,16 @@ export function validateAiChatSettings(settings: AiChatSettings): string | null 
   if (!settings.apiKey.trim()) return "Missing API Key (Settings → API Key)";
   const model = resolveAiModel(settings);
   if (!model) return "Missing model (Settings → AI Model / Custom Model Name)";
+  return null;
+}
+
+export function validateAiChatSettingsWithModel(
+  settings: AiChatSettings,
+  modelOverride: string,
+): string | null {
+  if (!settings.apiUrl.trim()) return "Missing API URL (Settings → API URL)";
+  if (!settings.apiKey.trim()) return "Missing API Key (Settings → API Key)";
+  if (!modelOverride.trim()) return "Missing model (Select a model or check Settings)";
   return null;
 }
 

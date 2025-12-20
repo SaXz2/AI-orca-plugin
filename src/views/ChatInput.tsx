@@ -2,6 +2,7 @@ import type { DbId } from "../orca.d.ts";
 import { contextStore } from "../store/context-store";
 import ContextChips from "./ContextChips";
 import ContextPicker from "./ContextPicker";
+import type { AiModelOption } from "../settings/ai-chat-settings";
 
 const React = window.React as unknown as {
   createElement: typeof window.React.createElement;
@@ -16,13 +17,16 @@ const { createElement, useRef, useState, useCallback } = React;
 const { useSnapshot } = (window as any).Valtio as {
   useSnapshot: <T extends object>(obj: T) => T;
 };
-const { Button, CompositionTextArea } = orca.components;
+const { Button, CompositionTextArea, Select } = orca.components;
 
 type Props = {
   onSend: (message: string) => void;
   disabled?: boolean;
   currentPageId: DbId | null;
   currentPageTitle: string;
+  modelOptions: AiModelOption[];
+  selectedModel: string;
+  onModelChange: (model: string) => void;
 };
 
 /**
@@ -34,6 +38,9 @@ export default function ChatInput({
   disabled = false,
   currentPageId,
   currentPageTitle,
+  modelOptions,
+  selectedModel,
+  onModelChange,
 }: Props) {
   const [text, setText] = useState("");
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -138,26 +145,51 @@ export default function ChatInput({
         createElement(
             "div",
             {
-                ref: addContextBtnRef as any,
-                style: { display: "flex", alignItems: "center", gap: 8 },
+                style: {
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 12,
+                },
             },
             createElement(
-                Button,
-                {
-                    variant: "plain",
-                    onClick: () => setPickerOpen(!pickerOpen),
-                    style: {
-                        padding: "2px 8px",
-                        height: "24px",
-                        fontSize: 12,
-                        color: "var(--orca-color-text-2)",
-                        borderRadius: "12px",
-                        background: "var(--orca-color-bg-3)",
-                    },
-                },
-                createElement("i", { className: "ti ti-at", style: { marginRight: 4 } }),
-                "Add context"
-            )
+              "div",
+              {
+                ref: addContextBtnRef as any,
+                style: { display: "flex", alignItems: "center", gap: 8 },
+              },
+              createElement(
+                  Button,
+                  {
+                      variant: "plain",
+                      onClick: () => setPickerOpen(!pickerOpen),
+                      style: {
+                          padding: "2px 8px",
+                          height: "24px",
+                          fontSize: 12,
+                          color: "var(--orca-color-text-2)",
+                          borderRadius: "12px",
+                          background: "var(--orca-color-bg-3)",
+                      },
+                  },
+                  createElement("i", { className: "ti ti-at", style: { marginRight: 4 } }),
+                  "Add context"
+              ),
+            ),
+            createElement(Select as any, {
+              selected: selectedModel ? [selectedModel] : [],
+              options: modelOptions,
+              onChange: (selected: string[]) => {
+                const next = selected?.[0] ?? "";
+                if (next && next !== selectedModel) onModelChange(next);
+              },
+              width: 200,
+              placeholder: "Select model",
+              filter: true,
+              filterPlaceholder: "Search models...",
+              withClear: false,
+              pre: createElement("i", { className: "ti ti-cpu" }),
+            }),
         ),
         // TextArea and Send Button Row
         createElement(
@@ -218,4 +250,3 @@ export default function ChatInput({
     )
   );
 }
-
