@@ -126,11 +126,31 @@ export async function* streamChatWithRetry(
   const doStream = async function* (
     messages: OpenAIChatMessage[]
   ): AsyncGenerator<StreamChunk, void, unknown> {
+    // Create a combined abort controller that responds to both user abort and timeout
     const timeoutController = new AbortController();
-    const timeoutId = setTimeout(() => {
-      console.warn(`[streamChatWithRetry] Request timeout after ${timeoutMs}ms`);
-      timeoutController.abort();
-    }, timeoutMs);
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    
+    // Helper to reset/start the timeout timer
+    const resetTimeout = () => {
+      if (timeoutId) clearTimeout(timeoutId);
+      timeoutId = setTimeout(() => {
+        console.warn(`[streamChatWithRetry] Request timeout after ${timeoutMs}ms`);
+        timeoutController.abort();
+      }, timeoutMs);
+    };
+    
+    // Start initial timeout
+    resetTimeout();
+    
+    // If user's signal is already aborted, abort immediately
+    if (options.signal?.aborted) {
+      if (timeoutId) clearTimeout(timeoutId);
+      throw new DOMException("Aborted", "AbortError");
+    }
+    
+    // Link user's abort signal to our timeout controller
+    const onUserAbort = () => timeoutController.abort();
+    options.signal?.addEventListener("abort", onUserAbort);
 
     try {
       for await (const chunk of openAIChatCompletionsStream({
@@ -140,10 +160,11 @@ export async function* streamChatWithRetry(
         messages,
         temperature: options.temperature,
         maxTokens: options.maxTokens,
-        signal: options.signal,
+        signal: timeoutController.signal, // Use the combined signal!
         tools: options.tools,
       })) {
-        clearTimeout(timeoutId);
+        // Reset timeout on each chunk received (prevents timeout during slow responses)
+        resetTimeout();
 
         if (chunk.type === "content" && chunk.content) {
           content += chunk.content;
@@ -154,7 +175,8 @@ export async function* streamChatWithRetry(
         }
       }
     } finally {
-      clearTimeout(timeoutId);
+      if (timeoutId) clearTimeout(timeoutId);
+      options.signal?.removeEventListener("abort", onUserAbort);
     }
   };
 
