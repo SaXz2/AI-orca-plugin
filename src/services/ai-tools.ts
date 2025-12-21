@@ -245,6 +245,10 @@ export const TOOLS: OpenAITool[] = [
             type: "string",
             description: "The page name or alias to find references to (e.g., '项目A', 'Project A', 'meeting notes')",
           },
+          page_name: {
+            type: "string",
+            description: "Alias of pageName (some clients/models may send `page_name` instead).",
+          },
           maxResults: {
             type: "number",
             description: "Maximum number of results to return (default: 50, max: 50)",
@@ -281,8 +285,13 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
   try {
     if (toolName === "searchBlocksByTag") {
       // Support multiple parameter names: tagName, tag, query
-      const tagName = args.tagName || args.tag || args.query;
+      let tagName = args.tagName || args.tag_name || args.tag || args.query;
       const maxResults = args.maxResults || 50;
+
+      // Handle array parameters (AI sometimes sends ["tag"] instead of "tag")
+      if (Array.isArray(tagName)) {
+        tagName = tagName[0];
+      }
 
       if (!tagName) {
         console.error("[Tool] Missing tag name parameter");
@@ -305,7 +314,7 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
       return `Found ${results.length} note(s) with tag "${tagName}":\n${summary}`;
     } else if (toolName === "searchBlocksByText") {
       // Support multiple parameter names: searchText, text, query, queries
-      let searchText = args.searchText || args.text || args.query || args.queries;
+      let searchText = args.searchText || args.search_text || args.text || args.query || args.queries;
 
       // Handle array parameters (AI sometimes sends ["text"] instead of "text")
       if (Array.isArray(searchText)) {
@@ -337,7 +346,7 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
       // Advanced query with property filters
       let tagName = typeof args.tagName === "string"
         ? args.tagName
-        : (typeof args.tag === "string" ? args.tag : undefined);
+        : (typeof args.tag_name === "string" ? args.tag_name : (typeof args.tag === "string" ? args.tag : undefined));
 
       const queryText = typeof args.query === "string" ? args.query : undefined;
       const propertyFiltersInput = args.property_filters
@@ -493,8 +502,12 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
       return `Found ${results.length} ${statusDesc}task(s):\n${summary}`;
     } else if (toolName === "searchJournalEntries") {
       // Search for journal entries in date range
-      const startOffset = typeof args.startOffset === "number" ? args.startOffset : -7;
-      const endOffset = typeof args.endOffset === "number" ? args.endOffset : 0;
+      const startOffset = typeof args.startOffset === "number"
+        ? args.startOffset
+        : (typeof args.start_offset === "number" ? args.start_offset : -7);
+      const endOffset = typeof args.endOffset === "number"
+        ? args.endOffset
+        : (typeof args.end_offset === "number" ? args.end_offset : 0);
       const maxResults = args.maxResults || 50;
 
       console.log("[Tool] searchJournalEntries:", { startOffset, endOffset, maxResults });
@@ -572,7 +585,12 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
       return `Found ${results.length} block(s) matching ${combineMode.toUpperCase()} query:\n${summary}`;
     } else if (toolName === "get_tag_schema") {
       // Get tag schema with property definitions
-      const tagName = args.tagName || args.tag;
+      let tagName = args.tagName || args.tag_name || args.tag;
+
+      // Handle array parameters
+      if (Array.isArray(tagName)) {
+        tagName = tagName[0];
+      }
 
       if (!tagName) {
         console.error("[Tool] Missing tag name parameter");
@@ -607,12 +625,17 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
     } else if (toolName === "searchBlocksByReference") {
       // Search for blocks that reference a specific page
       // Support many parameter name variations that AI models might use
-      const pageName = args.pageName || args.page || args.alias || args.name 
+      let pageName = args.pageName || args.page_name || args.page || args.alias || args.name 
         || args.query || args.reference || args.target || args.text || args.blockName
         || args.searchText || args.pageTitle || args.title || args.reference_page_name;
       const maxResults = args.maxResults || 50;
 
       console.log("[Tool] searchBlocksByReference args received:", JSON.stringify(args));
+
+      // Handle array parameters (AI sometimes sends ["name"] instead of "name")
+      if (Array.isArray(pageName)) {
+        pageName = pageName[0];
+      }
 
       if (!pageName) {
         console.error("[Tool] Missing page name parameter. Args:", args);

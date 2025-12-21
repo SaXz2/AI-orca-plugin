@@ -14,6 +14,12 @@ export interface MessageBuildParams {
   contextText?: string;
 }
 
+export interface ConversationBuildParams {
+  messages: Message[];
+  systemPrompt?: string;
+  contextText?: string;
+}
+
 export interface ToolResultParams extends MessageBuildParams {
   assistantContent: string;
   toolCalls: any[];
@@ -26,7 +32,7 @@ export interface ToolResultParams extends MessageBuildParams {
 function messageToApi(m: Message): OpenAIChatMessage {
   const msg: OpenAIChatMessage = {
     role: m.role as any,
-    content: m.content,
+    content: m.role === "assistant" && !m.content ? null : m.content,
   };
   if (m.tool_calls) msg.tool_calls = m.tool_calls;
   if (m.tool_call_id) {
@@ -44,6 +50,52 @@ function buildSystemContent(systemPrompt?: string, contextText?: string): string
   if (systemPrompt?.trim()) parts.push(systemPrompt.trim());
   if (contextText?.trim()) parts.push(`Context:\n${contextText.trim()}`);
   return parts.length > 0 ? parts.join("\n\n") : null;
+}
+
+/**
+ * Build chat messages from full conversation history.
+ *
+ * Standard format: Preserves OpenAI tool-calling roles/fields.
+ * Fallback format: Strips tool_calls and converts tool messages into user messages.
+ */
+export function buildConversationMessages(params: ConversationBuildParams): {
+  standard: OpenAIChatMessage[];
+  fallback: OpenAIChatMessage[];
+} {
+  const { messages, systemPrompt, contextText } = params;
+
+  const systemContent = buildSystemContent(systemPrompt, contextText);
+  const history = messages.filter((m) => !m.localOnly).map(messageToApi);
+
+  const standard: OpenAIChatMessage[] = [
+    ...(systemContent ? [{ role: "system" as const, content: systemContent }] : []),
+    ...history,
+  ];
+
+  const fallback: OpenAIChatMessage[] = [
+    ...(systemContent ? [{ role: "system" as const, content: systemContent }] : []),
+    ...history.flatMap((m) => {
+      if (m.role === "tool") {
+        const toolName = m.name || "tool";
+        return [
+          {
+            role: "user" as const,
+            content: `Tool Result [${toolName}]:\n${m.content ?? ""}`,
+          },
+        ];
+      }
+
+      if (m.role === "assistant") {
+        const { tool_calls, ...rest } = m;
+        return [rest as OpenAIChatMessage];
+      }
+
+      // user/system messages
+      return [m];
+    }),
+  ];
+
+  return { standard, fallback };
 }
 
 /**

@@ -1,6 +1,5 @@
 import type { PanelProps } from "../orca.d.ts";
 
-import { openAIChatCompletionsStream, type OpenAIChatMessage } from "../services/openai-client";
 import { buildContextForSend } from "../services/context-builder";
 import { contextStore, type ContextRef } from "../store/context-store";
 import { closeAiChatPanel, getAiChatPluginName } from "../ui/ai-chat-ui";
@@ -30,8 +29,8 @@ import {
 import { sessionStore, updateSessionStore, markSessionSaved, clearSessionStore } from "../store/session-store";
 import { TOOLS, executeTool } from "../services/ai-tools";
 import { nowId, safeText } from "../utils/text-utils";
-import { buildChatMessages, buildMessagesWithToolResults } from "../services/message-builder";
-import { streamChatWithRetry, mergeToolCalls, type ToolCallInfo } from "../services/chat-stream-handler";
+import { buildConversationMessages } from "../services/message-builder";
+import { streamChatWithRetry, type ToolCallInfo } from "../services/chat-stream-handler";
 
 const React = window.React as unknown as {
   createElement: typeof window.React.createElement;
@@ -267,23 +266,25 @@ export default function AiChatPanel({ panelId }: PanelProps) {
         orca.notify("warn", `Context build failed: ${String(err?.message ?? err ?? "unknown error")}`);
       }
 
-      // Build initial messages
-      const apiMessages = buildChatMessages({
-        messages,
-        userContent: content,
-        systemPrompt: settings.systemPrompt,
-        contextText,
-      });
+      // Maintain an in-memory conversation so multi-round tool calls include prior tool results.
+      const conversation: Message[] = [...messages.filter((m) => !m.localOnly), userMsg];
 
       // Create assistant message placeholder
       const assistantId = nowId();
+      const assistantCreatedAt = Date.now();
       setStreamingMessageId(assistantId);
-      setMessages((prev) => [...prev, { id: assistantId, role: "assistant", content: "", createdAt: Date.now() }]);
+      setMessages((prev) => [...prev, { id: assistantId, role: "assistant", content: "", createdAt: assistantCreatedAt }]);
       queueMicrotask(scrollToBottom);
 
       // Stream initial response with timeout protection
       let currentContent = "";
       let toolCalls: ToolCallInfo[] = [];
+
+      const { standard: apiMessages, fallback: apiMessagesFallback } = buildConversationMessages({
+        messages: conversation,
+        systemPrompt: settings.systemPrompt,
+        contextText,
+      });
 
       for await (const chunk of streamChatWithRetry(
         {
@@ -296,7 +297,7 @@ export default function AiChatPanel({ panelId }: PanelProps) {
           tools: TOOLS,
         },
         apiMessages,
-        apiMessages, // 初始请求不需要 fallback 格式，两者相同
+        apiMessagesFallback,
       )) {
         if (chunk.type === "content") {
           currentContent += chunk.content;
@@ -312,18 +313,30 @@ export default function AiChatPanel({ panelId }: PanelProps) {
         updateMessage(assistantId, { content: "(empty response)" });
       }
 
+      conversation.push({
+        id: assistantId,
+        role: "assistant",
+        content: currentContent,
+        createdAt: assistantCreatedAt,
+        tool_calls: toolCalls.length > 0 ? toolCalls : undefined,
+      });
+
       // Handle tool calls with multi-round support
       const MAX_TOOL_ROUNDS = 3;
       let toolRound = 0;
       let currentToolCalls = toolCalls;
       let currentAssistantId = assistantId;
-      let currentAssistantContent = currentContent;
+      const allToolResultMessages: Message[] = [];
 
       while (currentToolCalls.length > 0 && toolRound < MAX_TOOL_ROUNDS) {
         toolRound++;
         console.log(`[AI] Tool calling round ${toolRound}/${MAX_TOOL_ROUNDS}`);
 
         updateMessage(currentAssistantId, { tool_calls: currentToolCalls });
+
+        // Keep tool_calls in the conversation snapshot
+        const assistantIdx = conversation.findIndex((m) => m.id === currentAssistantId);
+        if (assistantIdx >= 0) conversation[assistantIdx].tool_calls = currentToolCalls;
 
         // Execute tools
         const toolResultMessages: Message[] = [];
@@ -348,28 +361,29 @@ export default function AiChatPanel({ panelId }: PanelProps) {
           });
         }
 
+        allToolResultMessages.push(...toolResultMessages);
+        conversation.push(...toolResultMessages);
+
         setMessages((prev) => [...prev, ...toolResultMessages]);
         queueMicrotask(scrollToBottom);
 
-        // Build messages with tool results
-        const { standard, fallback } = buildMessagesWithToolResults({
-          messages,
-          userContent: content,
+        // Build messages for next response including all prior tool results
+        const { standard, fallback } = buildConversationMessages({
+          messages: conversation,
           systemPrompt: settings.systemPrompt,
           contextText,
-          assistantContent: currentAssistantContent,
-          toolCalls: currentToolCalls,
-          toolResults: toolResultMessages,
         });
 
         // Create assistant message for next response
         const nextAssistantId = nowId();
+        const nextAssistantCreatedAt = Date.now();
         setStreamingMessageId(nextAssistantId);
-        setMessages((prev) => [...prev, { id: nextAssistantId, role: "assistant", content: "", createdAt: Date.now() }]);
+        setMessages((prev) => [...prev, { id: nextAssistantId, role: "assistant", content: "", createdAt: nextAssistantCreatedAt }]);
         queueMicrotask(scrollToBottom);
 
         let nextContent = "";
         let nextToolCalls: ToolCallInfo[] = [];
+        const enableTools = toolRound < MAX_TOOL_ROUNDS;
 
         try {
           for await (const chunk of streamChatWithRetry(
@@ -380,7 +394,7 @@ export default function AiChatPanel({ panelId }: PanelProps) {
               temperature: settings.temperature,
               maxTokens: settings.maxTokens,
               signal: aborter.signal,
-              tools: TOOLS, // Enable tools for potential next round
+              tools: enableTools ? TOOLS : undefined, // Last round: disable tools to force an answer
             },
             standard,
             fallback,
@@ -389,7 +403,7 @@ export default function AiChatPanel({ panelId }: PanelProps) {
             if (chunk.type === "content") {
               nextContent += chunk.content;
               updateMessage(nextAssistantId, { content: nextContent });
-            } else if (chunk.type === "tool_calls") {
+            } else if (chunk.type === "tool_calls" && enableTools) {
               nextToolCalls = chunk.toolCalls;
             }
           }
@@ -400,22 +414,45 @@ export default function AiChatPanel({ panelId }: PanelProps) {
 
         setStreamingMessageId(null);
 
+        if (nextToolCalls.length > 0) {
+          updateMessage(nextAssistantId, { tool_calls: nextToolCalls });
+        }
+
+        // If the model returned nothing, surface tool outputs so the user isn't left with an empty bubble.
+        if (nextContent.trim().length === 0 && nextToolCalls.length === 0) {
+          const toolFallback = allToolResultMessages.map((m) => m.content).join("\n\n").trim();
+          const fallbackText = toolFallback || "(empty response from API)";
+          updateMessage(nextAssistantId, { content: fallbackText });
+          nextContent = fallbackText;
+        }
+
+        conversation.push({
+          id: nextAssistantId,
+          role: "assistant",
+          content: nextContent,
+          createdAt: nextAssistantCreatedAt,
+          tool_calls: nextToolCalls.length > 0 ? nextToolCalls : undefined,
+        });
+
         // Check if model wants to call more tools
         if (nextToolCalls.length > 0 && toolRound < MAX_TOOL_ROUNDS) {
           console.log(`[AI] Model requested ${nextToolCalls.length} more tool(s), continuing to round ${toolRound + 1}`);
           currentToolCalls = nextToolCalls;
           currentAssistantId = nextAssistantId;
-          currentAssistantContent = nextContent;
           // Continue loop
         } else {
           // No more tool calls or reached max rounds
           if (nextToolCalls.length > 0) {
             console.warn(`[AI] Reached max tool rounds (${MAX_TOOL_ROUNDS}), stopping`);
-            const warning = nextContent ? `${nextContent}\n\n_[已达到最大工具调用轮数限制]_` : "_[已达到最大工具调用轮数限制]_";
-            updateMessage(nextAssistantId, { content: warning });
-          } else if (nextContent.trim().length === 0) {
-            const toolFallback = toolResultMessages.map((m) => m.content).join("\n\n").trim();
-            updateMessage(nextAssistantId, { content: toolFallback || "(empty response from API)" });
+            const toolFallback = allToolResultMessages.map((m) => m.content).join("\n\n").trim();
+            const warning = [
+              nextContent?.trim(),
+              toolFallback ? `\n\n${toolFallback}` : "",
+              "\n\n_[已达到最大工具调用轮数限制]_",
+            ]
+              .join("")
+              .trim();
+            updateMessage(nextAssistantId, { content: warning || "_[已达到最大工具调用轮数限制]_" });
           }
 
           console.log(`[AI] Tool calling complete after ${toolRound} round(s) (${nextContent.length} chars)`);
