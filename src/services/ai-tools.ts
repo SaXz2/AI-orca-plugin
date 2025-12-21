@@ -11,6 +11,7 @@ import {
   searchTasks,
   searchJournalEntries,
   queryBlocksAdvanced,
+  searchBlocksByReference,
   getTagSchema,
   getCachedTagSchema,
 } from "./search-service";
@@ -229,6 +230,27 @@ export const TOOLS: OpenAITool[] = [
           },
         },
         required: ["tagName"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "searchBlocksByReference",
+      description: "Search for notes/blocks that reference (link to) a specific page using [[page name]] wiki-link syntax. Use this when the user asks 'which notes reference [[X]]?', 'find backlinks to X', or '哪些笔记引用了[[X]]？'. This is MORE PRECISE than text search as it only matches actual wiki-links, not plain text mentions.",
+      parameters: {
+        type: "object",
+        properties: {
+          pageName: {
+            type: "string",
+            description: "The page name or alias to find references to (e.g., '项目A', 'Project A', 'meeting notes')",
+          },
+          maxResults: {
+            type: "number",
+            description: "Maximum number of results to return (default: 50, max: 50)",
+          },
+        },
+        required: ["pageName"],
       },
     },
   },
@@ -582,6 +604,36 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
       result += `- For number/text properties, use the appropriate operator and value type.\n`;
 
       return result;
+    } else if (toolName === "searchBlocksByReference") {
+      // Search for blocks that reference a specific page
+      // Support many parameter name variations that AI models might use
+      const pageName = args.pageName || args.page || args.alias || args.name 
+        || args.query || args.reference || args.target || args.text || args.blockName
+        || args.searchText || args.pageTitle || args.title || args.reference_page_name;
+      const maxResults = args.maxResults || 50;
+
+      console.log("[Tool] searchBlocksByReference args received:", JSON.stringify(args));
+
+      if (!pageName) {
+        console.error("[Tool] Missing page name parameter. Args:", args);
+        return "Error: Missing page name parameter. Please specify which page to find references to.";
+      }
+
+      console.log("[Tool] searchBlocksByReference:", { pageName, maxResults });
+
+      const results = await searchBlocksByReference(pageName, Math.min(maxResults, 50));
+
+      if (results.length === 0) {
+        return `No blocks found referencing "[[${pageName}]]". This page may have no backlinks, or the page name may not exist.`;
+      }
+
+      const summary = results.map((r, i) => {
+        const linkTitle = r.title.replace(/[\[\]]/g, '');
+        const body = r.fullContent ?? r.content;
+        return `${i + 1}. [${linkTitle}](orca-block:${r.id})\n${body}`;
+      }).join("\n\n");
+
+      return `Found ${results.length} block(s) referencing "[[${pageName}]]":\n${summary}`;
     } else {
       console.error("[Tool] Unknown tool:", toolName);
       return `Unknown tool: ${toolName}`;

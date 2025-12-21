@@ -463,6 +463,79 @@ export async function queryBlocksAdvanced(
 }
 
 /**
+ * Search for blocks that reference a specific page/block by alias name
+ * Uses QueryKindRef (kind: 6) for precise link matching
+ * @param aliasName - The alias/page name being referenced (e.g., "项目A")
+ * @param maxResults - Maximum number of results to return (default: 50)
+ * @returns Array of search results containing blocks that link to the specified page
+ */
+export async function searchBlocksByReference(
+  aliasName: string,
+  maxResults: number = 50
+): Promise<SearchResult[]> {
+  console.log("[searchBlocksByReference] Called with:", { aliasName, maxResults });
+
+  try {
+    if (!aliasName || typeof aliasName !== "string") {
+      console.error("[searchBlocksByReference] Invalid aliasName:", aliasName);
+      return [];
+    }
+
+    // Step 1: Resolve alias to blockId
+    const targetBlock = await orca.invokeBackend("get-block-by-alias", aliasName);
+
+    if (!targetBlock) {
+      console.warn(`[searchBlocksByReference] Page "${aliasName}" not found`);
+      throw new Error(`Page "${aliasName}" not found`);
+    }
+
+    const blockId = targetBlock.id;
+    console.log(`[searchBlocksByReference] Resolved "${aliasName}" to blockId: ${blockId}`);
+
+    // Step 2: Build QueryRef2 query (kind: 6)
+    const description = {
+      q: {
+        kind: 100, // SELF_AND
+        conditions: [
+          {
+            kind: 6, // QueryKindRef
+            blockId: blockId,
+          },
+        ],
+      },
+      sort: [["_modified", "DESC"] as [string, "ASC" | "DESC"]],
+      pageSize: Math.min(Math.max(1, maxResults), 50),
+    };
+
+    console.log(
+      "[searchBlocksByReference] Query description:",
+      JSON.stringify(description)
+    );
+
+    // Step 3: Execute query
+    const result = await orca.invokeBackend("query", description);
+    const payload = unwrapBackendResult<any>(result);
+    throwIfBackendError(payload, "query");
+    const blocks = unwrapBlocks(payload);
+
+    if (!Array.isArray(blocks)) {
+      console.warn("[searchBlocksByReference] Result is not an array:", blocks);
+      return [];
+    }
+
+    // Step 4: Transform results
+    const limitedBlocks = blocks.slice(0, maxResults);
+    const trees = await fetchBlockTrees(limitedBlocks);
+    return transformToSearchResults(trees, { includeProperties: false });
+  } catch (error: any) {
+    console.error(`[searchBlocksByReference] Failed to search references to "${aliasName}":`, error);
+    throw new Error(
+      `Reference search failed: ${error?.message ?? error ?? "unknown error"}`
+    );
+  }
+}
+
+/**
  * Property type information for tag schema
  */
 export interface TagPropertySchema {
