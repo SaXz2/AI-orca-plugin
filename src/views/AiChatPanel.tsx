@@ -429,10 +429,11 @@ export default function AiChatPanel({ panelId }: PanelProps) {
           return `No notes found with tag "${tagName}".`;
         }
 
-        // Optimized format: remove redundant fields (tags, date) and simplify output
+        // Format with clickable block links
         const summary = results.map((r, i) => {
+          const linkTitle = r.title.replace(/[\[\]]/g, '');  // Escape brackets
           const body = r.fullContent ?? r.content;
-          return `${i + 1}.\n${body}`;
+          return `${i + 1}. [${linkTitle}](orca-block:${r.id})\n${body}`;
         }).join("\n\n");
 
         return `Found ${results.length} note(s) with tag "${tagName}":\n${summary}`;
@@ -458,11 +459,11 @@ export default function AiChatPanel({ panelId }: PanelProps) {
           return `No notes found containing "${searchText}".`;
         }
 
-        // Optimized format: remove redundant fields (tags, date) and simplify output
+        // Format with clickable block links
         const summary = results.map((r, i) => {
-          // Use fullContent (includes children) or fallback to content
+          const linkTitle = r.title.replace(/[\[\]]/g, '');  // Escape brackets
           const body = r.fullContent ?? r.content;
-          return `${i + 1}.\n${body}`;
+          return `${i + 1}. [${linkTitle}](orca-block:${r.id})\n${body}`;
         }).join("\n\n");
 
         return `Found ${results.length} note(s) containing "${searchText}":\n${summary}`;
@@ -489,10 +490,11 @@ export default function AiChatPanel({ panelId }: PanelProps) {
           return `No notes found with tag "${tagName}"${filterDesc}.`;
         }
 
-        // Optimized format: remove redundant fields and simplify output
+        // Format with clickable block links
         const summary = results.map((r, i) => {
+          const linkTitle = r.title.replace(/[\[\]]/g, '');  // Escape brackets
           const body = r.fullContent ?? r.content;
-          return `${i + 1}.\n${body}`;
+          return `${i + 1}. [${linkTitle}](orca-block:${r.id})\n${body}`;
         }).join("\n\n");
 
         const filterDesc = properties.length > 0

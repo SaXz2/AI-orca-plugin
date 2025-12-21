@@ -134,11 +134,78 @@ function renderInlineNode(node: MarkdownInlineNode, key: number): any {
       );
 
     case "link":
+      // Check if this is an orca-block link
+      const isBlockLink = node.url.startsWith("orca-block:");
+      if (isBlockLink) {
+        const blockId = parseInt(node.url.replace("orca-block:", ""), 10);
+        return createElement(
+          "span",
+          {
+            key,
+            style: {
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "4px",
+            },
+          },
+          // Link text
+          createElement(
+            "span",
+            {
+              style: {
+                color: "var(--orca-color-primary, #007bff)",
+                fontWeight: 500,
+              },
+            },
+            ...node.children.map((child, i) => renderInlineNode(child, i)),
+          ),
+          // Jump arrow button
+          createElement(
+            "span",
+            {
+              style: {
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                width: "20px",
+                height: "20px",
+                borderRadius: "4px",
+                background: "var(--orca-color-primary, #007bff)",
+                color: "#fff",
+                cursor: "pointer",
+                fontSize: "12px",
+                transition: "transform 0.15s ease, background 0.15s ease",
+                flexShrink: 0,
+              },
+              title: "Jump to this block",
+              onClick: (e: any) => {
+                e.preventDefault();
+                e.stopPropagation();
+                if (!isNaN(blockId)) {
+                  orca.nav.openInLastPanel("block", { blockId });
+                }
+              },
+              onMouseEnter: (e: any) => {
+                e.currentTarget.style.transform = "scale(1.1)";
+                e.currentTarget.style.background = "var(--orca-color-primary-hover, #0056b3)";
+              },
+              onMouseLeave: (e: any) => {
+                e.currentTarget.style.transform = "scale(1)";
+                e.currentTarget.style.background = "var(--orca-color-primary, #007bff)";
+              },
+            },
+            createElement("i", { className: "ti ti-arrow-right" }),
+          ),
+        );
+      }
+      // Normal external link
       return createElement(
         "a",
         {
           key,
-          href: "#",
+          href: node.url,
+          target: "_blank",
+          rel: "noopener noreferrer",
           title: node.url,
           style: {
             color: "var(--orca-color-primary, #007bff)",
@@ -146,7 +213,7 @@ function renderInlineNode(node: MarkdownInlineNode, key: number): any {
             cursor: "pointer",
           },
           onClick: (e: any) => {
-            e.preventDefault();
+            // Allow default behavior for external links
           },
         },
         ...node.children.map((child, i) => renderInlineNode(child, i)),
