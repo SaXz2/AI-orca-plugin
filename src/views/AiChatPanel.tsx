@@ -31,7 +31,7 @@ import { sessionStore, updateSessionStore, markSessionSaved, clearSessionStore }
 import { TOOLS, executeTool } from "../services/ai-tools";
 import { nowId, safeText } from "../utils/text-utils";
 import { buildChatMessages, buildMessagesWithToolResults } from "../services/message-builder";
-import { streamChatCompletion, streamChatWithRetry, mergeToolCalls, type ToolCallInfo } from "../services/chat-stream-handler";
+import { streamChatWithRetry, mergeToolCalls, type ToolCallInfo } from "../services/chat-stream-handler";
 
 const React = window.React as unknown as {
   createElement: typeof window.React.createElement;
@@ -281,20 +281,23 @@ export default function AiChatPanel({ panelId }: PanelProps) {
       setMessages((prev) => [...prev, { id: assistantId, role: "assistant", content: "", createdAt: Date.now() }]);
       queueMicrotask(scrollToBottom);
 
-      // Stream initial response
+      // Stream initial response with timeout protection
       let currentContent = "";
       let toolCalls: ToolCallInfo[] = [];
 
-      for await (const chunk of streamChatCompletion({
-        apiUrl: settings.apiUrl,
-        apiKey: settings.apiKey,
-        model,
-        messages: apiMessages,
-        temperature: settings.temperature,
-        maxTokens: settings.maxTokens,
-        signal: aborter.signal,
-        tools: TOOLS,
-      })) {
+      for await (const chunk of streamChatWithRetry(
+        {
+          apiUrl: settings.apiUrl,
+          apiKey: settings.apiKey,
+          model,
+          temperature: settings.temperature,
+          maxTokens: settings.maxTokens,
+          signal: aborter.signal,
+          tools: TOOLS,
+        },
+        apiMessages,
+        apiMessages, // 初始请求不需要 fallback 格式，两者相同
+      )) {
         if (chunk.type === "content") {
           currentContent += chunk.content;
           updateMessage(assistantId, { content: currentContent });
