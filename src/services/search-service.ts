@@ -5,6 +5,7 @@
 
 import { buildQueryDescription } from "../utils/query-builder";
 import type { QueryBlocksByTagOptions } from "../utils/query-types";
+import { safeText } from "../utils/text-utils";
 
 export interface SearchResult {
   id: number;
@@ -492,22 +493,6 @@ function extractContent(block: any): string {
   return text.length > 200 ? text.substring(0, 200) + "..." : text;
 }
 
-/**
- * Extract safe text from block
- */
-function safeText(block: any): string {
-  if (!block) return "";
-  if (typeof block.text === "string" && block.text.trim()) return block.text.trim();
-  if (Array.isArray(block.content)) {
-    return block.content
-      .map((f: any) =>
-        (f?.t === "text" || f?.t === "t") && typeof f.v === "string" ? f.v : "",
-      )
-      .join("")
-      .trim();
-  }
-  return "";
-}
 
 function findPropertyValueInList(list: any, propertyName: string): any | undefined {
   if (!Array.isArray(list)) return undefined;

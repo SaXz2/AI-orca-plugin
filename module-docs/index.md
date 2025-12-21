@@ -13,6 +13,9 @@
 3. `module-docs/03-settings.md`：设置面板接入（settings schema → Orca 设置面板 `.orca-settings`）
 4. `module-docs/04-context.md`：上下文读取与选择（block/page/tag、预览、右键菜单入口）
 5. `module-docs/05-session-persistence.md`：会话持久化（保存/加载/历史/自动保存）
+6. `module-docs/06-ai-tools.md`：AI 工具系统（工具定义、执行器、结果格式化）
+7. `module-docs/07-search-service.md`：搜索服务（标签搜索、文本搜索、属性查询）
+8. `module-docs/08-query-utilities.md`：查询工具链（类型定义、过滤器解析、查询构建）
 
 ## 约定（所有模块通用）
 

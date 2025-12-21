@@ -1,4 +1,5 @@
 import type { DbId } from "../orca.d.ts";
+import { safeText } from "../utils/text-utils";
 
 const { proxy } = (window as any).Valtio as {
   proxy: <T extends object>(obj: T) => T;
@@ -53,7 +54,7 @@ export function addCurrentPage(rootBlockId: DbId, title: string): boolean {
  */
 export function addPageById(rootBlockId: DbId): boolean {
   const block = (orca.state.blocks as any)?.[rootBlockId];
-  const title = safeTextFromBlock(block) || `Page ${rootBlockId}`;
+  const title = safeText(block) || `Page ${rootBlockId}`;
   return addContext({ kind: "page", rootBlockId, title });
 }
 
@@ -84,24 +85,4 @@ export function getDisplayLabel(ref: ContextRef): string {
     case "tag":
       return `#${ref.tag}`;
   }
-}
-
-/**
- * Helper to extract text from block-like object
- */
-function safeTextFromBlock(block: any): string {
-  if (!block) return "";
-  if (typeof block.text === "string" && block.text.trim()) return block.text.trim();
-  if (Array.isArray(block.content)) {
-    return block.content
-      .map((f: any) => {
-        if (!f) return "";
-        if (f.t === "text" && typeof f.v === "string") return f.v;
-        if (typeof f.v === "string") return f.v;
-        return "";
-      })
-      .join("")
-      .trim();
-  }
-  return "";
 }
