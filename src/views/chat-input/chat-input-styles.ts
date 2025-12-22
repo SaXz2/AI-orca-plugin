@@ -30,7 +30,7 @@ export const addContextButtonStyle = {
   height: "24px",
   fontSize: 12,
   color: "var(--orca-color-text-2)",
-  borderRadius: "12px",
+  borderRadius: "8px",
   background: "var(--orca-color-bg-3)",
 };
 
@@ -39,7 +39,7 @@ export const modelButtonStyle = {
   height: "24px",
   fontSize: 12,
   color: "var(--orca-color-text-2)",
-  borderRadius: "12px",
+  borderRadius: "8px",
   background: "var(--orca-color-bg-3)",
   display: "flex",
   alignItems: "center",

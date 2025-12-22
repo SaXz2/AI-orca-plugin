@@ -639,8 +639,6 @@ export default function AiChatPanel({ panelId }: PanelProps) {
         onClearAll: handleClearAllSessions,
         onNewSession: handleNewSession,
       }),
-      // Stop Button (Only when sending)
-      sending && createElement(Button, { variant: "plain", onClick: stop, title: "Stop generation" }, createElement("i", { className: "ti ti-player-stop" })),
       // More Menu (Save, Settings, Clear)
       createElement(HeaderMenu, {
         onSaveSession: handleSaveSession,
@@ -662,6 +660,7 @@ export default function AiChatPanel({ panelId }: PanelProps) {
     // Chat Input
     createElement(ChatInput, {
       onSend: (text: string) => handleSend(text),
+      onStop: stop,
       disabled: sending,
       currentPageId: rootBlockId,
       currentPageTitle,

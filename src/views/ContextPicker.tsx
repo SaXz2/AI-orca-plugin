@@ -274,7 +274,7 @@ export default function ContextPicker({
     zIndex: 99999,
     background: "var(--orca-color-bg-1)",
     border: "1px solid var(--orca-color-border)",
-    borderRadius: 8,
+    borderRadius: 12,
     boxShadow: "0 4px 16px rgba(0,0,0,0.15)",
     minWidth: 240,
     maxWidth: 320,
@@ -290,7 +290,7 @@ export default function ContextPicker({
     const viewportPadding = 8;
     const menuMaxWidth = 320;
     const menuMaxHeight = 400;
-    const gap = 4;
+    const gap = 8;
 
     let left = rect.left;
     // Removed default "top" calculation here
@@ -302,13 +302,15 @@ export default function ContextPicker({
 
     menuStyle.left = left;
 
-    // Smart positioning: Prefer "bottom" (show above) if space below is limited
+    // Smart positioning: Prefer "top" (show above) by default for chat inputs
     const spaceBelow = window.innerHeight - rect.bottom;
     const spaceAbove = rect.top;
     
-    // If space below is less than menu height AND space above is larger, show above
-    // Assuming button is at bottom, spaceBelow is small
-    const showAbove = spaceBelow < menuMaxHeight && spaceAbove > spaceBelow;
+    // Default to showing above unless space is very tight and below has more space
+    let showAbove = true;
+    if (spaceAbove < menuMaxHeight && spaceBelow > spaceAbove) {
+       showAbove = false;
+    }
 
     if (showAbove) {
         // Position using 'bottom' property so it grows upwards from the button

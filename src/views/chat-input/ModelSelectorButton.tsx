@@ -38,7 +38,7 @@ export default function ModelSelectorButton({
     {
       defaultPlacement: "top",
       placement: "vertical",
-      alignment: "right",
+      alignment: "left",
       allowBeyondContainer: true,
       offset: 8,
       menu: (close: () => void) =>

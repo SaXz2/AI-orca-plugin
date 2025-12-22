@@ -33,6 +33,7 @@ const { Button, CompositionTextArea } = orca.components;
 
 type Props = {
   onSend: (message: string) => void;
+  onStop?: () => void;
   disabled?: boolean;
   currentPageId: DbId | null;
   currentPageTitle: string;
@@ -52,8 +53,8 @@ const inputContainerStyle: React.CSSProperties = {
 
 const textareaWrapperStyle = (focused: boolean): React.CSSProperties => ({
   display: "flex",
-  gap: "12px",
-  alignItems: "flex-end",
+  flexDirection: "column",
+  gap: "8px",
   background: "var(--orca-color-bg-2)",
   borderRadius: "24px",
   padding: "12px 16px",
@@ -68,6 +69,7 @@ const textareaWrapperStyle = (focused: boolean): React.CSSProperties => ({
 
 export default function ChatInput({
   onSend,
+  onStop,
   disabled = false,
   currentPageId,
   currentPageTitle,
@@ -150,59 +152,85 @@ export default function ChatInput({
       "div",
       { style: textareaWrapperStyle(isFocused) },
 
-      // Toolbar (Context button + Model selector)
-      createElement(
-        "div",
-        { style: { display: "flex", flexDirection: "column", gap: 4 } }, // Simple stack for tools left of input
-        createElement(
-          "div",
-          {
-            ref: addContextBtnRef as any,
-            style: { display: "flex", alignItems: "center" },
-          },
-          createElement(
-            Button,
-            {
-              variant: "plain",
-              onClick: () => setPickerOpen(!pickerOpen),
-              title: "Add Context (@)",
-              style: { padding: "4px" },
-            },
-            createElement("i", { className: "ti ti-at" })
-          )
-        ),
-        createElement(ModelSelectorButton, {
-          modelOptions,
-          selectedModel,
-          onModelChange,
-          onAddModel,
-        })
-      ),
-
-      // TextArea and Send Button Row
+      // Row 1: TextArea
       createElement(CompositionTextArea as any, {
         ref: textareaRef as any,
-        placeholder: "Ask AI... (Type '@' to add context)",
+        placeholder: "Ask AI...",
         value: text,
         onChange: (e: any) => setText(e.target.value),
         onKeyDown: handleKeyDown,
         onFocus: () => setIsFocused(true),
         onBlur: () => setIsFocused(false),
         disabled,
-        style: { ...textareaStyle, background: "transparent", border: "none", padding: 0, minHeight: "24px" }, // Override default style for cleaner look
+        style: { ...textareaStyle, width: "100%", background: "transparent", border: "none", padding: 0, minHeight: "24px" },
       }),
-      
+
+      // Row 2: Bottom Toolbar (Tools Left, Send Right)
       createElement(
-        Button,
-        {
-          variant: "solid",
-          disabled: !canSend,
-          onClick: handleSend,
-          style: { ...sendButtonStyle(canSend), borderRadius: "50%", width: "32px", height: "32px", padding: 0, display: "flex", alignItems: "center", justifyContent: "center" },
-        },
-        disabled
-          ? createElement("i", { className: "ti ti-dots" })
-          : createElement("i", { className: "ti ti-arrow-up" })
+        "div",
+        { style: { display: "flex", justifyContent: "space-between", alignItems: "center" } },
+        
+        // Left Tools: @ Button + Model Selector
+        createElement(
+          "div",
+          { style: { display: "flex", gap: 8, alignItems: "center" } },
+          createElement(
+            "div",
+            {
+              ref: addContextBtnRef as any,
+              style: { display: "flex", alignItems: "center" },
+            },
+            createElement(
+              Button,
+              {
+                variant: "plain",
+                onClick: () => setPickerOpen(!pickerOpen),
+                title: "Add Context (@)",
+                style: { padding: "4px" },
+              },
+              createElement("i", { className: "ti ti-at" })
+            )
+          ),
+          createElement(ModelSelectorButton, {
+            modelOptions,
+            selectedModel,
+            onModelChange,
+            onAddModel,
+          })
+        ),
+
+        // Right Tool: Send/Stop Button
+        disabled && onStop
+          ? createElement(
+              Button,
+              {
+                variant: "solid",
+                onClick: onStop,
+                title: "Stop generation",
+                style: { 
+                  ...sendButtonStyle(true), 
+                  borderRadius: "50%", 
+                  width: "32px", 
+                  height: "32px", 
+                  padding: 0, 
+                  display: "flex", 
+                  alignItems: "center", 
+                  justifyContent: "center",
+                  background: "var(--orca-color-error, #cf222e)" // Use error color for stop action
+                },
+              },
+              createElement("i", { className: "ti ti-player-stop" })
+            )
+          : createElement(
+              Button,
+              {
+                variant: "solid",
+                disabled: !canSend,
+                onClick: handleSend,
+                style: { ...sendButtonStyle(canSend), borderRadius: "50%", width: "32px", height: "32px", padding: 0, display: "flex", alignItems: "center", justifyContent: "center" },
+              },
+              createElement("i", { className: "ti ti-arrow-up" })
+            )
       )
     )
   );
