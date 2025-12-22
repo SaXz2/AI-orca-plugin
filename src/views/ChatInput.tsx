@@ -42,6 +42,30 @@ type Props = {
   onAddModel?: (model: string) => void | Promise<void>;
 };
 
+// Enhanced Styles from UI_REFACTOR.md
+const inputContainerStyle: React.CSSProperties = {
+  padding: "16px",
+  borderTop: "1px solid var(--orca-color-border)",
+  background: "var(--orca-color-bg-1)",
+  // backdropFilter: "blur(10px)", // Optional if environment supports it
+};
+
+const textareaWrapperStyle = (focused: boolean): React.CSSProperties => ({
+  display: "flex",
+  gap: "12px",
+  alignItems: "flex-end",
+  background: "var(--orca-color-bg-2)",
+  borderRadius: "24px",
+  padding: "12px 16px",
+  border: focused 
+    ? "1px solid var(--orca-color-primary, #007bff)" 
+    : "1px solid var(--orca-color-border)",
+  boxShadow: focused
+    ? "0 4px 12px rgba(0,123,255,0.12)"
+    : "0 2px 8px rgba(0,0,0,0.04)",
+  transition: "all 0.2s ease",
+});
+
 export default function ChatInput({
   onSend,
   disabled = false,
@@ -107,7 +131,7 @@ export default function ChatInput({
 
   return createElement(
     "div",
-    { style: containerStyle },
+    { style: inputContainerStyle },
 
     // Context Chips 区域
     createElement(ContextChips, { items: contextSnap.selected }),
@@ -124,27 +148,27 @@ export default function ChatInput({
     // Input Wrapper
     createElement(
       "div",
-      { style: inputWrapperStyle(isFocused) },
+      { style: textareaWrapperStyle(isFocused) },
 
       // Toolbar (Context button + Model selector)
       createElement(
         "div",
-        { style: toolbarStyle },
+        { style: { display: "flex", flexDirection: "column", gap: 4 } }, // Simple stack for tools left of input
         createElement(
           "div",
           {
             ref: addContextBtnRef as any,
-            style: { display: "flex", alignItems: "center", gap: 8 },
+            style: { display: "flex", alignItems: "center" },
           },
           createElement(
             Button,
             {
               variant: "plain",
               onClick: () => setPickerOpen(!pickerOpen),
-              style: addContextButtonStyle,
+              title: "Add Context (@)",
+              style: { padding: "4px" },
             },
-            createElement("i", { className: "ti ti-at", style: { marginRight: 4 } }),
-            "Add context"
+            createElement("i", { className: "ti ti-at" })
           )
         ),
         createElement(ModelSelectorButton, {
@@ -156,38 +180,29 @@ export default function ChatInput({
       ),
 
       // TextArea and Send Button Row
+      createElement(CompositionTextArea as any, {
+        ref: textareaRef as any,
+        placeholder: "Ask AI... (Type '@' to add context)",
+        value: text,
+        onChange: (e: any) => setText(e.target.value),
+        onKeyDown: handleKeyDown,
+        onFocus: () => setIsFocused(true),
+        onBlur: () => setIsFocused(false),
+        disabled,
+        style: { ...textareaStyle, background: "transparent", border: "none", padding: 0, minHeight: "24px" }, // Override default style for cleaner look
+      }),
+      
       createElement(
-        "div",
+        Button,
         {
-          style: {
-            display: "flex",
-            gap: 8,
-            alignItems: "flex-end",
-          },
+          variant: "solid",
+          disabled: !canSend,
+          onClick: handleSend,
+          style: { ...sendButtonStyle(canSend), borderRadius: "50%", width: "32px", height: "32px", padding: 0, display: "flex", alignItems: "center", justifyContent: "center" },
         },
-        createElement(CompositionTextArea as any, {
-          ref: textareaRef as any,
-          placeholder: "Type a message... (@ for context)",
-          value: text,
-          onChange: (e: any) => setText(e.target.value),
-          onKeyDown: handleKeyDown,
-          onFocus: () => setIsFocused(true),
-          onBlur: () => setIsFocused(false),
-          disabled,
-          style: textareaStyle,
-        }),
-        createElement(
-          Button,
-          {
-            variant: "solid",
-            disabled: !canSend,
-            onClick: handleSend,
-            style: sendButtonStyle(canSend),
-          },
-          disabled
-            ? createElement("i", { className: "ti ti-dots" })
-            : createElement("i", { className: "ti ti-arrow-up" })
-        )
+        disabled
+          ? createElement("i", { className: "ti ti-dots" })
+          : createElement("i", { className: "ti ti-arrow-up" })
       )
     )
   );

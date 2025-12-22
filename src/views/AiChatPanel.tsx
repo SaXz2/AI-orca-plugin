@@ -7,7 +7,10 @@ import { uiStore } from "../store/ui-store";
 import { findViewPanelById } from "../utils/panel-tree";
 import ChatInput from "./ChatInput";
 import MarkdownMessage from "../components/MarkdownMessage";
+import MessageItem from "./MessageItem";
 import ChatHistoryMenu from "./ChatHistoryMenu";
+import HeaderMenu from "./HeaderMenu";
+import EmptyState from "./EmptyState";
 import LoadingDots from "../components/LoadingDots";
 import { injectChatStyles } from "../styles/chat-animations";
 import {
@@ -36,10 +39,6 @@ import {
   headerStyle,
   headerTitleStyle,
   messageListStyle,
-  messageRowStyle,
-  messageBubbleStyle,
-  cursorStyle,
-  toolCallStyle,
   loadingContainerStyle,
   loadingBubbleStyle,
 } from "../styles/ai-chat-styles";
@@ -110,15 +109,7 @@ export default function AiChatPanel({ panelId }: PanelProps) {
   const [sessions, setSessions] = useState<SavedSession[]>([]);
   const [sessionsLoaded, setSessionsLoaded] = useState(false);
 
-  const [messages, setMessages] = useState<Message[]>(() => [
-    {
-      id: nowId(),
-      role: "assistant",
-      content: "Hello! Please configure API Key / URL / Model in Settings first, then start chatting.",
-      createdAt: Date.now(),
-      localOnly: true,
-    },
-  ]);
+  const [messages, setMessages] = useState<Message[]>([]);
 
   const listRef = useRef<HTMLDivElement | null>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -246,7 +237,7 @@ export default function AiChatPanel({ panelId }: PanelProps) {
   // Chat Send Logic
   // ─────────────────────────────────────────────────────────────────────────
 
-  async function handleSend(content: string) {
+  async function handleSend(content: string, historyOverride?: Message[]) {
     if (!content || sending) return;
 
     const pluginName = getAiChatPluginName();
@@ -260,9 +251,15 @@ export default function AiChatPanel({ panelId }: PanelProps) {
 
     setSending(true);
 
-    // Add user message
     const userMsg: Message = { id: nowId(), role: "user", content, createdAt: Date.now() };
-    setMessages((prev) => [...prev, userMsg]);
+
+    // Use override if provided (for regeneration), otherwise append to current state
+    if (historyOverride) {
+        setMessages([...historyOverride, userMsg]);
+    } else {
+        setMessages((prev) => [...prev, userMsg]);
+    }
+    
     queueMicrotask(scrollToBottom);
 
     const aborter = new AbortController();
@@ -279,7 +276,9 @@ export default function AiChatPanel({ panelId }: PanelProps) {
       }
 
       // Maintain an in-memory conversation so multi-round tool calls include prior tool results.
-      const conversation: Message[] = [...messages.filter((m) => !m.localOnly), userMsg];
+      // Use historyOverride if available to build conversation
+      const baseMessages = historyOverride || messages;
+      const conversation: Message[] = [...baseMessages.filter((m) => !m.localOnly), userMsg];
 
       // Create assistant message placeholder
       const assistantId = nowId();
@@ -493,6 +492,27 @@ export default function AiChatPanel({ panelId }: PanelProps) {
     }
   }
 
+  const handleRegenerate = useCallback(() => {
+    if (sending) return;
+
+    // Find the last user message
+    let lastUserIdx = -1;
+    for (let i = messages.length - 1; i >= 0; i--) {
+        if (messages[i].role === 'user') {
+            lastUserIdx = i;
+            break;
+        }
+    }
+
+    if (lastUserIdx !== -1) {
+        const content = messages[lastUserIdx].content || "";
+        const historyBeforeUser = messages.slice(0, lastUserIdx);
+        // Resend using the history BEFORE the last user message, and re-using the last user content.
+        handleSend(content, historyBeforeUser);
+    }
+  }, [messages, sending]);
+
+
   function clear() {
     if (abortRef.current) abortRef.current.abort();
     setMessages([]);
@@ -554,57 +574,48 @@ export default function AiChatPanel({ panelId }: PanelProps) {
   // Render
   // ─────────────────────────────────────────────────────────────────────────
 
-  const messageElements = messages
-    .filter((m) => m.role !== "tool")
-    .map((m) =>
-      createElement(
-        "div",
-        {
-          key: m.id,
-          style: messageRowStyle(m.role),
-        },
-        createElement(
-          "div",
-          {
-            style: messageBubbleStyle(m.role),
-          },
-          createElement(MarkdownMessage, { content: m.content || "", role: m.role }),
-          streamingMessageId === m.id &&
-            createElement("span", {
-              style: cursorStyle,
-            }),
-          m.tool_calls &&
-            m.tool_calls.length > 0 &&
-            createElement(
-              "div",
-              {
-                style: toolCallStyle,
-              },
-              `🔧 ${m.tool_calls.length > 1 ? `调用 ${m.tool_calls.length} 个工具` : "调用工具"}: ${m.tool_calls.map((tc) => tc.function.name).join(", ")}`
-            )
-        )
-      )
-    );
+  let messageListContent: any[] | any;
 
-  // Add loading dots if waiting for response
-  const lastMsg = messages[messages.length - 1];
-  if (sending && lastMsg && lastMsg.role === "user") {
-    messageElements.push(
-      createElement(
-        "div",
-        {
-          key: "loading",
-          style: loadingContainerStyle,
-        },
+  if (messages.length === 0) {
+    messageListContent = createElement(EmptyState, {
+      onSuggestionClick: (text: string) => handleSend(text),
+    });
+  } else {
+    const messageElements = messages.map((m, i) => {
+      // Determine if this is the last message that should offer regeneration (Last AI message)
+      const isLastAi = m.role === 'assistant' && i === messages.length - 1;
+      
+      return createElement(MessageItem, {
+        key: m.id,
+        message: m,
+        isLastAiMessage: isLastAi,
+        isStreaming: streamingMessageId === m.id,
+        onRegenerate: isLastAi ? handleRegenerate : undefined,
+      });
+    });
+
+    // Add loading dots if waiting for response
+    const lastMsg = messages[messages.length - 1];
+    if (sending && lastMsg && lastMsg.role === "user") {
+      messageElements.push(
         createElement(
           "div",
           {
-            style: loadingBubbleStyle,
+            key: "loading",
+            style: loadingContainerStyle,
           },
-          createElement(LoadingDots)
+          createElement(
+            "div",
+            {
+              style: loadingBubbleStyle,
+            },
+            createElement(LoadingDots)
+          )
         )
-      )
-    );
+      );
+    }
+    
+    messageListContent = messageElements;
   }
 
   return createElement(
@@ -619,7 +630,7 @@ export default function AiChatPanel({ panelId }: PanelProps) {
         style: headerStyle,
       },
       createElement("div", { style: headerTitleStyle }, "AI Chat"),
-      createElement(Button, { variant: "plain", onClick: handleSaveSession, title: "Save session" }, createElement("i", { className: "ti ti-device-floppy" })),
+      // Chat History
       createElement(ChatHistoryMenu, {
         sessions,
         activeSessionId: currentSession.id,
@@ -628,23 +639,29 @@ export default function AiChatPanel({ panelId }: PanelProps) {
         onClearAll: handleClearAllSessions,
         onNewSession: handleNewSession,
       }),
-      createElement(Button, { variant: "plain", onClick: () => void orca.commands.invokeCommand("core.openSettings"), title: "Settings" }, createElement("i", { className: "ti ti-settings" })),
-      createElement(Button, { variant: "plain", disabled: !sending, onClick: stop, title: "Stop generation" }, createElement("i", { className: "ti ti-player-stop" })),
-      createElement(Button, { variant: "plain", onClick: clear, title: "Clear chat" }, createElement("i", { className: "ti ti-trash" })),
+      // Stop Button (Only when sending)
+      sending && createElement(Button, { variant: "plain", onClick: stop, title: "Stop generation" }, createElement("i", { className: "ti ti-player-stop" })),
+      // More Menu (Save, Settings, Clear)
+      createElement(HeaderMenu, {
+        onSaveSession: handleSaveSession,
+        onClearChat: clear,
+        onOpenSettings: () => void orca.commands.invokeCommand("core.openSettings"),
+      }),
+      // Close Button
       createElement(Button, { variant: "plain", onClick: () => closeAiChatPanel(panelId), title: "Close" }, createElement("i", { className: "ti ti-x" }))
     ),
-    // Message List
+    // Message List or Empty State
     createElement(
       "div",
       {
         ref: listRef as any,
         style: messageListStyle,
       },
-      ...messageElements
+      ...(Array.isArray(messageListContent) ? messageListContent : [messageListContent])
     ),
     // Chat Input
     createElement(ChatInput, {
-      onSend: handleSend,
+      onSend: (text: string) => handleSend(text),
       disabled: sending,
       currentPageId: rootBlockId,
       currentPageTitle,

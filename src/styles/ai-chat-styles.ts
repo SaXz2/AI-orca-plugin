@@ -242,3 +242,138 @@ export const paragraphStyle: React.CSSProperties = {
   lineHeight: "1.8",
   color: "inherit",
 };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Message Item Action Bar & Tool Styles
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const actionBarStyle: React.CSSProperties = {
+  position: "absolute",
+  top: "-20px",
+  right: "0",
+  display: "flex",
+  gap: "4px",
+  background: "var(--orca-color-bg-1)",
+  border: "1px solid var(--orca-color-border)",
+  borderRadius: "4px",
+  padding: "2px",
+  boxShadow: "0 2px 4px rgba(0,0,0,0.1)",
+  opacity: 0,
+  transition: "opacity 0.2s ease",
+  pointerEvents: "none", // disabled when hidden
+  zIndex: 5,
+};
+
+export const actionButtonStyle: React.CSSProperties = {
+  padding: "2px 6px",
+  fontSize: "12px",
+  cursor: "pointer",
+  color: "var(--orca-color-text-2)",
+  background: "transparent",
+  border: "none",
+  borderRadius: "2px",
+  display: "flex",
+  alignItems: "center",
+};
+
+export const toolCardStyle: React.CSSProperties = {
+  marginTop: "8px",
+  border: "1px solid var(--orca-color-border)",
+  borderRadius: "8px",
+  overflow: "hidden",
+  background: "var(--orca-color-bg-2)",
+  fontSize: "0.9em",
+};
+
+export const toolHeaderStyle: React.CSSProperties = {
+  padding: "8px 12px",
+  background: "var(--orca-color-bg-3)",
+  cursor: "pointer",
+  display: "flex",
+  alignItems: "center",
+  gap: "8px",
+  userSelect: "none",
+  color: "var(--orca-color-text-1)",
+};
+
+export const toolBodyStyle: React.CSSProperties = {
+  padding: "12px",
+  borderTop: "1px solid var(--orca-color-border)",
+  fontFamily: "monospace",
+  whiteSpace: "pre-wrap",
+  wordBreak: "break-all",
+  maxHeight: "300px",
+  overflowY: "auto",
+  background: "var(--orca-color-bg-1)",
+  color: "var(--orca-color-text-1)",
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Empty State Styles
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const emptyStateContainerStyle: React.CSSProperties = {
+  flex: 1,
+  display: "flex",
+  flexDirection: "column",
+  alignItems: "center",
+  justifyContent: "center",
+  padding: "40px 20px",
+  color: "var(--orca-color-text-1)",
+  animation: "messageSlideIn 0.4s ease-out",
+};
+
+export const emptyStateTitleStyle: React.CSSProperties = {
+  fontSize: "24px",
+  fontWeight: 600,
+  marginBottom: "12px",
+  background: "linear-gradient(135deg, var(--orca-color-primary) 0%, var(--orca-color-text-1) 100%)",
+  WebkitBackgroundClip: "text",
+  WebkitTextFillColor: "transparent",
+  textAlign: "center",
+};
+
+export const emptyStateSubtitleStyle: React.CSSProperties = {
+  fontSize: "14px",
+  color: "var(--orca-color-text-2)",
+  marginBottom: "32px",
+  textAlign: "center",
+  maxWidth: "400px",
+  lineHeight: "1.5",
+};
+
+export const suggestionGridStyle: React.CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
+  gap: "12px",
+  width: "100%",
+  maxWidth: "600px",
+};
+
+export const suggestionCardStyle: React.CSSProperties = {
+  padding: "16px",
+  background: "var(--orca-color-bg-2)",
+  border: "1px solid var(--orca-color-border)",
+  borderRadius: "12px",
+  cursor: "pointer",
+  transition: "all 0.2s ease",
+  display: "flex",
+  flexDirection: "column",
+  gap: "8px",
+};
+
+export const suggestionIconStyle: React.CSSProperties = {
+  fontSize: "20px",
+  marginBottom: "4px",
+};
+
+export const suggestionTitleStyle: React.CSSProperties = {
+  fontSize: "14px",
+  fontWeight: 600,
+  color: "var(--orca-color-text-1)",
+};
+
+export const suggestionDescStyle: React.CSSProperties = {
+  fontSize: "12px",
+  color: "var(--orca-color-text-2)",
+};
