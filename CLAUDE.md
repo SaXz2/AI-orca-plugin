@@ -166,6 +166,15 @@ See `CHANGELOG-QUERY-BLOCKS.md` for detailed changes.
 - ✅ Message hover actions
 - ✅ Tool call visualization cards
 
+**CreateBlock Tool - MCP-inspired Optimization (2024-12-22)**:
+- ✅ Context-independent block creation (no specific panel required)
+- ✅ Dual-path block resolution (state → backend API fallback)
+- ✅ Page name support (auto-resolve to root block ID)
+- ✅ Detailed error handling and logging
+- ✅ Flexible parameter design (refBlockId OR pageName)
+
+See `CREATEBLOCK-OPTIMIZATION.md` for MCP architecture analysis and implementation details.
+
 Remaining:
 6. Query system (Phase 2-4): Complex combinations, time ranges, advanced features
 7. (Optional) Session persistence (`setData/getData`)
@@ -204,4 +213,28 @@ queryBlocksByTag(tagName: string, options?: {
 - Find high-priority tasks: `queryBlocksByTag("task", { properties: [{ name: "priority", op: ">=", value: 8 }] })`
 - Find notes without category: `queryBlocksByTag("note", { properties: [{ name: "category", op: "is null" }] })`
 - Find specific author: `queryBlocksByTag("article", { properties: [{ name: "author", op: "==", value: "张三" }] })`
+
+### 4. createBlock (NEW - MCP-like)
+Create new blocks without requiring specific UI context (MCP-inspired design).
+```typescript
+createBlock({
+  refBlockId?: number,      // Reference block ID
+  pageName?: string,        // Or page name (auto-resolves to root block)
+  position?: "before" | "after" | "firstChild" | "lastChild",  // Default: "lastChild"
+  content: string           // Block content (required)
+})
+```
+
+**Key Features**:
+- **Context-independent**: Works anywhere, no need for specific panel
+- **Dual-path resolution**: Tries `state.blocks` first, falls back to `invokeBackend("get-block")` if needed
+- **Page name support**: Can reference by page name instead of block ID
+- **Detailed error handling**: Clear error messages for debugging
+
+**Examples**:
+- Create by block ID: `createBlock({ refBlockId: 12345, position: "lastChild", content: "New task item" })`
+- Create by page name: `createBlock({ pageName: "项目方案", content: "新的想法" })`
+- Insert before block: `createBlock({ refBlockId: 100, position: "before", content: "前置内容" })`
+
+**Architecture**: See `CREATEBLOCK-OPTIMIZATION.md` for detailed technical design inspired by MCP.
 

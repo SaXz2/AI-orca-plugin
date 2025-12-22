@@ -328,7 +328,7 @@ export const TOOLS: OpenAITool[] = [
     type: "function",
     function: {
       name: "createBlock",
-      description: "创建新的笔记块。可指定参考块和插入位置。",
+      description: "创建新的笔记块（类似 MCP insert_markdown 工具）。可以指定参考块 ID 或页面名称，以及插入位置。无需在特定 panel 中即可调用。",
       parameters: {
         type: "object",
         properties: {
@@ -336,17 +336,21 @@ export const TOOLS: OpenAITool[] = [
             type: "number",
             description: "参考块 ID，新块将相对于此块插入",
           },
+          pageName: {
+            type: "string",
+            description: "可选：参考页面名称，会自动获取该页面的根块作为参考块。如果同时指定了 refBlockId 和 pageName，优先使用 refBlockId",
+          },
           position: {
             type: "string",
             enum: ["before", "after", "firstChild", "lastChild"],
-            description: "相对于参考块的位置",
+            description: "相对于参考块的位置。before=在前面，after=在后面，firstChild=作为第一个子块，lastChild=作为最后一个子块（默认：lastChild）",
           },
           content: {
             type: "string",
-            description: "块的文本内容",
+            description: "块的文本内容（支持 Markdown 格式）",
           },
         },
-        required: ["refBlockId", "position", "content"],
+        required: ["content"],
       },
     },
   },
@@ -857,40 +861,93 @@ ${body}
         throw error;
       }
     } else if (toolName === "createBlock") {
-      const refBlockId = toFiniteNumber(args.refBlockId ?? args.ref_block_id);
+      // Parse and validate parameters
+      let refBlockId = toFiniteNumber(args.refBlockId ?? args.ref_block_id);
+      const pageName = typeof args.pageName === "string" ? args.pageName :
+                       (typeof args.page_name === "string" ? args.page_name : undefined);
+
+      // If pageName is provided but no refBlockId, get the page's root block
+      if (!refBlockId && pageName) {
+        console.log(`[Tool] createBlock: fetching page "${pageName}" to get root block...`);
+        try {
+          const pageResult = await getPageByName(pageName, false);
+          refBlockId = pageResult.id;
+          console.log(`[Tool] createBlock: found page "${pageName}" with root block ${refBlockId}`);
+        } catch (error: any) {
+          return `Error: Page "${pageName}" not found. Please check the page name or use refBlockId instead.`;
+        }
+      }
+
       if (refBlockId === undefined) {
-        return "Error: Missing or invalid refBlockId (must be a number).";
+        return "Error: Missing reference. Please provide either refBlockId (number) or pageName (string).";
       }
 
       const allowedPositions = new Set(["before", "after", "firstChild", "lastChild"]);
-      const rawPosition = typeof args.position === "string" ? args.position : "after";
-      const position = allowedPositions.has(rawPosition) ? rawPosition : "after";
+      const rawPosition = typeof args.position === "string" ? args.position : "lastChild";
+      const position = allowedPositions.has(rawPosition) ? rawPosition : "lastChild";
 
       const content =
         typeof args.content === "string"
           ? args.content
           : (typeof args.text === "string" ? args.text : "");
 
-      const refBlock = orca.state.blocks[refBlockId];
-      if (!refBlock) {
-        return `Error: Block ${refBlockId} not found`;
+      if (!content || content.trim().length === 0) {
+        return "Error: Content cannot be empty.";
       }
 
-      const contentFragments = content.trim().length > 0 ? [{ t: "t", v: content }] : undefined;
-
-      const newBlockId = await orca.commands.invokeEditorCommand(
-        "core.editor.insertBlock",
-        null,
-        refBlock,
+      console.log("[Tool] createBlock:", {
+        refBlockId,
+        pageName: pageName || "(not specified)",
         position,
-        contentFragments,
-      );
+        contentLength: content.length
+      });
 
-      if (typeof newBlockId === "number") {
-        return `Created new block: [${newBlockId}](orca-block:${newBlockId})`;
+      // Get reference block - try state first, then backend API (MCP-like approach)
+      let refBlock = orca.state.blocks[refBlockId];
+
+      if (!refBlock) {
+        console.log(`[Tool] Block ${refBlockId} not in state, fetching from backend...`);
+        try {
+          // Fetch block from backend API (similar to MCP approach)
+          refBlock = await orca.invokeBackend("get-block", refBlockId);
+          if (!refBlock) {
+            return `Error: Block ${refBlockId} not found in repository`;
+          }
+          console.log(`[Tool] Successfully fetched block ${refBlockId} from backend`);
+        } catch (error: any) {
+          console.error(`[Tool] Failed to fetch block ${refBlockId}:`, error);
+          return `Error: Failed to fetch block ${refBlockId}: ${error?.message || error}`;
+        }
       }
 
-      return "Created new block.";
+      // Prepare content fragments
+      // Note: For now, we treat content as plain text. Future enhancement could parse Markdown.
+      const contentFragments = [{ t: "t", v: content }];
+
+      // Insert block using editor command
+      try {
+        const newBlockId = await orca.commands.invokeEditorCommand(
+          "core.editor.insertBlock",
+          null,
+          refBlock,
+          position,
+          contentFragments,
+        );
+
+        if (typeof newBlockId === "number") {
+          console.log(`[Tool] Successfully created block ${newBlockId} ${position} block ${refBlockId}`);
+          const positionDesc = position === "before" ? "before" :
+                              position === "after" ? "after" :
+                              position === "firstChild" ? "as first child of" :
+                              "as last child of";
+          return `Created new block: [${newBlockId}](orca-block:${newBlockId}) (${positionDesc} block ${refBlockId})`;
+        }
+
+        return "Created new block.";
+      } catch (error: any) {
+        console.error("[Tool] Failed to create block:", error);
+        return `Error: Failed to create block: ${error?.message || error}`;
+      }
     } else {
       console.error("[Tool] Unknown tool:", toolName);
       return `Unknown tool: ${toolName}`;
