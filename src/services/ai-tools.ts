@@ -322,6 +322,32 @@ export const TOOLS: OpenAITool[] = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "createBlock",
+      description: "创建新的笔记块。可指定参考块和插入位置。",
+      parameters: {
+        type: "object",
+        properties: {
+          refBlockId: {
+            type: "number",
+            description: "参考块 ID，新块将相对于此块插入",
+          },
+          position: {
+            type: "string",
+            enum: ["before", "after", "firstChild", "lastChild"],
+            description: "相对于参考块的位置",
+          },
+          content: {
+            type: "string",
+            description: "块的文本内容",
+          },
+        },
+        required: ["refBlockId", "position", "content"],
+      },
+    },
+  },
 ];
 
 /**
@@ -848,6 +874,41 @@ ${body}
         }
         throw error;
       }
+    } else if (toolName === "createBlock") {
+      const refBlockId = toFiniteNumber(args.refBlockId ?? args.ref_block_id);
+      if (refBlockId === undefined) {
+        return "Error: Missing or invalid refBlockId (must be a number).";
+      }
+
+      const allowedPositions = new Set(["before", "after", "firstChild", "lastChild"]);
+      const rawPosition = typeof args.position === "string" ? args.position : "after";
+      const position = allowedPositions.has(rawPosition) ? rawPosition : "after";
+
+      const content =
+        typeof args.content === "string"
+          ? args.content
+          : (typeof args.text === "string" ? args.text : "");
+
+      const refBlock = orca.state.blocks[refBlockId];
+      if (!refBlock) {
+        return `Error: Block ${refBlockId} not found`;
+      }
+
+      const contentFragments = content.trim().length > 0 ? [{ t: "t", v: content }] : undefined;
+
+      const newBlockId = await orca.commands.invokeEditorCommand(
+        "core.editor.insertBlock",
+        null,
+        refBlock,
+        position,
+        contentFragments,
+      );
+
+      if (typeof newBlockId === "number") {
+        return `Created new block: [${newBlockId}](orca-block:${newBlockId})`;
+      }
+
+      return "Created new block.";
     } else {
       console.error("[Tool] Unknown tool:", toolName);
       return `Unknown tool: ${toolName}`;
