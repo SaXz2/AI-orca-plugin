@@ -4363,6 +4363,10 @@ export interface PluginSettingsSchema {
       | "array"
     /** Default value for the setting if not explicitly set */
     defaultValue?: any
+    /** Optional minimum value for number settings */
+    min?: number
+    /** Optional maximum value for number settings */
+    max?: number
     /** For choice types, the available options */
     choices?: { label: string; value: string }[]
     /** For array types, the schema for each item in the array */

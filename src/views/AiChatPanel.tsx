@@ -237,15 +237,19 @@ export default function AiChatPanel({ panelId }: PanelProps) {
   // Chat Send Logic
   // ─────────────────────────────────────────────────────────────────────────
 
-  async function handleSend(content: string, historyOverride?: Message[]) {
-    if (!content || sending) return;
+	  async function handleSend(content: string, historyOverride?: Message[]) {
+	    if (!content || sending) return;
 
-    const pluginName = getAiChatPluginName();
-    const settings = getAiChatSettings(pluginName);
-    const model = (currentSession.model || "").trim() || resolveAiModel(settings);
-    const validationError = validateAiChatSettingsWithModel(settings, model);
-    if (validationError) {
-      orca.notify("warn", validationError);
+	    const pluginName = getAiChatPluginName();
+	    const settings = getAiChatSettings(pluginName);
+	    // 工具调用最大轮数：可在设置中配置；若缺失则默认 5（向后兼容）
+	    const MAX_TOOL_ROUNDS = settings.maxToolRounds || 5;
+	    // 系统提示词模板变量：支持 {maxToolRounds}，按当前 MAX_TOOL_ROUNDS 注入
+	    const systemPrompt = settings.systemPrompt.split("{maxToolRounds}").join(String(MAX_TOOL_ROUNDS));
+	    const model = (currentSession.model || "").trim() || resolveAiModel(settings);
+	    const validationError = validateAiChatSettingsWithModel(settings, model);
+	    if (validationError) {
+	      orca.notify("warn", validationError);
       return;
     }
 
@@ -291,11 +295,11 @@ export default function AiChatPanel({ panelId }: PanelProps) {
       let currentContent = "";
       let toolCalls: ToolCallInfo[] = [];
 
-      const { standard: apiMessages, fallback: apiMessagesFallback } = buildConversationMessages({
-        messages: conversation,
-        systemPrompt: settings.systemPrompt,
-        contextText,
-      });
+	      const { standard: apiMessages, fallback: apiMessagesFallback } = buildConversationMessages({
+	        messages: conversation,
+	        systemPrompt,
+	        contextText,
+	      });
 
       for await (const chunk of streamChatWithRetry(
         {
@@ -324,20 +328,19 @@ export default function AiChatPanel({ panelId }: PanelProps) {
         updateMessage(assistantId, { content: "(empty response)" });
       }
 
-      conversation.push({
-        id: assistantId,
-        role: "assistant",
-        content: currentContent,
-        createdAt: assistantCreatedAt,
-        tool_calls: toolCalls.length > 0 ? toolCalls : undefined,
-      });
+	      conversation.push({
+	        id: assistantId,
+	        role: "assistant",
+	        content: currentContent,
+	        createdAt: assistantCreatedAt,
+	        tool_calls: toolCalls.length > 0 ? toolCalls : undefined,
+	      });
 
-      // Handle tool calls with multi-round support
-      const MAX_TOOL_ROUNDS = 3;
-      let toolRound = 0;
-      let currentToolCalls = toolCalls;
-      let currentAssistantId = assistantId;
-      const allToolResultMessages: Message[] = [];
+		      // Handle tool calls with multi-round support
+		      let toolRound = 0;
+		      let currentToolCalls = toolCalls;
+		      let currentAssistantId = assistantId;
+		      const allToolResultMessages: Message[] = [];
 
       while (currentToolCalls.length > 0 && toolRound < MAX_TOOL_ROUNDS) {
         toolRound++;
@@ -379,11 +382,11 @@ export default function AiChatPanel({ panelId }: PanelProps) {
         queueMicrotask(scrollToBottom);
 
         // Build messages for next response including all prior tool results
-        const { standard, fallback } = buildConversationMessages({
-          messages: conversation,
-          systemPrompt: settings.systemPrompt,
-          contextText,
-        });
+	        const { standard, fallback } = buildConversationMessages({
+	          messages: conversation,
+	          systemPrompt,
+	          contextText,
+	        });
 
         // Create assistant message for next response
         const nextAssistantId = nowId();

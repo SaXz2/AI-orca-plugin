@@ -1,3 +1,4 @@
+// 系统提示词支持模板变量：例如 {maxToolRounds} 会在运行时按设置值替换。
 const DEFAULT_SYSTEM_PROMPT = `你是一个笔记库智能助手，帮助用户查询、搜索和理解他们的笔记内容。
 
 ## 可用工具
@@ -56,9 +57,9 @@ const DEFAULT_SYSTEM_PROMPT = `你是一个笔记库智能助手，帮助用户�
 - 全文搜索
 - 你已经从之前的 get_tag_schema 调用中知道了映射关系
 
-## 多轮搜索策略
-
-**重要提示**：你现在支持连续调用工具最多3轮，当第一次搜索效果不佳时，你应该主动尝试其他方法！
+	## 多轮搜索策略
+	
+	**重要提示**：你现在支持连续调用工具最多{maxToolRounds}轮，当第一次搜索效果不佳时，你应该主动尝试其他方法！
 
 ### 主动重试场景
 如果第一次搜索结果为空或不理想，你应该**立即**尝试替代方案：
@@ -142,6 +143,7 @@ const DEFAULT_SYSTEM_PROMPT = `你是一个笔记库智能助手，帮助用户�
 export async function registerAiChatSettingsSchema(
   pluginName: string,
 ): Promise<void> {
+  const isZh = orca.state.locale === "zh-CN";
   await orca.plugins.setSettingsSchema(pluginName, {
     apiKey: {
       label: "API Key",
@@ -192,16 +194,27 @@ export async function registerAiChatSettingsSchema(
       type: "number",
       defaultValue: 0.7,
     },
-    maxTokens: {
-      label: "Max Tokens",
-      type: "number",
-      defaultValue: 4096,
-    },
-    autoSaveChat: {
-      label: "Auto Save Chat",
-      description: "When to automatically save chat history",
-      type: "singleChoice",
-      choices: [
+	    maxTokens: {
+	      label: "Max Tokens",
+	      type: "number",
+	      defaultValue: 4096,
+	    },
+	    maxToolRounds: {
+	      // 工具调用最大轮数：复杂查询场景下允许 AI 多次尝试（会增加响应时间和成本）
+	      label: isZh ? "工具调用最大轮数" : "Max Tool Rounds",
+	      description: isZh
+	        ? "AI 可以连续调用工具的最大轮数（3-10）。增加轮数可以让 AI 在复杂场景下有更多尝试机会，但会增加响应时间和成本。"
+	        : "Maximum rounds AI can call tools consecutively (3-10). More rounds allow AI to handle complex queries better, but increase response time and cost.",
+	      type: "number",
+	      defaultValue: 5,
+	      min: 3,
+	      max: 10,
+	    },
+	    autoSaveChat: {
+	      label: "Auto Save Chat",
+	      description: "When to automatically save chat history",
+	      type: "singleChoice",
+	      choices: [
         { label: "On Close", value: "on_close" },
         { label: "Manual Only", value: "manual" },
         { label: "Never", value: "never" },
@@ -218,16 +231,17 @@ export async function registerAiChatSettingsSchema(
 }
 
 export type AiChatSettings = {
-  apiKey: string;
-  apiUrl: string;
-  model: string;
-  customModel: string;
-  customModels: AiModelPreset[];
-  systemPrompt: string;
-  temperature: number;
-  maxTokens: number;
-  autoSaveChat: "on_close" | "manual" | "never";
-  maxSavedSessions: number;
+	apiKey: string;
+	apiUrl: string;
+	model: string;
+	customModel: string;
+	customModels: AiModelPreset[];
+	systemPrompt: string;
+	temperature: number;
+	maxTokens: number;
+	maxToolRounds: number;
+	autoSaveChat: "on_close" | "manual" | "never";
+	maxSavedSessions: number;
 };
 
 export type AiModelPreset = {
@@ -236,16 +250,17 @@ export type AiModelPreset = {
 };
 
 export const DEFAULT_AI_CHAT_SETTINGS: AiChatSettings = {
-  apiKey: "",
-  apiUrl: "https://api.openai.com/v1",
-  model: "gpt-4o-mini",
-  customModel: "",
-  customModels: [],
-  systemPrompt: DEFAULT_SYSTEM_PROMPT,
-  temperature: 0.7,
-  maxTokens: 4096,
-  autoSaveChat: "manual",
-  maxSavedSessions: 10,
+	apiKey: "",
+	apiUrl: "https://api.openai.com/v1",
+	model: "gpt-4o-mini",
+	customModel: "",
+	customModels: [],
+	systemPrompt: DEFAULT_SYSTEM_PROMPT,
+	temperature: 0.7,
+	maxTokens: 4096,
+	maxToolRounds: 5,
+	autoSaveChat: "manual",
+	maxSavedSessions: 10,
 };
 
 function toNumber(value: unknown, fallback: number): number {
@@ -298,29 +313,31 @@ function toAutoSaveChoice(
 }
 
 export function getAiChatSettings(pluginName: string): AiChatSettings {
-  const raw = (orca.state.plugins as any)?.[pluginName]?.settings ?? {};
-  const merged: AiChatSettings = {
-    apiKey: toString(raw.apiKey, DEFAULT_AI_CHAT_SETTINGS.apiKey),
-    apiUrl: toString(raw.apiUrl, DEFAULT_AI_CHAT_SETTINGS.apiUrl),
-    model: toString(raw.model, DEFAULT_AI_CHAT_SETTINGS.model),
-    customModel: toString(raw.customModel, DEFAULT_AI_CHAT_SETTINGS.customModel),
-    customModels: toModelPresets(raw.customModels, DEFAULT_AI_CHAT_SETTINGS.customModels),
-    systemPrompt: toString(raw.systemPrompt, DEFAULT_AI_CHAT_SETTINGS.systemPrompt),
-    temperature: toNumber(raw.temperature, DEFAULT_AI_CHAT_SETTINGS.temperature),
-    maxTokens: toNumber(raw.maxTokens, DEFAULT_AI_CHAT_SETTINGS.maxTokens),
-    autoSaveChat: toAutoSaveChoice(raw.autoSaveChat, DEFAULT_AI_CHAT_SETTINGS.autoSaveChat),
-    maxSavedSessions: toNumber(raw.maxSavedSessions, DEFAULT_AI_CHAT_SETTINGS.maxSavedSessions),
-  };
+	const raw = (orca.state.plugins as any)?.[pluginName]?.settings ?? {};
+	const merged: AiChatSettings = {
+		apiKey: toString(raw.apiKey, DEFAULT_AI_CHAT_SETTINGS.apiKey),
+		apiUrl: toString(raw.apiUrl, DEFAULT_AI_CHAT_SETTINGS.apiUrl),
+		model: toString(raw.model, DEFAULT_AI_CHAT_SETTINGS.model),
+		customModel: toString(raw.customModel, DEFAULT_AI_CHAT_SETTINGS.customModel),
+		customModels: toModelPresets(raw.customModels, DEFAULT_AI_CHAT_SETTINGS.customModels),
+		systemPrompt: toString(raw.systemPrompt, DEFAULT_AI_CHAT_SETTINGS.systemPrompt),
+		temperature: toNumber(raw.temperature, DEFAULT_AI_CHAT_SETTINGS.temperature),
+		maxTokens: toNumber(raw.maxTokens, DEFAULT_AI_CHAT_SETTINGS.maxTokens),
+		maxToolRounds: toNumber(raw.maxToolRounds, DEFAULT_AI_CHAT_SETTINGS.maxToolRounds),
+		autoSaveChat: toAutoSaveChoice(raw.autoSaveChat, DEFAULT_AI_CHAT_SETTINGS.autoSaveChat),
+		maxSavedSessions: toNumber(raw.maxSavedSessions, DEFAULT_AI_CHAT_SETTINGS.maxSavedSessions),
+	};
 
   merged.apiUrl = merged.apiUrl.trim();
   merged.apiKey = merged.apiKey.trim();
   merged.model = merged.model.trim();
-  merged.customModel = merged.customModel.trim();
-  merged.temperature = Math.max(0, Math.min(2, merged.temperature));
-  merged.maxTokens = Math.max(1, Math.floor(merged.maxTokens));
-  merged.maxSavedSessions = Math.max(1, Math.floor(merged.maxSavedSessions));
+	merged.customModel = merged.customModel.trim();
+	merged.temperature = Math.max(0, Math.min(2, merged.temperature));
+	merged.maxTokens = Math.max(1, Math.floor(merged.maxTokens));
+	merged.maxToolRounds = Math.max(3, Math.min(10, Math.floor(merged.maxToolRounds)));
+	merged.maxSavedSessions = Math.max(1, Math.floor(merged.maxSavedSessions));
 
-  return merged;
+	return merged;
 }
 
 export type AiModelOption = {
