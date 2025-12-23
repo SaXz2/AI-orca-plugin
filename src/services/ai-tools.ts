@@ -895,25 +895,20 @@ ${body}
         return "Error: Content cannot be empty.";
       }
 
-      console.log("[Tool] createBlock:", {
-        refBlockId,
-        pageName: pageName || "(not specified)",
-        position,
-        contentLength: content.length
-      });
+
 
       // Get reference block - try state first, then backend API (MCP-like approach)
       let refBlock = orca.state.blocks[refBlockId];
 
       if (!refBlock) {
-        console.log(`[Tool] Block ${refBlockId} not in state, fetching from backend...`);
+
         try {
           // Fetch block from backend API (similar to MCP approach)
           refBlock = await orca.invokeBackend("get-block", refBlockId);
           if (!refBlock) {
             return `Error: Block ${refBlockId} not found in repository`;
           }
-          console.log(`[Tool] Successfully fetched block ${refBlockId} from backend`);
+
         } catch (error: any) {
           console.error(`[Tool] Failed to fetch block ${refBlockId}:`, error);
           return `Error: Failed to fetch block ${refBlockId}: ${error?.message || error}`;
@@ -924,18 +919,35 @@ ${body}
       // Note: For now, we treat content as plain text. Future enhancement could parse Markdown.
       const contentFragments = [{ t: "t", v: content }];
 
-      // Insert block using editor command
-      try {
-        const newBlockId = await orca.commands.invokeEditorCommand(
-          "core.editor.insertBlock",
-          null,
-          refBlock,
-          position,
-          contentFragments,
-        );
+      // Navigate to the target block's page to establish panel context
+      // IMPORTANT: Navigate in a non-AI panel to avoid disrupting the chat
+      
+      // Use openInLastPanel which intelligently handles panel selection:
+      // - If there's a non-AI panel available, it uses that
+      // - If only AI panel exists, it creates a new panel
+      // - This keeps the AI chat panel undisturbed
+      orca.nav.openInLastPanel("block", { blockId: refBlockId });
+      
+      // Allow a small delay for the UI to update and establish context
+      await new Promise(resolve => setTimeout(resolve, 100));
 
+      // Insert block using editor command (wrapped in invokeGroup to ensure proper execution context)
+      try {
+        let newBlockId: any;
+        
+        await orca.commands.invokeGroup(async () => {
+          newBlockId = await orca.commands.invokeEditorCommand(
+            "core.editor.insertBlock",
+            null,
+            refBlock,
+            position,
+            contentFragments,
+          );
+        }, {
+          topGroup: true,
+          undoable: true
+        });
         if (typeof newBlockId === "number") {
-          console.log(`[Tool] Successfully created block ${newBlockId} ${position} block ${refBlockId}`);
           const positionDesc = position === "before" ? "before" :
                               position === "after" ? "after" :
                               position === "firstChild" ? "as first child of" :
@@ -943,7 +955,8 @@ ${body}
           return `Created new block: [${newBlockId}](orca-block:${newBlockId}) (${positionDesc} block ${refBlockId})`;
         }
 
-        return "Created new block.";
+
+        return `Created new block (ID type: ${typeof newBlockId}, value: ${newBlockId}).`;
       } catch (error: any) {
         console.error("[Tool] Failed to create block:", error);
         return `Error: Failed to create block: ${error?.message || error}`;
