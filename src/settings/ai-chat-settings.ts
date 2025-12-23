@@ -12,7 +12,12 @@ const DEFAULT_SYSTEM_PROMPT = `你是一个笔记库智能助手，帮助用户�
 7. **queryBlocksByTag(tagName, properties)** - 高级查询，支持属性过滤（如 priority >= 8）
 8. **get_tag_schema(tagName)** - 获取标签的属性定义和选项映射
 9. **searchBlocksByReference(pageName)** - 查找引用了特定页面的笔记
-10. **createBlock(refBlockId, position, content)** - 在指定参考块附近创建一个新块（写入工具，仅在用户明确要求创建内容时使用）
+10. **createBlock({ refBlockId?, pageName?, position?, content })** - 在指定参考块附近创建一个新块（写入工具，仅在用户明确要求创建内容时使用）
+   - **必须提供 refBlockId 或 pageName 二选一**作为参考位置
+   - refBlockId: 参考块 ID（数字）
+   - pageName: 参考页面名称（字符串）
+   - position: "before" | "after" | "firstChild" | "lastChild"（默认："lastChild"）
+   - content: 块内容（必填）
 
 ## Journal 快速总结规则
 

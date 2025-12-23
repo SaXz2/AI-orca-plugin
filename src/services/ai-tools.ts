@@ -329,22 +329,22 @@ export const TOOLS: OpenAITool[] = [
     type: "function",
     function: {
       name: "createBlock",
-      description: "创建新的笔记块（类似 MCP insert_markdown 工具）。可以指定参考块 ID 或页面名称，以及插入位置。无需在特定 panel 中即可调用。",
+      description: "创建新的笔记块（类似 MCP insert_markdown 工具）。**必须提供 refBlockId 或 pageName 二选一**作为参考位置，以及插入位置。无需在特定 panel 中即可调用。",
       parameters: {
         type: "object",
         properties: {
           refBlockId: {
             type: "number",
-            description: "参考块 ID，新块将相对于此块插入",
+            description: "参考块 ID（与 pageName 二选一必填）。**必须是数字类型**，例如：270。注意：不要使用 'orca-block:270' 格式的字符串，只需传数字 270 即可。",
           },
           pageName: {
             type: "string",
-            description: "可选：参考页面名称，会自动获取该页面的根块作为参考块。如果同时指定了 refBlockId 和 pageName，优先使用 refBlockId",
+            description: "参考页面名称（与 refBlockId 二选一必填），会自动获取该页面的根块作为参考块。如果同时指定了 refBlockId 和 pageName，优先使用 refBlockId",
           },
           position: {
             type: "string",
             enum: ["before", "after", "firstChild", "lastChild"],
-            description: "相对于参考块的位置。before=在前面，after=在后面，firstChild=作为第一个子块，lastChild=作为最后一个子块（默认：lastChild）",
+            description: "相对于参考块的位置。**参数名必须是 position**（不要使用 location）。可选值：before=在前面，after=在后面，firstChild=作为第一个子块，lastChild=作为最后一个子块（默认：lastChild）",
           },
           content: {
             type: "string",
@@ -352,6 +352,8 @@ export const TOOLS: OpenAITool[] = [
           },
         },
         required: ["content"],
+        // Note: We can't express "refBlockId XOR pageName required" in JSON Schema,
+        // but the description makes it clear, and runtime validation enforces it
       },
     },
   },
@@ -897,10 +899,25 @@ ${body}
         throw error;
       }
     } else if (toolName === "createBlock") {
-      // Parse and validate parameters
-      let refBlockId = toFiniteNumber(args.refBlockId ?? args.ref_block_id);
+      // Parse and validate parameters - support multiple field name variations
+
+      // Extract refBlockId - support "orca-block:274" format
+      let refBlockIdRaw = args.refBlockId ?? args.ref_block_id ?? args.blockId ?? args.block_id;
+
+      // If refBlockId is a string like "orca-block:274", extract the number
+      if (typeof refBlockIdRaw === "string") {
+        const match = refBlockIdRaw.match(/^orca-block:(\d+)$/);
+        if (match) {
+          refBlockIdRaw = parseInt(match[1], 10);
+        }
+      }
+
+      let refBlockId = toFiniteNumber(refBlockIdRaw);
+
       const pageName = typeof args.pageName === "string" ? args.pageName :
-                       (typeof args.page_name === "string" ? args.page_name : undefined);
+                       (typeof args.page_name === "string" ? args.page_name :
+                       (typeof args.page === "string" ? args.page :
+                       (typeof args.title === "string" ? args.title : undefined)));
 
       // If pageName is provided but no refBlockId, get the page's root block
       if (!refBlockId && pageName) {
@@ -913,12 +930,32 @@ ${body}
       }
 
       if (refBlockId === undefined) {
-        return "Error: Missing reference. Please provide either refBlockId (number) or pageName (string).";
+        // Provide helpful error message with context
+        let helpfulHint = "";
+
+        // Try to suggest current context
+        if (uiStore.lastRootBlockId) {
+          helpfulHint = `\n\nHint: You can use the current page's root block: refBlockId=${uiStore.lastRootBlockId}`;
+        }
+
+        // Show available parameter aliases
+        const aliases = `
+Supported parameter names:
+- refBlockId, ref_block_id, blockId, or block_id (number)
+- pageName, page_name, page, or title (string)`;
+
+        return `Error: Missing reference. Please provide either refBlockId (number) or pageName (string).${aliases}${helpfulHint}`;
       }
 
-      const position = (typeof args.position === "string" && 
+      const position = (typeof args.position === "string" &&
                         ["before", "after", "firstChild", "lastChild"].includes(args.position))
-                        ? args.position : "lastChild";
+                        ? args.position
+                        : (typeof args.location === "string" &&
+                          ["before", "after", "firstChild", "lastChild"].includes(args.location))
+                        ? args.location
+                        : (args.position === "asChild" || args.location === "asChild")
+                        ? "lastChild"
+                        : "lastChild";
 
       const content =
         typeof args.content === "string"

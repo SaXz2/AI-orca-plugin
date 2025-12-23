@@ -357,12 +357,27 @@ export default function AiChatPanel({ panelId }: PanelProps) {
         for (const toolCall of currentToolCalls) {
           const toolName = toolCall.function.name;
           let args: any = {};
+          let parseError: string | null = null;
+
           try {
             args = JSON.parse(toolCall.function.arguments);
-          } catch {}
+          } catch (error: any) {
+            parseError = `Invalid JSON in tool arguments: ${error.message}`;
+            console.error(`[AI] [Round ${toolRound}] JSON parse error for ${toolName}:`, error);
+            console.error(`[AI] Raw arguments:`, toolCall.function.arguments);
+          }
 
+          // Log tool call with parsed arguments for debugging
           console.log(`[AI] [Round ${toolRound}] Calling tool: ${toolName}`);
-          const result = await executeTool(toolName, args);
+          if (!parseError) {
+            console.log(`[AI] [Round ${toolRound}] Tool arguments:`, args);
+          }
+
+          // If JSON parsing failed, return error to model
+          const result = parseError
+            ? `Error: ${parseError}\n\nRaw arguments received:\n${toolCall.function.arguments}\n\nPlease provide valid JSON arguments.`
+            : await executeTool(toolName, args);
+
           console.log(`[AI] [Round ${toolRound}] Tool result: ${result.substring(0, 100)}${result.length > 100 ? "..." : ""}`);
 
           toolResultMessages.push({
