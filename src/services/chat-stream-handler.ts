@@ -50,25 +50,91 @@ export function mergeToolCalls(
   existing: ToolCallInfo[],
   incoming: any[]
 ): ToolCallInfo[] {
+  console.log("[mergeToolCalls] === START ===");
+  console.log("[mergeToolCalls] Existing count:", existing.length);
+  console.log("[mergeToolCalls] Incoming count:", incoming.length);
+  console.log("[mergeToolCalls] Incoming raw:", JSON.stringify(incoming, null, 2));
+  
   const result = [...existing];
-  for (const tc of incoming) {
-    const found = result.find((t) => t.id === tc.id);
+  for (let i = 0; i < incoming.length; i++) {
+    const tc = incoming[i];
+    console.log(`[mergeToolCalls] Processing incoming[${i}]:`, {
+      id: tc.id,
+      index: tc.index,
+      type: tc.type,
+      function_name: tc.function?.name,
+      arguments_length: tc.function?.arguments?.length,
+      arguments_preview: tc.function?.arguments?.substring(0, 100),
+    });
+    
+    // Strategy 1: Match by ID (standard OpenAI/Gemini behavior)
+    // Only match if tc.id is a valid non-null value
+    let found: ToolCallInfo | undefined = undefined;
+    if (tc.id !== null && tc.id !== undefined) {
+      found = result.find((t) => t.id === tc.id);
+      console.log(`[mergeToolCalls] Found existing by id "${tc.id}":`, found ? "YES" : "NO");
+    } else {
+      console.log(`[mergeToolCalls] ID is null/undefined, skipping ID-based matching`);
+    }
+    
+    // Strategy 2: Fallback to match by index (DeepSeek behavior)
+    // If ID matching failed and index is available, try index-based matching
+    if (!found && typeof tc.index === "number") {
+      found = result.find((t: any) => t.index === tc.index);
+      console.log(`[mergeToolCalls] Found existing by index ${tc.index}:`, found ? "YES" : "NO");
+    }
+    
     if (found) {
+      console.log(`[mergeToolCalls] Merging into existing tool call:`, found.function.name || "(unnamed)");
+      
+      // Append arguments incrementally
       if (tc.function?.arguments) {
-        found.function.arguments =
-          (found.function.arguments || "") + tc.function.arguments;
+        const oldArgs = found.function.arguments || "";
+        found.function.arguments = oldArgs + tc.function.arguments;
+        console.log(`[mergeToolCalls] Appended arguments: "${oldArgs}" + "${tc.function.arguments}" => "${found.function.arguments}"`);
+      }
+      
+      // Update name if it was empty before (DeepSeek sends name only in first chunk)
+      if (!found.function.name && tc.function?.name) {
+        found.function.name = tc.function.name;
+        console.log(`[mergeToolCalls] Updated function name to: ${tc.function.name}`);
+      }
+      
+      // Update type if it was empty before
+      if ((!found.type || found.type === "function") && tc.type) {
+        found.type = tc.type as "function";
+        console.log(`[mergeToolCalls] Updated type to: ${tc.type}`);
       }
     } else {
-      result.push({
-        id: tc.id || nowId(),
+      // Create new tool call
+      const newId = tc.id || nowId();
+      const newToolCall: any = {
+        id: newId,
         type: tc.type || "function",
         function: {
           name: tc.function?.name || "",
           arguments: tc.function?.arguments || "",
         },
-      });
+      };
+      
+      // Preserve index for future matching (DeepSeek compatibility)
+      if (typeof tc.index === "number") {
+        newToolCall.index = tc.index;
+      }
+      
+      console.log(`[mergeToolCalls] Creating NEW tool call:`, newToolCall);
+      result.push(newToolCall);
     }
   }
+  
+  console.log("[mergeToolCalls] Result count:", result.length);
+  console.log("[mergeToolCalls] Result summary:", result.map(t => ({
+    id: t.id,
+    index: (t as any).index,
+    name: t.function.name,
+    args_length: t.function.arguments.length,
+  })));
+  console.log("[mergeToolCalls] === END ===");
   return result;
 }
 
@@ -96,7 +162,10 @@ export async function* streamChatCompletion(
       content += chunk.content;
       yield { type: "content", content: chunk.content };
     } else if (chunk.type === "tool_calls" && chunk.tool_calls) {
+      console.log("[streamChatCompletion] Received tool_calls chunk, merging...");
+      const oldCount = toolCalls.length;
       toolCalls = mergeToolCalls(toolCalls, chunk.tool_calls);
+      console.log(`[streamChatCompletion] toolCalls count: ${oldCount} => ${toolCalls.length}`);
       yield { type: "tool_calls", toolCalls };
     }
   }
@@ -170,7 +239,10 @@ export async function* streamChatWithRetry(
           content += chunk.content;
           yield { type: "content", content: chunk.content };
         } else if (chunk.type === "tool_calls" && chunk.tool_calls) {
+          console.log("[streamChatWithRetry] Received tool_calls chunk, merging...");
+          const oldCount = toolCalls.length;
           toolCalls = mergeToolCalls(toolCalls, chunk.tool_calls);
+          console.log(`[streamChatWithRetry] toolCalls count: ${oldCount} => ${toolCalls.length}`);
           yield { type: "tool_calls", toolCalls };
         }
       }

@@ -96,6 +96,22 @@ function safeDeltaFromEvent(obj: any): StreamChunk {
 
   // Check for tool calls in delta
   if (delta?.tool_calls) {
+    console.log("[safeDeltaFromEvent] Detected tool_calls in delta:");
+    console.log("[safeDeltaFromEvent] tool_calls count:", delta.tool_calls.length);
+    console.log("[safeDeltaFromEvent] tool_calls raw:", JSON.stringify(delta.tool_calls, null, 2));
+    
+    // Log each tool call detail
+    delta.tool_calls.forEach((tc: any, idx: number) => {
+      console.log(`[safeDeltaFromEvent] tool_calls[${idx}]:`, {
+        id: tc.id,
+        index: tc.index,
+        type: tc.type,
+        function_name: tc.function?.name,
+        arguments_length: tc.function?.arguments?.length,
+        arguments_preview: tc.function?.arguments?.substring(0, 100),
+      });
+    });
+    
     return {
       type: "tool_calls",
       tool_calls: delta.tool_calls,
@@ -114,6 +130,9 @@ function safeDeltaFromEvent(obj: any): StreamChunk {
   const msg = obj?.choices?.[0]?.message;
   if (msg) {
     if (msg.tool_calls) {
+      console.log("[safeDeltaFromEvent] Detected tool_calls in message (non-streaming):");
+      console.log("[safeDeltaFromEvent] tool_calls count:", msg.tool_calls.length);
+      console.log("[safeDeltaFromEvent] tool_calls raw:", JSON.stringify(msg.tool_calls, null, 2));
       return {
         type: "tool_calls",
         tool_calls: msg.tool_calls,
