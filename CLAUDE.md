@@ -192,6 +192,20 @@ See `CHANGELOG-QUERY-BLOCKS.md` for detailed changes.
 - ✅ Detailed error handling and logging
 - ✅ Flexible parameter design (refBlockId OR pageName)
 
+**CreateBlock Markdown Support (2024-12-24)**:
+- ✅ Automatic Markdown parsing in block content
+- ✅ Support for bold (`**text**`), italic (`*text*`), wiki-links (`[[page]]`), inline code (`` `code` ``)
+- ✅ Uses Orca's native `core.editor.batchInsertText` command
+- ✅ Backward compatible with plain text content
+- ✅ No regression - all existing tests pass
+
+**New AI Tools: createPage & insertTag (2024-12-24)**:
+- ✅ `createPage` tool for creating page aliases (pages are named blocks)
+- ✅ `insertTag` tool for adding tags with optional properties
+- ✅ Uses Orca's native commands (`core.editor.createAlias`, `core.editor.insertTag`)
+- ✅ Enables structured data management through tags
+- ✅ Full wiki-link integration
+
 See `CREATEBLOCK-OPTIMIZATION.md` for MCP architecture analysis and implementation details.
 
 Remaining:
@@ -248,12 +262,57 @@ createBlock({
 - **Context-independent**: Works anywhere, no need for specific panel
 - **Dual-path resolution**: Tries `state.blocks` first, falls back to `invokeBackend("get-block")` if needed
 - **Page name support**: Can reference by page name instead of block ID
+- **Markdown support**: Automatically parses Markdown syntax in content (bold, italic, links, code, etc.)
 - **Detailed error handling**: Clear error messages for debugging
 
 **Examples**:
 - Create by block ID: `createBlock({ refBlockId: 12345, position: "lastChild", content: "New task item" })`
 - Create by page name: `createBlock({ pageName: "项目方案", content: "新的想法" })`
 - Insert before block: `createBlock({ refBlockId: 100, position: "before", content: "前置内容" })`
+- **Markdown formatting**: `createBlock({ refBlockId: 100, content: "**Bold** and *italic* with [[wiki link]]" })`
+- **Mixed formatting**: `createBlock({ refBlockId: 100, content: "Review [[Project A]] by *tomorrow* - priority: **HIGH**" })`
+- **Inline code**: `createBlock({ refBlockId: 100, content: "Use \`npm install\` to setup" })`
 
 **Architecture**: See `CREATEBLOCK-OPTIMIZATION.md` for detailed technical design inspired by MCP.
+
+### 5. createPage (NEW)
+Create a page alias for an existing block, making it referenceable by name.
+```typescript
+createPage({
+  blockId: number,       // Block ID to convert to page
+  pageName: string       // Unique page name/alias
+})
+```
+
+**Key Features**:
+- **Page creation**: Converts any block into a named page
+- **Alias system**: Pages are blocks with unique aliases
+- **Wiki-link support**: Created pages can be referenced via `[[pageName]]`
+
+**Examples**:
+- Create page: `createPage({ blockId: 12345, pageName: "项目总结" })`
+- After creation, reference via: `[[项目总结]]`
+
+### 6. insertTag (NEW)
+Add a tag to a block with optional properties (metadata).
+```typescript
+insertTag({
+  blockId: number,        // Block ID to tag
+  tagName: string,        // Tag name
+  properties?: Array<{    // Optional properties
+    name: string,
+    value: any
+  }>
+})
+```
+
+**Key Features**:
+- **Tag management**: Add tags for categorization
+- **Property support**: Attach metadata (dates, status, priority, etc.)
+- **Structured data**: Tags can carry typed properties
+
+**Examples**:
+- Simple tag: `insertTag({ blockId: 100, tagName: "task" })`
+- With properties: `insertTag({ blockId: 100, tagName: "deadline", properties: [{ name: "date", value: "2024-12-31" }] })`
+- Multiple properties: `insertTag({ blockId: 100, tagName: "task", properties: [{ name: "priority", value: 8 }, { name: "status", value: "in-progress" }] })`
 

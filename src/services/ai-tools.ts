@@ -357,6 +357,65 @@ export const TOOLS: OpenAITool[] = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "createPage",
+      description: "为指定块创建页面别名，使其成为一个可通过名称引用的页面。页面本质上是具有唯一别名的块。",
+      parameters: {
+        type: "object",
+        properties: {
+          blockId: {
+            type: "number",
+            description: "要转为页面的块 ID（必须是数字类型）",
+          },
+          pageName: {
+            type: "string",
+            description: "页面名称/别名（唯一标识符）",
+          },
+        },
+        required: ["blockId", "pageName"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "insertTag",
+      description: "为指定块添加标签。标签用于分类和添加元数据。可选择性地添加属性（如日期、状态等）。",
+      parameters: {
+        type: "object",
+        properties: {
+          blockId: {
+            type: "number",
+            description: "要添加标签的块 ID（必须是数字类型）",
+          },
+          tagName: {
+            type: "string",
+            description: "标签名称（例如：'project', 'task', 'deadline'）",
+          },
+          properties: {
+            type: "array",
+            description: "可选的标签属性列表（例如：日期、状态等）",
+            items: {
+              type: "object",
+              properties: {
+                name: {
+                  type: "string",
+                  description: "属性名称（例如：'date', 'status', 'priority'）",
+                },
+                value: {
+                  description: "属性值（可以是字符串、数字或日期）",
+                },
+              },
+              required: ["name", "value"],
+            },
+          },
+        },
+        required: ["blockId", "tagName"],
+      },
+    },
+  },
 ];
 
 /**
@@ -981,8 +1040,6 @@ Supported parameter names:
         }
       }
 
-      // Prepare content fragments
-      const contentFragments = [{ t: "t", v: content }];
 
       // === 智能导航：仅在必要时跳转 ===
       // 1. 获取目标块的根页面 ID
@@ -1038,19 +1095,24 @@ Supported parameter names:
 
       // Insert block using editor command
       try {
-        let newBlockId: any;
+        let newBlockIds: any;
         await orca.commands.invokeGroup(async () => {
-          newBlockId = await orca.commands.invokeEditorCommand(
-            "core.editor.insertBlock",
-            null,
-            refBlock,
-            position,
-            contentFragments,
+          newBlockIds = await orca.commands.invokeEditorCommand(
+            "core.editor.batchInsertText",
+            null,                    // cursor (not needed for programmatic insert)
+            refBlock,                // reference block
+            position,                // position
+            content,                 // text content (Markdown will be parsed)
+            false,                   // skipMarkdown = false (enable Markdown parsing)
+            false,                   // skipTags = false (preserve tag extraction)
           );
         }, {
           topGroup: true,
           undoable: true
         });
+
+        // batchInsertText returns DbId[], take the first block ID
+        const newBlockId = Array.isArray(newBlockIds) ? newBlockIds[0] : newBlockIds;
         
         const positionDescriptions: Record<string, string> = {
           before: "before",
@@ -1064,6 +1126,78 @@ Supported parameter names:
       } catch (error: any) {
         console.error("[Tool] Failed to create block:", error);
         return `Error: Failed to create block: ${error?.message || error}`;
+      }
+    } else if (toolName === "createPage") {
+      // Create page alias for a block
+      const blockId = toFiniteNumber(args.blockId || args.block_id || args.id);
+      const pageName = args.pageName || args.page_name || args.name || args.alias;
+
+      if (!blockId) {
+        console.error("[Tool] Missing blockId parameter. Args:", args);
+        return "Error: Missing blockId parameter. Please specify the block ID to convert to a page.";
+      }
+
+      if (!pageName || typeof pageName !== "string" || !pageName.trim()) {
+        console.error("[Tool] Missing or invalid pageName parameter. Args:", args);
+        return "Error: Missing or invalid pageName parameter. Please specify a valid page name.";
+      }
+
+      try {
+        console.log(`[Tool] createPage: blockId=${blockId}, pageName=${pageName}`);
+
+        await orca.commands.invokeEditorCommand(
+          "core.editor.createAlias",
+          null,         // cursor context
+          pageName,     // 页面名称/别名
+          blockId,      // 区块 ID
+          true          // asPage: 标记为页面
+        );
+
+        return `Created page: [[${pageName}]] for block [${blockId}](orca-block:${blockId})`;
+      } catch (error: any) {
+        console.error("[Tool] Failed to create page:", error);
+        return `Error: Failed to create page: ${error?.message || error}`;
+      }
+    } else if (toolName === "insertTag") {
+      // Insert tag to a block
+      const blockId = toFiniteNumber(args.blockId || args.block_id || args.id);
+      const tagName = args.tagName || args.tag_name || args.tag || args.name;
+      const properties = args.properties || args.props;
+
+      if (!blockId) {
+        console.error("[Tool] Missing blockId parameter. Args:", args);
+        return "Error: Missing blockId parameter. Please specify the block ID to add tag to.";
+      }
+
+      if (!tagName || typeof tagName !== "string" || !tagName.trim()) {
+        console.error("[Tool] Missing or invalid tagName parameter. Args:", args);
+        return "Error: Missing or invalid tagName parameter. Please specify a valid tag name.";
+      }
+
+      try {
+        console.log(`[Tool] insertTag: blockId=${blockId}, tagName=${tagName}, properties=${JSON.stringify(properties)}`);
+
+        // Convert properties array to the format expected by insertTag
+        const tagProperties = properties && Array.isArray(properties)
+          ? properties.map((prop: any) => ({ name: prop.name, value: prop.value }))
+          : undefined;
+
+        await orca.commands.invokeEditorCommand(
+          "core.editor.insertTag",
+          null,          // cursor context
+          blockId,       // block ID
+          tagName,       // tag name
+          tagProperties  // optional properties
+        );
+
+        const propsDesc = tagProperties
+          ? ` with properties: ${tagProperties.map((p: any) => `${p.name}=${p.value}`).join(", ")}`
+          : "";
+
+        return `Added tag #${tagName} to block [${blockId}](orca-block:${blockId})${propsDesc}`;
+      } catch (error: any) {
+        console.error("[Tool] Failed to insert tag:", error);
+        return `Error: Failed to insert tag: ${error?.message || error}`;
       }
     } else {
       console.error("[Tool] Unknown tool:", toolName);

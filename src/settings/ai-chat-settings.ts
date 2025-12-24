@@ -17,7 +17,15 @@ const DEFAULT_SYSTEM_PROMPT = `你是一个笔记库智能助手，帮助用户�
    - refBlockId: 参考块 ID（数字）
    - pageName: 参考页面名称（字符串）
    - position: "before" | "after" | "firstChild" | "lastChild"（默认："lastChild"）
-   - content: 块内容（必填）
+   - content: 块内容(必填,支持 Markdown 格式:粗体、斜体、链接、代码)
+11. **createPage({ blockId, pageName })** - 为指定块创建页面别名（页面是具有唯一名称的块）
+   - blockId: 要转为页面的块 ID（数字）
+   - pageName: 页面名称/别名（字符串，唯一标识符）
+   - 创建后可通过 [[pageName]] 引用
+12. **insertTag({ blockId, tagName, properties? })** - 为块添加标签和可选属性
+   - blockId: 要添加标签的块 ID（数字）
+   - tagName: 标签名称（字符串）
+   - properties: 可选属性数组 [{ name: "属性名", value: "属性值" }]
 
 ## Journal 快速总结规则
 
