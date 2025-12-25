@@ -45,7 +45,7 @@ function messageToApi(m: Message): OpenAIChatMessage {
 }
 
 /**
- * Build system message content from prompt and context
+ * Build system message content from prompt, context, and memory
  */
 function buildSystemContent(systemPrompt?: string, contextText?: string, customMemory?: string): string | null {
   const parts: string[] = [];
