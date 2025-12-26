@@ -16,12 +16,17 @@ export function nowId(): string {
  */
 export function safeText(block: any): string {
   if (!block) return "";
-  
+
   // Try direct text property first
   if (typeof block.text === "string" && block.text.trim()) {
     return block.text.trim();
   }
-  
+
+  // Handle content as string (some API responses return string directly)
+  if (typeof block.content === "string" && block.content.trim()) {
+    return block.content.trim();
+  }
+
   // Handle content array format (Orca block format)
   if (Array.isArray(block.content)) {
     return block.content
@@ -35,7 +40,7 @@ export function safeText(block: any): string {
       .join("")
       .trim();
   }
-  
+
   return "";
 }
 

@@ -4,6 +4,8 @@
  */
 
 import type { OpenAITool } from "./openai-client";
+import type { Skill } from "../store/skill-store";
+import { normalizeToolName } from "./skill-service";
 import {
   searchBlocksByTag,
   searchBlocksByText,
@@ -417,6 +419,52 @@ export const TOOLS: OpenAITool[] = [
     },
   },
 ];
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Skill-based Tool Filtering
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * 根据 Skill 过滤可用工具集
+ * @param skill - 当前激活的 Skill，如果为 null 或不是 tools 类型则返回全部工具
+ * @returns 过滤后的工具数组
+ */
+export function filterToolsBySkill(skill: Skill | null): OpenAITool[] {
+  // 如果没有 Skill 或不是 tools 类型，返回全部工具
+  if (!skill || skill.type !== "tools" || !skill.tools?.length) {
+    return TOOLS;
+  }
+
+  // 规范化 Skill 中声明的工具名
+  const normalizedNames = new Set(skill.tools.map(normalizeToolName));
+
+  // 过滤工具
+  const filtered = TOOLS.filter((tool) =>
+    normalizedNames.has(tool.function.name)
+  );
+
+  // 如果所有工具名都无效，回退到全部工具
+  if (filtered.length === 0) {
+    console.warn(
+      `[filterToolsBySkill] No valid tools found for skill "${skill.name}", falling back to all tools. ` +
+      `Declared tools: ${skill.tools.join(", ")}`
+    );
+    return TOOLS;
+  }
+
+  // 检查未识别的工具名
+  const recognizedNames = new Set(filtered.map((t) => t.function.name));
+  const unrecognized = skill.tools.filter(
+    (name) => !recognizedNames.has(normalizeToolName(name))
+  );
+  if (unrecognized.length > 0) {
+    console.warn(
+      `[filterToolsBySkill] Unrecognized tool names in skill "${skill.name}": ${unrecognized.join(", ")}`
+    );
+  }
+
+  return filtered;
+}
 
 /**
  * 获取块的根页面 ID（向上追溯到 parent === null 的块）
