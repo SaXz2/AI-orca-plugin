@@ -136,23 +136,23 @@
 **核心目标**：让 AI 能够根据用户意图自动发现并使用相关 Skill，无需用户手动选择。
 
 ### 3.1 新增 AI 工具 - searchSkills
-- [ ] 3.1.1 在 `src/services/ai-tools.ts` 添加 `searchSkills` 工具定义
+- [x] 3.1.1 在 `src/services/ai-tools.ts` 添加 `searchSkills` 工具定义
   - 参数: `query?: string`, `type?: "prompt" | "tools"`
   - 返回: `{ skills: SkillMeta[], total: number }`
-- [ ] 3.1.2 实现 `executeSearchSkills()` 函数
+- [x] 3.1.2 实现 `executeSearchSkills()` 函数
   - 调用 `ensureSkillsLoaded()` 确保缓存
   - 根据 query 过滤 skill.name 和 skill.description
   - 根据 type 过滤 skill.type
-- [ ] 3.1.3 注册到 TOOLS 数组和 executeTool switch
+- [x] 3.1.3 注册到 TOOLS 数组和 executeTool switch
 
 ### 3.2 新增 AI 工具 - getSkillDetails
-- [ ] 3.2.1 在 `src/services/ai-tools.ts` 添加 `getSkillDetails` 工具定义
+- [x] 3.2.1 在 `src/services/ai-tools.ts` 添加 `getSkillDetails` 工具定义
   - 参数: `skillId: number` (required)
   - 返回: 完整的 Skill 对象（含 prompt, tools, variables）
-- [ ] 3.2.2 实现 `executeGetSkillDetails()` 函数
+- [x] 3.2.2 实现 `executeGetSkillDetails()` 函数
   - 从缓存查找 skill by id
   - 未找到返回错误信息
-- [ ] 3.2.3 注册到 TOOLS 数组和 executeTool switch
+- [x] 3.2.3 注册到 TOOLS 数组和 executeTool switch
 
 ### 3.3 新增 AI 工具 - applySkillPrompt（可选）
 - [ ] 3.3.1 在 `src/services/ai-tools.ts` 添加 `applySkillPrompt` 工具定义
@@ -193,18 +193,18 @@
   - 添加 Skill 系统使用指南
 
 ### 3.7 自动初始化预置 Skills ✨
-- [ ] 3.7.1 创建 `src/constants/default-skills.ts`
+- [x] 3.7.1 创建 `src/constants/default-skills.ts`
   - 定义 `DefaultSkillDefinition` 接口
   - 定义 `DEFAULT_SKILLS` 常量数组
   - 包含 5 个预置技能：翻译助手、内容总结、写作润色、笔记整理、知识检索
-- [ ] 3.7.2 创建 `src/services/skill-initializer.ts`
+- [x] 3.7.2 创建 `src/services/skill-initializer.ts`
   - 实现 `ensureDefaultSkills()` 检测函数
   - 实现 `createDefaultSkillsPage()` 创建函数
   - 使用 createBlock + insertTag API 创建 skill 块结构
-- [ ] 3.7.3 集成到插件加载流程
+- [x] 3.7.3 集成到插件加载流程
   - 在 `src/main.ts` 的 `load()` 函数中调用 `ensureDefaultSkills()`
   - 或在 `AiChatPanel` 首次渲染时调用
-- [ ] 3.7.4 添加用户通知
+- [x] 3.7.4 添加用户通知
   - 创建成功后显示 `orca.notify("info", "已为您创建 AI 技能模板")`
   - 创建失败时显示错误提示但不阻止使用
 - [ ] 3.7.5 扩展设置选项
