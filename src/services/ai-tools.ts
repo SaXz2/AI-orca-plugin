@@ -1,54 +1,55 @@
 /**
- * AI Tools Module
- * Defines available tools for AI and executes tool calls
+ * AI Tools for Orca AI Chat
+ * This file defines the available tools for the AI model and their implementations.
+ * It interacts with the Orca Host API to perform actions like searching, reading, 
+ * and creating blocks.
  */
 
 import type { OpenAITool } from "./openai-client";
-import type { Skill } from "../store/skill-store";
-import { normalizeToolName, ensureSkillsLoaded } from "./skill-service";
-import { skillStore } from "../store/skill-store";
 import {
   searchBlocksByTag,
   searchBlocksByText,
   queryBlocksByTag,
-  searchTasks,
-  searchJournalEntries,
-  getTodayJournal,
-  getRecentJournals,
   queryBlocksAdvanced,
-  searchBlocksByReference,
   getTagSchema,
-  getCachedTagSchema,
   getPageByName,
+  searchBlocksByReference,
+  getRecentJournals,
 } from "./search-service";
-import { parsePropertyFilters } from "../utils/query-filter-parser";
-import type { QueryDateSpec, QueryCondition, QueryCombineMode } from "../utils/query-types";
-import { formatBlockResult, addLinkPreservationNote } from "../utils/block-link-enhancer";
+import {
+  formatBlockResult,
+  addLinkPreservationNote
+} from "../utils/block-link-enhancer";
+import type { 
+  QueryCondition, 
+  QueryCombineMode 
+} from "../utils/query-types";
 import { uiStore } from "../store/ui-store";
 
-
 /**
- * AI Tool definitions for OpenAI function calling
+ * ═══════════════════════════════════════════════════════════════════════════
+ * AI Tool Definitions (JSON Schema for OpenAI)
+ * ═══════════════════════════════════════════════════════════════════════════
  */
 export const TOOLS: OpenAITool[] = [
   {
     type: "function",
     function: {
       name: "searchBlocksByTag",
-      description: "Search for notes/blocks that have a specific tag. Use this when the user asks to find notes with a particular tag or category.",
+      description: "根据标签精准搜索笔记。支持搜索单个标签（如 #TODO）或多个标签（如 #TODO #Project）。这是获取结构化数据的最佳方式。",
       parameters: {
         type: "object",
         properties: {
-          tagName: {
+          tag_query: {
             type: "string",
-            description: "The tag name to search for (e.g., '爱情', 'work', 'ideas')",
+            description: "标签查询字符串，如 '#tag1' 或 '#tag1 #tag2'",
           },
           maxResults: {
             type: "number",
-            description: "Maximum number of results to return (default: 50, max: 50)",
+            description: "返回的最大结果数（默认 20，最大 50）",
           },
         },
-        required: ["tagName"],
+        required: ["tag_query"],
       },
     },
   },
@@ -56,168 +57,61 @@ export const TOOLS: OpenAITool[] = [
     type: "function",
     function: {
       name: "searchBlocksByText",
-      description: "Search for notes/blocks containing specific text or keywords. Use this when the user wants to find notes by content.",
+      description: "全文搜索笔记。当你需要查找包含特定内容、短语或关键词的笔记时使用。适合进行模糊搜索或查找具体文本。",
       parameters: {
         type: "object",
         properties: {
-          searchText: {
+          query: {
             type: "string",
-            description: "The text or keywords to search for",
+            description: "搜索关键词或短语",
           },
           maxResults: {
             type: "number",
-            description: "Maximum number of results to return (default: 50, max: 50)",
+            description: "返回的最大结果数（默认 20，最大 50）",
           },
         },
-        required: ["searchText"],
+        required: ["query"],
       },
     },
   },
   {
     type: "function",
     function: {
-      name: "queryBlocksByTag",
-      description: "Advanced query for blocks with a specific tag and property filters. Use this when the user wants to filter notes by tag properties (e.g., 'find tasks with priority >= 8', 'find notes without a category'). This supports property comparisons like >=, >, <, <=, ==, !=, 'is null', 'not null'.",
+      name: "query_blocks_by_tag",
+      description: "使用标签和属性过滤器搜索笔记（高级搜索）。当你需要查找具有特定属性值的标签笔记时使用。例如，查找 #book 标签且 'status' 属性为 'reading' 的笔记。",
       parameters: {
         type: "object",
         properties: {
           tagName: {
             type: "string",
-            description: "The tag name to query for (e.g., 'task', 'note', 'project')",
+            description: "标签名称（不带 #）",
           },
-          tag: {
-            type: "string",
-            description: "Alias of tagName (some clients/models may send `tag` instead).",
-          },
-          properties: {
+          filters: {
             type: "array",
-            description: "Array of property filters to apply",
+            description: "属性过滤器列表",
             items: {
               type: "object",
               properties: {
-                name: {
-                  type: "string",
-                  description: "Property name (e.g., 'priority', 'category', 'author')",
+                name: { type: "string", description: "属性名称" },
+                op: { 
+                  type: "string", 
+                  enum: ["==", "!=", ">", "<", ">=", "<=", "contains"],
+                  description: "操作符" 
                 },
-                op: {
-                  type: "string",
-                  description: "Comparison operator: '>=', '>', '<=', '<', '==', '!=', 'is null', 'not null', 'includes', 'not includes'",
-                },
-                value: {
-                  description: "Value to compare against (can be string, number, or boolean). Not required for 'is null' and 'not null' operators.",
+                value: { 
+                  type: ["string", "number", "boolean"], 
+                  description: "属性值" 
                 },
               },
-              required: ["name", "op"],
+              required: ["name", "op", "value"],
             },
-          },
-          property_filters: {
-            type: "string",
-            description: "Optional compact filter string like \"priority == 6\" or \"priority >= 8 and category is null\". Prefer `properties` when possible.",
-          },
-          propertyFilter: {
-            type: "string",
-            description: "Alias of `property_filters` (some clients/models may send `propertyFilter`).",
-          },
-          filter: {
-            type: "string",
-            description: "Alias of `property_filters` (some clients/models may send `filter`).",
-          },
-          query: {
-            type: "string",
-            description: "Alias of `property_filters` (some clients/models may send `query` like \"priority > 5\" along with `tagName`/`tag`).",
           },
           maxResults: {
             type: "number",
-            description: "Maximum number of results to return (default: 50, max: 50)",
+            description: "最大结果数",
           },
         },
         required: ["tagName"],
-      },
-    },
-  },
-  // ========== New Advanced Query Tools ==========
-  {
-    type: "function",
-    function: {
-      name: "searchTasks",
-      description: "Search for task blocks with optional completion status filter. Use when user asks about todos, tasks, or checklists (e.g., 'show my incomplete tasks', 'find all done tasks').",
-      parameters: {
-        type: "object",
-        properties: {
-          completed: {
-            type: "boolean",
-            description: "Filter by completion status: true for completed tasks, false for incomplete tasks. Omit to get all tasks.",
-          },
-          maxResults: {
-            type: "number",
-            description: "Maximum number of results to return (default: 50, max: 50)",
-          },
-        },
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "searchJournalEntries",
-      description: "Search for journal/daily note entries within a date range. Use when user asks about journal entries, daily notes, or diary entries (e.g., 'show last week's journal', 'find journal from yesterday').",
-      parameters: {
-        type: "object",
-        properties: {
-          startOffset: {
-            type: "number",
-            description: "Start date as days offset from today (negative for past, e.g., -7 for 7 days ago, 0 for today). Positive numbers are accepted and treated as days ago (e.g., 7 -> -7).",
-          },
-          endOffset: {
-            type: "number",
-            description: "End date as days offset from today (negative for past, e.g., -1 for yesterday, 0 for today). Positive numbers are accepted and treated as days ago (e.g., 1 -> -1).",
-          },
-          maxResults: {
-            type: "number",
-            description: "Maximum number of results to return (default: 50, max: 50)",
-          },
-        },
-        required: ["startOffset", "endOffset"],
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "getTodayJournal",
-      description: "获取今天的 Journal（日记）页面内容，用于快速总结今日记录。优先使用此工具，而不是通过查询/搜索间接定位。",
-      parameters: {
-        type: "object",
-        properties: {
-          includeChildren: {
-            type: "boolean",
-            description: "是否包含子块内容（默认：true）。设为 false 只返回 Journal 根块",
-          },
-        },
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "getRecentJournals",
-      description: "获取最近 N 天（默认 7 天，包含今天）的 Journal 内容，用于总结近一周/近几天的记录。",
-      parameters: {
-        type: "object",
-        properties: {
-          days: {
-            type: "number",
-            description: "要获取的天数（默认：7）。例如：7=近一周，3=近三天，0=仅今天。",
-          },
-          includeChildren: {
-            type: "boolean",
-            description: "是否包含子块内容（默认：true）。设为 false 只返回 Journal 根块列表",
-          },
-          maxResults: {
-            type: "number",
-            description: "最多返回多少条 Journal（默认：20，最大：50）。通常 7 天最多 7 条。",
-          },
-        },
       },
     },
   },
@@ -225,43 +119,65 @@ export const TOOLS: OpenAITool[] = [
     type: "function",
     function: {
       name: "query_blocks",
-      description: "Execute complex queries with multiple conditions using AND, OR, or hierarchical matching. Use for complex searches combining tags, text, and other criteria (e.g., 'find notes tagged urgent OR important', 'find tasks containing deadline inside project notes').",
+      description: "组合多种条件进行复杂搜索。支持标签、文本、任务状态、日记范围等条件的 AND/OR 组合。这是最强大的搜索工具。",
       parameters: {
         type: "object",
         properties: {
           conditions: {
             type: "array",
-            description: "Array of query conditions to combine",
             items: {
               type: "object",
               properties: {
-                type: {
-                  type: "string",
-                  enum: ["tag", "text", "task", "journal", "ref", "block", "blockMatch"],
-                  description: "Type of condition: tag (match tag), text (match content), task (match tasks), journal (date range), ref (references), block (block properties), blockMatch (specific block ID)",
+                type: { 
+                  type: "string", 
+                  enum: ["tag", "text", "task", "journal", "ref", "block", "blockMatch"] 
                 },
-                name: { type: "string", description: "For tag: the tag name" },
-                text: { type: "string", description: "For text: the text to search" },
-                completed: { type: "boolean", description: "For task: completion status" },
-                blockId: { type: "number", description: "For ref/blockMatch: the block ID" },
-                hasTags: { type: "boolean", description: "For block: whether has tags" },
-                startOffset: { type: "number", description: "For journal: start date offset in days" },
-                endOffset: { type: "number", description: "For journal: end date offset in days" },
+                name: { type: "string", description: "标签名 (用于 type: tag)" },
+                text: { type: "string", description: "关键词 (用于 type: text)" },
+                completed: { type: "boolean", description: "任务完成状态 (用于 type: task)" },
+                startOffset: { type: "number", description: "相对今天的起始天数，如 -7 表示 7 天前 (用于 type: journal)" },
+                endOffset: { type: "number", description: "相对今天的结束天数，0 表示今天 (用于 type: journal)" },
+                blockId: { type: "number", description: "目标块 ID (用于 type: ref/blockMatch)" },
+                hasTags: { type: "boolean", description: "是否必须有标签 (用于 type: block)" },
               },
               required: ["type"],
             },
           },
           combineMode: {
             type: "string",
-            enum: ["and", "or", "chain_and"],
-            description: "How to combine conditions: 'and' (all must match), 'or' (any can match), 'chain_and' (match in ancestor/descendant hierarchy)",
+            enum: ["and", "or"],
+            description: "条件组合方式，默认 'and'",
           },
           maxResults: {
             type: "number",
-            description: "Maximum number of results to return (default: 50, max: 50)",
+            description: "返回的最大结果数（默认 20，最大 50）",
           },
         },
-        required: ["conditions", "combineMode"],
+        required: ["conditions"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "getRecentJournals",
+      description: "获取最近几天的日记条目。当你需要了解用户最近的动态、计划或记录时使用。",
+      parameters: {
+        type: "object",
+        properties: {
+          days: {
+            type: "number",
+            description: "追溯的天数（默认 7）",
+          },
+          includeChildren: {
+            type: "boolean",
+            description: "是否包含日记条目的子块（默认 true）",
+          },
+          maxResults: {
+            type: "number",
+            description: "最大结果数",
+          },
+        },
       },
     },
   },
@@ -269,13 +185,13 @@ export const TOOLS: OpenAITool[] = [
     type: "function",
     function: {
       name: "get_tag_schema",
-      description: "Get the property schema (definitions) for a specific tag, including property names, types, and for choice-type properties (like status, priority with predefined options), the mapping between option labels and their internal values. **IMPORTANT**: Call this tool BEFORE querying with property filters if you're uncertain about option values. This prevents SQLITE_ERROR caused by using display text instead of internal IDs.",
+      description: "获取特定标签的架构定义，包括其所有可用属性的名称、类型和选项值。在使用 query_blocks_by_tag 之前，如果你不确定属性名或枚举值，请先调用此工具。",
       parameters: {
         type: "object",
         properties: {
           tagName: {
             type: "string",
-            description: "The tag name to get schema for (e.g., 'task', 'project')",
+            description: "标签名称（不带 #）",
           },
         },
         required: ["tagName"],
@@ -286,21 +202,17 @@ export const TOOLS: OpenAITool[] = [
     type: "function",
     function: {
       name: "searchBlocksByReference",
-      description: "Search for notes/blocks that reference (link to) a specific page using [[page name]] wiki-link syntax. Use this when the user asks 'which notes reference [[X]]?', 'find backlinks to X', or '哪些笔记引用了[[X]]？'. This is MORE PRECISE than text search as it only matches actual wiki-links, not plain text mentions.",
+      description: "搜索引用了特定页面的所有笔记（反向链接）。这有助于发现不同笔记之间的关联。输入参数为页面标题或文件名。",
       parameters: {
         type: "object",
         properties: {
           pageName: {
             type: "string",
-            description: "The page name or alias to find references to (e.g., '项目A', 'Project A', 'meeting notes')",
-          },
-          page_name: {
-            type: "string",
-            description: "Alias of pageName (some clients/models may send `page_name` instead).",
+            description: "引用的页面名称（不带 [[ ]]）",
           },
           maxResults: {
             type: "number",
-            description: "Maximum number of results to return (default: 50, max: 50)",
+            description: "返回的最大结果数（默认 20，最大 50）",
           },
         },
         required: ["pageName"],
@@ -311,17 +223,17 @@ export const TOOLS: OpenAITool[] = [
     type: "function",
     function: {
       name: "getPage",
-      description: "直接读取指定名称的页面内容。返回的内容中每一行都会包含 (block #ID) 格式的块 ID，你可以直接使用这些 ID 作为 createBlock 的 refBlockId。比 searchBlocksByText 更精准。适用场景：「读取名为XX的页面」、「查看[[XX]]的内容」、「打开XX笔记」",
+      description: "根据名称读取完整页面的内容。当你从搜索结果中找到感兴趣的页面时，使用此工具阅读其详细内容。支持追溯到页面根节点。",
       parameters: {
         type: "object",
         properties: {
           pageName: {
             type: "string",
-            description: "要读取的页面名称或别名（e.g., \"项目方案\", \"Project A\", \"会议记录\"）",
+            description: "页面名称",
           },
           includeChildren: {
             type: "boolean",
-            description: "是否包含子块内容（默认：true）。设为 false 只返回页面标题块",
+            description: "是否包含所有子块内容（默认 true）",
           },
         },
         required: ["pageName"],
@@ -332,31 +244,29 @@ export const TOOLS: OpenAITool[] = [
     type: "function",
     function: {
       name: "createBlock",
-      description: "创建新的笔记块（类似 MCP insert_markdown 工具）。**必须提供 refBlockId 或 pageName 二选一**作为参考位置，以及插入位置。无需在特定 panel 中即可调用。",
+      description: "在指定位置创建新笔记条目。你需要提供参考块 ID 以及新内容插入的位置（如子块末尾、当前块之后等）。",
       parameters: {
         type: "object",
         properties: {
           refBlockId: {
             type: "number",
-            description: "参考块 ID（与 pageName 二选一必填）。**必须是数字类型**，例如：270。注意：不要使用 'orca-block:270' 格式的字符串，只需传数字 270 即可。",
+            description: "参考块的 ID。你也可以提供 pageName 替代此参数。",
           },
           pageName: {
             type: "string",
-            description: "参考页面名称（与 refBlockId 二选一必填），会自动获取该页面的根块作为参考块。如果同时指定了 refBlockId 和 pageName，优先使用 refBlockId",
-          },
-          position: {
-            type: "string",
-            enum: ["before", "after", "firstChild", "lastChild"],
-            description: "相对于参考块的位置。**参数名必须是 position**（不要使用 location）。可选值：before=在前面，after=在后面，firstChild=作为第一个子块，lastChild=作为最后一个子块（默认：lastChild）",
+            description: "页面名称。如果提供了此项，将在该页面末尾创建块。",
           },
           content: {
             type: "string",
-            description: "块的文本内容（支持 Markdown 格式）",
+            description: "笔记内容（支持 Markdown）",
+          },
+          position: {
+            type: "string",
+            enum: ["firstChild", "lastChild", "before", "after"],
+            description: "相对于参考块的插入位置，默认为 'lastChild' (作为子块末尾)",
           },
         },
         required: ["content"],
-        // Note: We can't express "refBlockId XOR pageName required" in JSON Schema,
-        // but the description makes it clear, and runtime validation enforces it
       },
     },
   },
@@ -364,17 +274,17 @@ export const TOOLS: OpenAITool[] = [
     type: "function",
     function: {
       name: "createPage",
-      description: "为指定块创建页面别名，使其成为一个可通过名称引用的页面。页面本质上是具有唯一别名的块。",
+      description: "为现有块创建页面别名（将其提升为标题页面）。",
       parameters: {
         type: "object",
         properties: {
           blockId: {
             type: "number",
-            description: "要转为页面的块 ID（必须是数字类型）",
+            description: "目标块 ID",
           },
           pageName: {
             type: "string",
-            description: "页面名称/别名（唯一标识符）",
+            description: "新页面名称",
           },
         },
         required: ["blockId", "pageName"],
@@ -385,31 +295,26 @@ export const TOOLS: OpenAITool[] = [
     type: "function",
     function: {
       name: "insertTag",
-      description: "为指定块添加标签。标签用于分类和添加元数据。可选择性地添加属性（如日期、状态等）。",
+      description: "为指定块添加标签。支持同时设置标签属性（如 #book {status: 'reading'}）。",
       parameters: {
         type: "object",
         properties: {
           blockId: {
             type: "number",
-            description: "要添加标签的块 ID（必须是数字类型）",
+            description: "目标块 ID",
           },
           tagName: {
             type: "string",
-            description: "标签名称（例如：'project', 'task', 'deadline'）",
+            description: "标签名（不带 #）",
           },
           properties: {
             type: "array",
-            description: "可选的标签属性列表（例如：日期、状态等）",
+            description: "标签属性列表（可选）",
             items: {
               type: "object",
               properties: {
-                name: {
-                  type: "string",
-                  description: "属性名称（例如：'date', 'status', 'priority'）",
-                },
-                value: {
-                  description: "属性值（可以是字符串、数字或日期）",
-                },
+                name: { type: "string", description: "属性名" },
+                value: { type: ["string", "number", "boolean"], description: "属性值" },
               },
               required: ["name", "value"],
             },
@@ -419,470 +324,125 @@ export const TOOLS: OpenAITool[] = [
       },
     },
   },
-  // ========== Skill System Tools ==========
-  {
-    type: "function",
-    function: {
-      name: "searchSkills",
-      description: "搜索用户定义的技能（#skill 标签）。当用户请求涉及特定领域（如翻译、写作、数据分析）时，可搜索是否有相关技能可用。找到相关技能后，使用 getSkillDetails 获取完整内容。",
-      parameters: {
-        type: "object",
-        properties: {
-          query: {
-            type: "string",
-            description: "搜索关键词，匹配技能名称和描述（可选）",
-          },
-          type: {
-            type: "string",
-            enum: ["prompt", "tools"],
-            description: "筛选技能类型：prompt（提示词型）或 tools（工具型）（可选）",
-          },
-        },
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "getSkillDetails",
-      description: "获取指定技能的完整内容，包括提示词、工具列表等。使用 searchSkills 返回的技能 ID 调用此工具。获取详情后，你应该按照技能定义的指令行事。",
-      parameters: {
-        type: "object",
-        properties: {
-          skillId: {
-            type: "number",
-            description: "技能 ID（从 searchSkills 结果获取）",
-          },
-        },
-        required: ["skillId"],
-      },
-    },
-  },
 ];
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Skill-based Tool Filtering
-// ─────────────────────────────────────────────────────────────────────────────
-
 /**
- * 根据 Skill 过滤可用工具集
- * @param skill - 当前激活的 Skill，如果为 null 或不是 tools 类型则返回全部工具
- * @returns 过滤后的工具数组
+ * ═══════════════════════════════════════════════════════════════════════════
+ * Tool Implementation Logic
+ * ═══════════════════════════════════════════════════════════════════════════
  */
-export function filterToolsBySkill(skill: Skill | null): OpenAITool[] {
-  // 如果没有 Skill 或不是 tools 类型，返回全部工具
-  if (!skill || skill.type !== "tools" || !skill.tools?.length) {
-    return TOOLS;
-  }
-
-  // 规范化 Skill 中声明的工具名
-  const normalizedNames = new Set(skill.tools.map(normalizeToolName));
-
-  // 过滤工具
-  const filtered = TOOLS.filter((tool) =>
-    normalizedNames.has(tool.function.name)
-  );
-
-  // 如果所有工具名都无效，回退到全部工具
-  if (filtered.length === 0) {
-    console.warn(
-      `[filterToolsBySkill] No valid tools found for skill "${skill.name}", falling back to all tools. ` +
-      `Declared tools: ${skill.tools.join(", ")}`
-    );
-    return TOOLS;
-  }
-
-  // 检查未识别的工具名
-  const recognizedNames = new Set(filtered.map((t) => t.function.name));
-  const unrecognized = skill.tools.filter(
-    (name) => !recognizedNames.has(normalizeToolName(name))
-  );
-  if (unrecognized.length > 0) {
-    console.warn(
-      `[filterToolsBySkill] Unrecognized tool names in skill "${skill.name}": ${unrecognized.join(", ")}`
-    );
-  }
-
-  return filtered;
-}
 
 /**
  * 获取块的根页面 ID（向上追溯到 parent === null 的块）
- * @param blockId - 要查询的块 ID
- * @returns 根块 ID，如果查找失败返回 undefined
  */
 async function getRootBlockId(blockId: number): Promise<number | undefined> {
+  let currentId = blockId;
+  let safetyCounter = 0;
+
   try {
-    let currentBlock: any = orca.state.blocks[blockId];
-
-    // 如果 state 中没有，从后端获取
-    if (!currentBlock) {
-      currentBlock = await orca.invokeBackend("get-block", blockId);
-      if (!currentBlock) return undefined;
+    while (safetyCounter < 20) {
+      const block = orca.state.blocks[currentId] || await orca.invokeBackend("get-block", currentId);
+      if (!block) return currentId;
+      if (!block.parent) return block.id;
+      currentId = block.parent;
+      safetyCounter++;
     }
-
-    // 向上追溯到根块
-    while (currentBlock && currentBlock.parent !== null) {
-      const parentId: number = currentBlock.parent;
-      let parentBlock: any = orca.state.blocks[parentId];
-
-      if (!parentBlock) {
-        parentBlock = await orca.invokeBackend("get-block", parentId);
-        if (!parentBlock) break; // 无法继续追溯
-      }
-
-      currentBlock = parentBlock;
-    }
-
-    return currentBlock ? currentBlock.id : undefined;
   } catch (error) {
-    console.warn(`[getRootBlockId] Failed to get root block for ${blockId}:`, error);
-    return undefined;
+    console.warn(`[getRootBlockId] Error tracing root for block ${blockId}:`, error);
   }
+  return currentId;
 }
 
 /**
- * Format a property value for display
+ * 将任意输入转换为有限数字。
  */
-function formatPropValue(value: any): string {
-  if (value === null) return "null";
-  if (typeof value === "string") return value;
-  if (typeof value === "number" || typeof value === "boolean") return String(value);
-  try {
-    const s = JSON.stringify(value);
-    return s.length > 120 ? `${s.slice(0, 117)}...` : s;
-  } catch {
-    return String(value);
-  }
+function toFiniteNumber(val: any): number | undefined {
+  if (val === null || val === undefined) return undefined;
+  const num = Number(val);
+  return Number.isFinite(num) ? num : undefined;
 }
 
 /**
- * Execute a tool call and return the result
- * @param toolName - Name of the tool to execute
- * @param args - Arguments passed to the tool
- * @returns Result string to send back to AI
+ * 规范化日记偏移量。
+ */
+function normalizeJournalOffset(val: any, defaultVal: number): number {
+  const num = Number(val);
+  return Number.isFinite(num) ? Math.trunc(num) : defaultVal;
+}
+
+/**
+ * 主入口：处理 AI 调用的工具。
  */
 export async function executeTool(toolName: string, args: any): Promise<string> {
   try {
-    const toFiniteNumber = (value: any): number | undefined => {
-      if (typeof value === "number" && Number.isFinite(value)) return value;
-      if (typeof value === "string" && value.trim()) {
-        const n = Number(value);
-        if (Number.isFinite(n)) return n;
-      }
-      return undefined;
-    };
-
-    // Orca's relative journal dates typically use negative values for past (e.g., -7 = 7 days ago).
-    // Accept both conventions from models/users: 7 => -7, -7 => -7.
-    const normalizeJournalOffset = (value: any, fallback: number): number => {
-      const n = toFiniteNumber(value);
-      const v = Number.isFinite(n as number) ? Math.trunc(n as number) : fallback;
-      if (v === 0) return 0;
-      return v > 0 ? -v : v;
-    };
-
     if (toolName === "searchBlocksByTag") {
       try {
-        // Support multiple parameter names: tagName, tag, query
-        let tagName = args.tagName || args.tag_name || args.tag || args.query;
-        const maxResults = args.maxResults || 50;
-
-        // Handle array parameters (AI sometimes sends ["tag"] instead of "tag")
-        if (Array.isArray(tagName)) {
-          tagName = tagName[0];
-        }
-
-        if (!tagName) {
-          console.error("[Tool] Missing tag name parameter");
-          return "Error: Missing tag name parameter";
-        }
-
-        console.log(`[Tool] searchBlocksByTag: "${tagName}" (max: ${maxResults})`);
-        const results = await searchBlocksByTag(tagName, Math.min(maxResults, 50));
+        const tagQuery = args.tag_query || args.tagQuery || args.tag;
+        const maxResults = args.maxResults || 20;
+        
+        console.log(`[Tool] searchBlocksByTag: "${tagQuery}"`);
+        const results = await searchBlocksByTag(tagQuery, Math.min(maxResults, 50));
         console.log(`[Tool] searchBlocksByTag found ${results.length} results`);
 
         if (results.length === 0) {
-          return `No notes found with tag "${tagName}".`;
+          return `No blocks found with tag query "${tagQuery}".`;
         }
 
-        // Format with clickable block links using utility
         const preservationNote = addLinkPreservationNote(results.length);
-        const summary = results.map((r, i) => formatBlockResult(r, i)).join("\n\n");
+        const summary = results.map((r: any, i: number) => formatBlockResult(r, i)).join("\n\n");
 
-        return `${preservationNote}Found ${results.length} note(s) with tag "${tagName}":\n${summary}`;
+        return `${preservationNote}Found ${results.length} block(s) with tag "${tagQuery}":\n${summary}`;
       } catch (err: any) {
         console.error(`[Tool] Error in searchBlocksByTag:`, err);
-        return `Error searching for tag "${args.tagName}": ${err.message}`;
+        return `Error searching by tag: ${err.message}`;
       }
     } else if (toolName === "searchBlocksByText") {
       try {
-        // Support multiple parameter names: searchText, text, query, queries
-        let searchText = args.searchText || args.search_text || args.text || args.query || args.queries;
+        const query = args.query;
+        const maxResults = args.maxResults || 20;
 
-        // Handle array parameters (AI sometimes sends ["text"] instead of "text")
-        if (Array.isArray(searchText)) {
-          searchText = searchText[0];
-        }
-
-        const maxResults = args.maxResults || 50;
-
-        if (!searchText || typeof searchText !== "string") {
-          console.error("[Tool] Missing or invalid search text parameter");
-          return "Error: Missing search text parameter";
-        }
-
-        console.log(`[Tool] searchBlocksByText: "${searchText}" (max: ${maxResults})`);
-        const results = await searchBlocksByText(searchText, Math.min(maxResults, 50));
+        console.log(`[Tool] searchBlocksByText: "${query}"`);
+        const results = await searchBlocksByText(query, Math.min(maxResults, 50));
         console.log(`[Tool] searchBlocksByText found ${results.length} results`);
 
         if (results.length === 0) {
-          return `No notes found containing "${searchText}".`;
+          return `No blocks found matching text "${query}".`;
         }
 
-        // Format with clickable block links using utility
         const preservationNote = addLinkPreservationNote(results.length);
-        const summary = results.map((r, i) => formatBlockResult(r, i)).join("\n\n");
+        const summary = results.map((r: any, i: number) => formatBlockResult(r, i)).join("\n\n");
 
-        return `${preservationNote}Found ${results.length} note(s) containing "${searchText}":\n${summary}`;
+        return `${preservationNote}Found ${results.length} block(s) matching "${query}":\n${summary}`;
       } catch (err: any) {
         console.error(`[Tool] Error in searchBlocksByText:`, err);
-        return `Error searching for text "${args.searchText}": ${err.message}`;
+        return `Error searching by text: ${err.message}`;
       }
-    } else if (toolName === "queryBlocksByTag") {
+    } else if (toolName === "query_blocks_by_tag") {
       try {
-        // Advanced query with property filters
-        let tagName = typeof args.tagName === "string"
-          ? args.tagName
-          : (typeof args.tag_name === "string" ? args.tag_name : (typeof args.tag === "string" ? args.tag : undefined));
+        const tagName = args.tagName;
+        const filters = args.filters || [];
+        const maxResults = args.maxResults || 20;
 
-        const queryText = typeof args.query === "string" ? args.query : undefined;
-        const propertyFiltersInput = args.property_filters
-          ?? args.propertyFilters
-          ?? args.propertyFilter
-          ?? args.property_filter
-          ?? args.filters
-          ?? args.filter;
-        let properties: any[] = [];
-
-        if (Array.isArray(args.properties)) {
-          properties = args.properties;
-        } else if (args.properties && typeof args.properties === "object") {
-          properties = [args.properties];
-        } else if (typeof args.properties === "string") {
-          properties = parsePropertyFilters(args.properties);
-        }
-
-        if (propertyFiltersInput !== undefined) {
-          properties = [...properties, ...parsePropertyFilters(propertyFiltersInput)];
-        }
-
-        // Handle flat parameter format: { property, operator, value }
-        // Some AI models send single property filter as flat args instead of properties array
-        if (properties.length === 0 && args.property && args.operator) {
-          const opMap: Record<string, string> = {
-            ">=": ">=", ">": ">", "<=": "<=", "<": "<",
-            "==": "==", "=": "==", "!=": "!=", "<>": "!=",
-            "is null": "is null", "isnull": "is null", "null": "is null",
-            "not null": "not null", "notnull": "not null", "not_null": "not null",
-            "includes": "includes", "contains": "includes",
-            "not includes": "not includes", "not_includes": "not includes",
-          };
-          const normalizedOp = opMap[String(args.operator).toLowerCase()] ?? args.operator;
-          properties = [{
-            name: args.property,
-            op: normalizedOp,
-            value: args.value,
-          }];
-          console.log("[queryBlocksByTag] Converted flat args to properties:", properties);
-        }
-
-        if (queryText && queryText.trim()) {
-          if (tagName) {
-            const trimmedTag = String(tagName).trim();
-            const trimmedQuery = queryText.trim();
-            if (trimmedQuery !== trimmedTag) {
-              const parsedFromQuery = parsePropertyFilters(trimmedQuery);
-              if (parsedFromQuery.length === 0) {
-                return "Error: Unable to parse property filters from `query`. Use `properties` array or a string like \"priority == 6\".";
-              }
-              properties = [...properties, ...parsedFromQuery];
-            }
-          } else {
-            const parsedFromQuery = parsePropertyFilters(queryText);
-            if (parsedFromQuery.length > 0) {
-              properties = [...properties, ...parsedFromQuery];
-            } else {
-              tagName = queryText;
-            }
-          }
-        }
-        const maxResults = args.maxResults || 50;
-
-        if (!tagName) {
-          console.error("[Tool] Missing tag name parameter");
-          return "Error: Missing tag name parameter";
-        }
-
-        if (propertyFiltersInput !== undefined && properties.length === 0) {
-          return "Error: Unable to parse property filters. Use `properties` array or a string like \"priority == 6\".";
-        }
-
-        // Enrich properties with type information from tag schema (using cached version)
-        if (properties.length > 0) {
-          try {
-            const schema = await getCachedTagSchema(tagName);
-            properties = properties.map((prop: any) => {
-              // If type is already set, use it
-              if (prop.type !== undefined) {
-                return prop;
-              }
-              
-              // Look up the property in the schema
-              const schemaProp = schema.properties.find(p => p.name === prop.name);
-              if (schemaProp) {
-                return {
-                  ...prop,
-                  type: schemaProp.type,
-                };
-              }
-              
-              // Property not found in schema, return as-is
-              console.warn(`[queryBlocksByTag] Property "${prop.name}" not found in tag schema`);
-              return prop;
-            });
-          } catch (error) {
-            console.warn(`[queryBlocksByTag] Failed to fetch tag schema for type enrichment:`, error);
-            // Continue without type enrichment
-          }
-        }
-
-        console.log(`[Tool] queryBlocksByTag: "${tagName}" properties=${JSON.stringify(properties)} (max: ${maxResults})`);
-        const results = await queryBlocksByTag(tagName, {
-          properties,
-          maxResults: Math.min(maxResults, 50),
-        });
-        console.log(`[Tool] queryBlocksByTag found ${results.length} results`);
+        console.log(`[Tool] query_blocks_by_tag: #${tagName}`, { filters, maxResults });
+        const results = await queryBlocksByTag(tagName, { properties: filters, maxResults });
+        console.log(`[Tool] query_blocks_by_tag found ${results.length} results`);
 
         if (results.length === 0) {
-          const filterDesc = properties.length > 0
-            ? ` with filters: ${properties.map((p: any) => `${p.name} ${p.op} ${p.value ?? ''}`).join(', ')}`
-            : '';
-          return `No notes found with tag "${tagName}"${filterDesc}.`;
-        }
-
-        // Format with clickable block links using utility
-        const preservationNote = addLinkPreservationNote(results.length);
-        const summary = results.map((r, i) => {
-          const linkTitle = r.title.replace(/[\[\]]/g, '');  // Escape brackets
-          const body = r.fullContent ?? r.content;
-          const propValues = (r as any).propertyValues && typeof (r as any).propertyValues === "object"
-            ? (r as any).propertyValues
-            : null;
-          const propSuffix = propValues && Object.keys(propValues).length > 0
-            ? ` (${Object.entries(propValues).map(([k, v]) => `${k}=${formatPropValue(v)}`).join(", ")})`
-            : "";
-          return `${i + 1}. [${linkTitle}](orca-block:${r.id})${propSuffix}\n${body}`;
-        }).join("\n\n");
-
-        const filterDesc = properties.length > 0
-          ? ` (filtered by: ${properties.map((p: any) => `${p.name} ${p.op} ${p.value ?? ''}`).join(', ')})`
-          : '';
-        return `${preservationNote}Found ${results.length} note(s) with tag "${tagName}"${filterDesc}:\n${summary}`;
-      } catch (err: any) {
-        console.error(`[Tool] Error in queryBlocksByTag:`, err);
-        return `Error querying tag "${args.tagName}": ${err.message}`;
-      }
-    } else if (toolName === "searchTasks") {
-      try {
-        // Search for task blocks
-        const completed = typeof args.completed === "boolean" ? args.completed : undefined;
-        const maxResults = args.maxResults || 50;
-
-        console.log("[Tool] searchTasks:", { completed, maxResults });
-
-        const results = await searchTasks(completed, { maxResults: Math.min(maxResults, 50) });
-        console.log(`[Tool] searchTasks found ${results.length} results`);
-
-        if (results.length === 0) {
-          const statusDesc = completed === true ? "completed" : completed === false ? "incomplete" : "";
-          return `No ${statusDesc} tasks found.`;
+          const filterDesc = filters.length > 0 ? " with specified filters" : "";
+          return `No blocks found for #${tagName}${filterDesc}.`;
         }
 
         const preservationNote = addLinkPreservationNote(results.length);
-        const summary = results.map((r, i) => formatBlockResult(r, i)).join("\n\n");
+        const summary = results.map((r: any, i: number) => formatBlockResult(r, i)).join("\n\n");
 
-        const statusDesc = completed === true ? "completed " : completed === false ? "incomplete " : "";
-        return `${preservationNote}Found ${results.length} ${statusDesc}task(s):\n${summary}`;
+        return `${preservationNote}Found ${results.length} block(s) for #${tagName}:\n${summary}`;
       } catch (err: any) {
-        console.error(`[Tool] Error in searchTasks:`, err);
-        return `Error searching tasks: ${err.message}`;
-      }
-    } else if (toolName === "searchJournalEntries") {
-      try {
-        // Search for journal entries in date range
-        let startOffset = normalizeJournalOffset(args.startOffset ?? args.start_offset, -7);
-        let endOffset = normalizeJournalOffset(args.endOffset ?? args.end_offset, 0);
-        const maxResults = args.maxResults || 50;
-
-        if (startOffset > endOffset) {
-          [startOffset, endOffset] = [endOffset, startOffset];
-        }
-
-        const startDaysAgo = Math.abs(startOffset);
-        const endDaysAgo = Math.abs(endOffset);
-
-        console.log("[Tool] searchJournalEntries:", {
-          startOffset,
-          endOffset,
-          startDaysAgo,
-          endDaysAgo,
-          maxResults,
-        });
-
-        const start: QueryDateSpec = { type: "relative", value: startOffset, unit: "d" };
-        const end: QueryDateSpec = { type: "relative", value: endOffset, unit: "d" };
-
-        const results = await searchJournalEntries(start, end, { maxResults: Math.min(maxResults, 50) });
-        console.log(`[Tool] searchJournalEntries found ${results.length} results`);
-
-        if (results.length === 0) {
-          return `No journal entries found from ${startDaysAgo} to ${endDaysAgo} days ago.`;
-        }
-
-        const preservationNote = addLinkPreservationNote(results.length);
-        const summary = results.map((r, i) => formatBlockResult(r, i)).join("\n\n");
-
-        return `${preservationNote}Found ${results.length} journal entries from ${startDaysAgo} to ${endDaysAgo} days ago:\n${summary}`;
-      } catch (err: any) {
-        console.error(`[Tool] Error in searchJournalEntries:`, err);
-        return `Error searching journal entries: ${err.message}`;
-      }
-    } else if (toolName === "getTodayJournal") {
-      try {
-        const includeChildren = args.includeChildren !== false; // default true
-
-        console.log("[Tool] getTodayJournal:", { includeChildren });
-
-        const result = await getTodayJournal(includeChildren);
-        console.log(`[Tool] getTodayJournal found result: ${result.id}`);
-        
-        const linkTitle = result.title.replace(/[\[\]]/g, "");
-        const body = result.fullContent ?? result.content;
-
-        return `# ${linkTitle}
-
-${body}
-
----
-📄 [查看原页面](orca-block:${result.id})`;
-      } catch (err: any) {
-        console.error(`[Tool] Error in getTodayJournal:`, err);
-        return `Error getting today's journal: ${err.message}`;
+        console.error(`[Tool] Error in query_blocks_by_tag:`, err);
+        return `Error querying tag with filters: ${err.message}`;
       }
     } else if (toolName === "getRecentJournals") {
       try {
-        let days = args.days ?? args.day ?? args.rangeDays ?? args.lastDays ?? args.n;
+        let days = args.days ?? 7;
         const includeChildren = args.includeChildren !== false; // default true
         const maxResults = args.maxResults ?? 20;
 
@@ -916,7 +476,7 @@ ${body}
         }
 
         const preservationNote = addLinkPreservationNote(results.length);
-        const summary = results.map((r, i) => formatBlockResult(r, i)).join("\n\n");
+        const summary = results.map((r: any, i: number) => formatBlockResult(r, i)).join("\n\n");
 
         return `${preservationNote}Found ${results.length} journal entries in the last ${normalizedDays} day(s):\n${summary}`;
       } catch (err: any) {
@@ -936,7 +496,6 @@ ${body}
 
         console.log("[Tool] query_blocks:", { conditions, combineMode, maxResults });
 
-        // Convert AI-friendly conditions to internal format
         const convertedConditions: QueryCondition[] = conditions.map((c: any) => {
           switch (c.type) {
             case "tag":
@@ -979,7 +538,7 @@ ${body}
         }
 
         const preservationNote = addLinkPreservationNote(results.length);
-        const summary = results.map((r, i) => formatBlockResult(r, i)).join("\n\n");
+        const summary = results.map((r: any, i: number) => formatBlockResult(r, i)).join("\n\n");
 
         return `${preservationNote}Found ${results.length} block(s) matching ${combineMode.toUpperCase()} query:\n${summary}`;
       } catch (err: any) {
@@ -988,10 +547,8 @@ ${body}
       }
     } else if (toolName === "get_tag_schema") {
       try {
-        // Get tag schema with property definitions
         let tagName = args.tagName || args.tag_name || args.tag;
 
-        // Handle array parameters
         if (Array.isArray(tagName)) {
           tagName = tagName[0];
         }
@@ -1009,24 +566,18 @@ ${body}
           return `Tag "${tagName}" found but has no properties defined.`;
         }
 
-        // Format schema as markdown
         let result = `Schema for tag "${schema.tagName}":\n\n`;
-
-        schema.properties.forEach((prop, i) => {
+        schema.properties.forEach((prop: any, i: number) => {
           result += `${i + 1}. **${prop.name}** (${prop.typeName}, type code: ${prop.type})\n`;
-
           if (prop.options && prop.options.length > 0) {
             result += `   Options:\n`;
-            prop.options.forEach((opt) => {
+            prop.options.forEach((opt: any) => {
               result += `   - "${opt.label}" → value: ${opt.value}\n`;
             });
           }
         });
 
-        result += `\n**Usage tip**: When querying with property filters, use the numeric values shown above for choice properties. For example:\n`;
-        result += `- For single-choice properties, use: { name: "propertyName", op: "==", value: <numeric_value> }\n`;
-        result += `- For number/text properties, use the appropriate operator and value type.\n`;
-
+        result += `\n**Usage tip**: When querying with property filters, use the numeric values shown above for choice properties.\n`;
         return result;
       } catch (err: any) {
         console.error(`[Tool] Error in get_tag_schema:`, err);
@@ -1034,16 +585,11 @@ ${body}
       }
     } else if (toolName === "searchBlocksByReference") {
       try {
-        // Search for blocks that reference a specific page
-        // Support many parameter name variations that AI models might use
         let pageName = args.pageName || args.page_name || args.page || args.alias || args.name 
           || args.query || args.reference || args.target || args.text || args.blockName
           || args.searchText || args.pageTitle || args.title || args.reference_page_name;
         const maxResults = args.maxResults || 50;
 
-        console.log("[Tool] searchBlocksByReference args received:", JSON.stringify(args));
-
-        // Handle array parameters (AI sometimes sends ["name"] instead of "name")
         if (Array.isArray(pageName)) {
           pageName = pageName[0];
         }
@@ -1059,11 +605,11 @@ ${body}
         console.log(`[Tool] searchBlocksByReference found ${results.length} results`);
 
         if (results.length === 0) {
-          return `No blocks found referencing "[[${pageName}]]". This page may have no backlinks, or the page name may not exist.`;
+          return `No blocks found referencing "[[${pageName}]]".`;
         }
 
         const preservationNote = addLinkPreservationNote(results.length);
-        const summary = results.map((r, i) => formatBlockResult(r, i)).join("\n\n");
+        const summary = results.map((r: any, i: number) => formatBlockResult(r, i)).join("\n\n");
 
         return `${preservationNote}Found ${results.length} block(s) referencing "[[${pageName}]]":\n${summary}`;
       } catch (err: any) {
@@ -1072,43 +618,29 @@ ${body}
       }
     } else if (toolName === "getPage") {
       try {
-        // Get page content by name
-        let pageName = args.pageName || args.page_name || args.page || args.name
-          || args.alias || args.title || args.pageTitle;
-        const includeChildren = args.includeChildren !== false; // default true
+        let pageName = args.pageName || args.page_name || args.page || args.name || args.alias || args.title;
+        const includeChildren = args.includeChildren !== false;
 
-        // Handle array parameters
         if (Array.isArray(pageName)) {
           pageName = pageName[0];
         }
 
         if (!pageName) {
           console.error("[Tool] Missing page name parameter");
-          return "Error: Missing page name parameter. Please specify which page to read.";
+          return "Error: Missing page name parameter.";
         }
 
         console.log("[Tool] getPage:", { pageName, includeChildren });
 
         try {
           const result = await getPageByName(pageName, includeChildren);
-          console.log(`[Tool] getPage found result: ${result.id}`);
-
           const linkTitle = result.title.replace(/[\[\]]/g, "");
           const body = result.fullContent ?? result.content;
 
-          return `# ${linkTitle}
-
-${body}
-
----
-📄 [查看原页面](orca-block:${result.id})`;
+          return `# ${linkTitle}\n\n${body}\n\n---\n📄 [查看原页面](orca-block:${result.id})`;
         } catch (error: any) {
-          // If page not found, provide helpful error message
           if (error.message?.includes("not found")) {
-            return `Page "${pageName}" not found. Please check:
-1. The page name is correct (case-sensitive)
-2. The page exists in your notes
-3. Try using searchBlocksByText("${pageName}") to find similar pages`;
+            return `Page "${pageName}" not found.`;
           }
           throw error;
         }
@@ -1118,407 +650,128 @@ ${body}
       }
     } else if (toolName === "createBlock") {
       try {
-        console.log("[Tool] createBlock called with args:", JSON.stringify(args));
-
-        // Parse and validate parameters - support multiple field name variations
-        
-        // Extract refBlockId - support "orca-block:274" format
         let refBlockIdRaw = args.refBlockId ?? args.ref_block_id ?? args.blockId ?? args.block_id;
 
-        // If refBlockId is a string like "orca-block:274", extract the number
         if (typeof refBlockIdRaw === "string") {
           const match = refBlockIdRaw.match(/^orca-block:(\d+)$/);
-          if (match) {
-            refBlockIdRaw = parseInt(match[1], 10);
-          }
+          if (match) refBlockIdRaw = parseInt(match[1], 10);
         }
 
         let refBlockId = toFiniteNumber(refBlockIdRaw);
+        const pageName = args.pageName || args.page_name || args.page || args.title;
 
-        const pageName = typeof args.pageName === "string" ? args.pageName : 
-                         (typeof args.page_name === "string" ? args.page_name : 
-                         (typeof args.page === "string" ? args.page : 
-                         (typeof args.title === "string" ? args.title : undefined)));
-
-        // If pageName is provided but no refBlockId, get the page's root block
         if (!refBlockId && pageName) {
           try {
             const pageResult = await getPageByName(pageName, false);
             refBlockId = pageResult.id;
-            console.log(`[Tool] createBlock: Resolved page "${pageName}" to root block ${refBlockId}`);
           } catch (error: any) {
-             console.warn(`[Tool] createBlock: Failed to resolve page "${pageName}"`);
-             return `Error: Page "${pageName}" not found. Please check the page name or use refBlockId instead.`;
+             return `Error: Page "${pageName}" not found.`;
           }
         }
 
         if (refBlockId === undefined) {
-          // Provide helpful error message with context
-          let helpfulHint = "";
-          
-          // Try to suggest current context
-          if (uiStore.lastRootBlockId) {
-            helpfulHint = `\n\nHint: You can use the current page's root block: refBlockId=${uiStore.lastRootBlockId}`;
-          }
-
-          // Show available parameter aliases
-          const aliases = `
-Supported parameter names:
-- refBlockId, ref_block_id, blockId, or block_id (number)
-- pageName, page_name, page, or title (string)`;
-
-          return `Error: Missing reference. Please provide either refBlockId (number) or pageName (string).${aliases}${helpfulHint}`;
+          return "Error: Missing reference. Please provide either refBlockId or pageName.";
         }
 
-        const position = (typeof args.position === "string" && 
-                          ["before", "after", "firstChild", "lastChild"].includes(args.position)) 
-                          ? args.position 
-                          : (typeof args.location === "string" && 
-                            ["before", "after", "firstChild", "lastChild"].includes(args.location))
-                          ? args.location
-                          : (args.position === "asChild" || args.location === "asChild")
-                          ? "lastChild"
-                          : "lastChild";
-
-        const content = 
-          typeof args.content === "string" 
-            ? args.content 
-            : (typeof args.text === "string" ? args.text : "");
+        const position = ["before", "after", "firstChild", "lastChild"].includes(args.position) ? args.position : "lastChild";
+        const content = args.content || args.text || "";
 
         if (!content || content.trim().length === 0) {
           return "Error: Content cannot be empty.";
         }
 
-        console.log(`[Tool] createBlock: refBlockId=${refBlockId}, position=${position}`);
+        let refBlock = orca.state.blocks[refBlockId] || await orca.invokeBackend("get-block", refBlockId);
+        if (!refBlock) return `Error: Block ${refBlockId} not found.`;
 
-        // Get reference block - try state first, then backend API
-        let refBlock = orca.state.blocks[refBlockId];
-        
-        if (!refBlock) {
-          try {
-            refBlock = await orca.invokeBackend("get-block", refBlockId);
-            if (!refBlock) {
-              return `Error: Block ${refBlockId} not found in repository`;
-            }
-          } catch (error: any) {
-            console.error(`[Tool] Failed to fetch block ${refBlockId}:`, error);
-            return `Error: Failed to fetch block ${refBlockId}: ${error?.message || error}`;
-          }
-        }
-
-
-        // === 智能导航：仅在必要时跳转 ===
-        // 1. 获取目标块的根页面 ID
+        // Navigation check
         const targetRootBlockId = await getRootBlockId(refBlockId);
-        
-        // 2. 获取当前活动面板的根页面 ID（排除 AI chat panel）
         let currentRootBlockId: number | undefined = undefined;
         let targetPanelId: string | undefined = undefined;
 
         try {
           const activePanelId = orca.state.activePanel;
-          const aiChatPanelId = uiStore.aiChatPanelId;
-
-          // 如果当前活动面板是 AI chat panel，使用 openInLastPanel 的逻辑
-          // 否则使用当前活动面板
-          if (activePanelId === aiChatPanelId) {
-            // AI chat panel 处于活跃状态，需要在另一个 panel 操作
-            targetPanelId = undefined; // 让 openInLastPanel 自动选择
-          } else {
-            // 非 AI chat panel，可以直接使用
+          if (activePanelId !== uiStore.aiChatPanelId) {
             targetPanelId = activePanelId;
             const activePanel = orca.nav.findViewPanel(activePanelId, orca.state.panels);
-            
-            if (activePanel && activePanel.view === "block" && activePanel.viewArgs?.blockId) {
-              const currentBlockId = activePanel.viewArgs.blockId;
-              currentRootBlockId = await getRootBlockId(currentBlockId);
+            if (activePanel?.view === "block" && activePanel.viewArgs?.blockId) {
+              currentRootBlockId = await getRootBlockId(activePanel.viewArgs.blockId);
             }
           }
-        } catch (error) {
-          console.warn("[createBlock] Failed to get current panel's root block:", error);
-        }
+        } catch (error) {}
 
-        // 3. 智能导航决策
         const needsNavigation = !targetRootBlockId || !currentRootBlockId || (targetRootBlockId !== currentRootBlockId);
-
         if (needsNavigation) {
-          // 需要导航
-          if (targetPanelId) {
-            // 有明确的目标 panel，使用 replace
-            console.log(`[createBlock] Navigating to block ${refBlockId} in panel ${targetPanelId} (root: ${targetRootBlockId})`);
-            orca.nav.replace("block", { blockId: refBlockId }, targetPanelId);
-          } else {
-            // 当前在 AI chat panel，使用 openInLastPanel 在另一个 panel 打开
-            console.log(`[createBlock] Opening block ${refBlockId} in last panel (root: ${targetRootBlockId})`);
-            orca.nav.openInLastPanel("block", { blockId: refBlockId });
-          }
+          if (targetPanelId) orca.nav.replace("block", { blockId: refBlockId }, targetPanelId);
+          else orca.nav.openInLastPanel("block", { blockId: refBlockId });
           await new Promise(resolve => setTimeout(resolve, 100));
-        } else {
-          // 已经在目标页面，无需导航
-          console.log(`[createBlock] Already on target page (root: ${targetRootBlockId}), skipping navigation`);
         }
-        // === 智能导航结束 ===
 
-        // Insert block using editor command
-        try {
-          let newBlockIds: any;
-          await orca.commands.invokeGroup(async () => {
-            newBlockIds = await orca.commands.invokeEditorCommand(
-              "core.editor.batchInsertText",
-              null,                    // cursor (not needed for programmatic insert)
-              refBlock,                // reference block
-              position,                // position
-              content,                 // text content (Markdown will be parsed)
-              false,                   // skipMarkdown = false (enable Markdown parsing)
-              false,                   // skipTags = false (preserve tag extraction)
-            );
-          }, {
-            topGroup: true,
-            undoable: true
-          });
+        let newBlockIds: any;
+        await orca.commands.invokeGroup(async () => {
+          newBlockIds = await orca.commands.invokeEditorCommand(
+            "core.editor.batchInsertText",
+            null, refBlock, position, content, false, false
+          );
+        }, { topGroup: true, undoable: true });
 
-          // batchInsertText returns DbId[], take the first block ID
-          const newBlockId = Array.isArray(newBlockIds) ? newBlockIds[0] : newBlockIds;
-          
-          const positionDescriptions: Record<string, string> = {
-            before: "before",
-            after: "after",
-            firstChild: "as first child of",
-            lastChild: "as last child of"
-          };
-          const positionDesc = positionDescriptions[position] || "as last child of";
-          
-          console.log(`[Tool] createBlock success: newBlockId=${newBlockId}`);
-          return `Created new block: [${newBlockId}](orca-block:${newBlockId}) (${positionDesc} block ${refBlockId})`;
-        } catch (error: any) {
-          console.error("[Tool] Failed to create block (editor command):", error);
-          throw error; // Re-throw to be caught by the outer catch
-        }
+        const newBlockId = Array.isArray(newBlockIds) ? newBlockIds[0] : newBlockIds;
+        return `Created new block: [${newBlockId}](orca-block:${newBlockId})`;
       } catch (err: any) {
         console.error(`[Tool] Error in createBlock:`, err);
         return `Error creating block: ${err.message}`;
       }
     } else if (toolName === "createPage") {
       try {
-        // Create page alias for a block
         const blockId = toFiniteNumber(args.blockId || args.block_id || args.id);
         const pageName = args.pageName || args.page_name || args.name || args.alias;
 
-        if (!blockId) {
-          console.error("[Tool] Missing blockId parameter. Args:", args);
-          return "Error: Missing blockId parameter. Please specify the block ID to convert to a page.";
-        }
+        if (!blockId || !pageName) return "Error: Missing blockId or pageName.";
 
-        if (!pageName || typeof pageName !== "string" || !pageName.trim()) {
-          console.error("[Tool] Missing or invalid pageName parameter. Args:", args);
-          return "Error: Missing or invalid pageName parameter. Please specify a valid page name.";
-        }
-
-        console.log(`[Tool] createPage: blockId=${blockId}, pageName=${pageName}`);
-
-        await orca.commands.invokeEditorCommand(
-          "core.editor.createAlias",
-          null,         // cursor context
-          pageName,     // 页面名称/别名
-          blockId,      // 区块 ID
-          true          // asPage: 标记为页面
-        );
-
-        return `Created page: [[${pageName}]] for block [${blockId}](orca-block:${blockId})`;
+        await orca.commands.invokeEditorCommand("core.editor.createAlias", null, pageName, blockId, true);
+        return `Created page [[${pageName}]] for block ${blockId}`;
       } catch (err: any) {
-        console.error(`[Tool] Error in createPage:`, err);
-        return `Error creating page "${args.pageName}": ${err.message}`;
+        return `Error creating page: ${err.message}`;
       }
     } else if (toolName === "insertTag") {
       try {
-        // Insert tag to a block
         const blockId = toFiniteNumber(args.blockId || args.block_id || args.id);
-        const tagName = args.tagName || args.tag_name || args.tag || args.name;
+        const tagName = args.tagName || args.tag_name || args.tag;
         const properties = args.properties || args.props;
 
-        if (!blockId) {
-          console.error("[Tool] Missing blockId parameter. Args:", args);
-          return "Error: Missing blockId parameter. Please specify the block ID to add tag to.";
-        }
+        if (!blockId || !tagName) return "Error: Missing blockId or tagName.";
 
-        if (!tagName || typeof tagName !== "string" || !tagName.trim()) {
-          console.error("[Tool] Missing or invalid tagName parameter. Args:", args);
-          return "Error: Missing or invalid tagName parameter. Please specify a valid tag name.";
-        }
-
-        console.log(`[Tool] insertTag: blockId=${blockId}, tagName=${tagName}, properties=${JSON.stringify(properties)}`);
-
-        // Convert properties array to the format expected by insertTag
-        const tagProperties = properties && Array.isArray(properties)
-          ? properties.map((prop: any) => ({ name: prop.name, value: prop.value }))
-          : undefined;
-
-        // === 智能导航：确保目标块在编辑器中可见 ===
-        // insertTag 命令需要目标块在当前编辑器视图中才能正确工作
+        // Navigation check
         const targetRootBlockId = await getRootBlockId(blockId);
-
         let currentRootBlockId: number | undefined = undefined;
         let targetPanelId: string | undefined = undefined;
 
         try {
-          const activePanelId = orca.state.activePanel;
-          const aiChatPanelId = uiStore.aiChatPanelId;
-
-          if (activePanelId === aiChatPanelId) {
-            // AI chat panel 处于活跃状态，需要在另一个 panel 操作
-            targetPanelId = undefined;
-          } else {
-            targetPanelId = activePanelId;
-            const activePanel = orca.nav.findViewPanel(activePanelId, orca.state.panels);
-
-            if (activePanel && activePanel.view === "block" && activePanel.viewArgs?.blockId) {
-              const currentBlockId = activePanel.viewArgs.blockId;
-              currentRootBlockId = await getRootBlockId(currentBlockId);
+          if (orca.state.activePanel !== uiStore.aiChatPanelId) {
+            targetPanelId = orca.state.activePanel;
+            const activePanel = orca.nav.findViewPanel(targetPanelId, orca.state.panels);
+            if (activePanel?.view === "block" && activePanel.viewArgs?.blockId) {
+              currentRootBlockId = await getRootBlockId(activePanel.viewArgs.blockId);
             }
           }
-        } catch (error) {
-          console.warn("[insertTag] Failed to get current panel's root block:", error);
-        }
+        } catch (error) {}
 
-        const needsNavigation = !targetRootBlockId || !currentRootBlockId || (targetRootBlockId !== currentRootBlockId);
-
-        if (needsNavigation) {
-          if (targetPanelId) {
-            console.log(`[insertTag] Navigating to block ${blockId} in panel ${targetPanelId} (root: ${targetRootBlockId})`);
-            orca.nav.replace("block", { blockId: blockId }, targetPanelId);
-          } else {
-            console.log(`[insertTag] Opening block ${blockId} in last panel (root: ${targetRootBlockId})`);
-            orca.nav.openInLastPanel("block", { blockId: blockId });
-          }
+        if (!targetRootBlockId || !currentRootBlockId || (targetRootBlockId !== currentRootBlockId)) {
+          if (targetPanelId) orca.nav.replace("block", { blockId }, targetPanelId);
+          else orca.nav.openInLastPanel("block", { blockId });
           await new Promise(resolve => setTimeout(resolve, 100));
-        } else {
-          console.log(`[insertTag] Already on target page (root: ${targetRootBlockId}), skipping navigation`);
         }
-        // === 智能导航结束 ===
+
+        const tagProperties = properties && Array.isArray(properties)
+          ? properties.map((prop: any) => ({ name: prop.name, value: prop.value }))
+          : undefined;
 
         await orca.commands.invokeGroup(async () => {
-          await orca.commands.invokeEditorCommand(
-            "core.editor.insertTag",
-            null,          // cursor context
-            blockId,       // block ID
-            tagName,       // tag name
-            tagProperties  // optional properties
-          );
-        }, {
-          topGroup: true,
-          undoable: true
-        });
+          await orca.commands.invokeEditorCommand("core.editor.insertTag", null, blockId, tagName, tagProperties);
+        }, { topGroup: true, undoable: true });
 
-        const propsDesc = tagProperties
-          ? ` with properties: ${tagProperties.map((p: any) => `${p.name}=${p.value}`).join(", ")}`
-          : "";
-
-        return `Added tag #${tagName} to block [${blockId}](orca-block:${blockId})${propsDesc}`;
+        return `Added tag #${tagName} to block ${blockId}`;
       } catch (err: any) {
-        console.error(`[Tool] Error in insertTag:`, err);
-        return `Error inserting tag "${args.tagName}": ${err.message}`;
-      }
-    } else if (toolName === "searchSkills") {
-      // Search for user-defined skills
-      const query = typeof args.query === "string" ? args.query.toLowerCase().trim() : "";
-      const typeFilter = args.type === "prompt" || args.type === "tools" ? args.type : undefined;
-
-      console.log("[Tool] searchSkills:", { query, typeFilter });
-
-      try {
-        // 确保 Skills 已加载
-        await ensureSkillsLoaded();
-
-        // 从缓存中获取 Skills
-        let skills = skillStore.skills;
-
-        // 根据 query 过滤（匹配名称和描述）
-        if (query) {
-          skills = skills.filter((s) => {
-            const name = s.name.toLowerCase();
-            const desc = (s.description || "").toLowerCase();
-            return name.includes(query) || desc.includes(query);
-          });
-        }
-
-        // 根据 type 过滤
-        if (typeFilter) {
-          skills = skills.filter((s) => s.type === typeFilter);
-        }
-
-        if (skills.length === 0) {
-          const filterDesc = typeFilter ? ` (type: ${typeFilter})` : "";
-          const queryDesc = query ? ` matching "${query}"` : "";
-          return `No skills found${queryDesc}${filterDesc}. You can create skills by adding blocks with #skill tag in your notes.`;
-        }
-
-        // 返回技能列表（简化格式）
-        const skillList = skills.map((s) => ({
-          id: s.id,
-          name: s.name,
-          description: s.description || "(无描述)",
-          type: s.type,
-        }));
-
-        return JSON.stringify({
-          skills: skillList,
-          total: skillList.length,
-          hint: "使用 getSkillDetails({ skillId: <id> }) 获取技能的完整内容",
-        }, null, 2);
-      } catch (error: any) {
-        console.error("[Tool] Failed to search skills:", error);
-        return `Error: Failed to search skills: ${error?.message || error}`;
-      }
-    } else if (toolName === "getSkillDetails") {
-      // Get full skill details by ID
-      const skillId = typeof args.skillId === "number" ? args.skillId :
-                     (typeof args.skill_id === "number" ? args.skill_id :
-                     (typeof args.id === "number" ? args.id : undefined));
-
-      if (skillId === undefined) {
-        console.error("[Tool] Missing skillId parameter. Args:", args);
-        return "Error: Missing skillId parameter. Please specify the skill ID from searchSkills results.";
-      }
-
-      console.log("[Tool] getSkillDetails:", { skillId });
-
-      try {
-        // 确保 Skills 已加载
-        await ensureSkillsLoaded();
-
-        // 从缓存中查找 Skill
-        const skill = skillStore.skills.find((s) => s.id === skillId);
-
-        if (!skill) {
-          return `Error: Skill with ID ${skillId} not found. Use searchSkills to find available skills.`;
-        }
-
-        // 返回完整的 Skill 信息
-        const result: Record<string, any> = {
-          id: skill.id,
-          name: skill.name,
-          description: skill.description || "(无描述)",
-          type: skill.type,
-          prompt: skill.prompt || "(无提示词)",
-        };
-
-        if (skill.type === "tools" && skill.tools && skill.tools.length > 0) {
-          result.tools = skill.tools;
-        }
-
-        if (skill.variables && skill.variables.length > 0) {
-          result.variables = skill.variables;
-        }
-
-        // 添加使用说明
-        result.usage = skill.type === "prompt"
-          ? "请按照上述 prompt 指令完成用户的请求"
-          : `请使用上述列出的工具完成用户的请求: ${skill.tools?.join(", ") || "无指定工具"}`;
-
-        return JSON.stringify(result, null, 2);
-      } catch (error: any) {
-        console.error("[Tool] Failed to get skill details:", error);
-        return `Error: Failed to get skill details: ${error?.message || error}`;
+        return `Error inserting tag: ${err.message}`;
       }
     } else {
       console.error("[Tool] Unknown tool:", toolName);
@@ -1526,6 +779,6 @@ Supported parameter names:
     }
   } catch (error: any) {
     console.error("[Tool] Error:", error);
-    return `Error executing ${toolName}: ${error?.message ?? error ?? "unknown error"}`;
+    return `Error executing ${toolName}: ${error?.message ?? error}`;
   }
 }
