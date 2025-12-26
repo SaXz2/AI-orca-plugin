@@ -12,10 +12,11 @@ export interface BlockReference {
 
 /**
  * Detect block ID references in text
- * Patterns: "block #123", "Block 123", "块 #123", "笔记 #123"
+ * Patterns: "blockid:123", "block #123", "Block 123", "块 #123", "笔记 #123"
  */
 export function detectBlockReferences(text: string): BlockReference[] {
   const patterns = [
+    /blockid:(\d+)/gi,
     /(?:block|Block|块|笔记)\s*#?(\d+)/g,
     /\[([^\]]+)\]\(orca-block:(\d+)\)/g,
   ];
@@ -91,5 +92,5 @@ export function formatBlockResult(block: {
  */
 export function addLinkPreservationNote(resultCount: number): string {
   if (resultCount === 0) return '';
-  return '📌 Note: Links are clickable. Please preserve them in your response.\n\n';
+  return '📌 提示：链接可点击。在回复中引用块时，请使用 blockid:数字 格式（例如：blockid:433），这将自动渲染为可点击的链接。\n\n';
 }

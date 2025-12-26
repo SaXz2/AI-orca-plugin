@@ -302,6 +302,23 @@ function parseInlineMarkdown(text: string, depth = 0): MarkdownInlineNode[] {
       }
     }
 
+    // Block ID reference: "blockid:123" format
+    // This is the preferred format for AI to return block references
+    const blockIdMatch = text.slice(i).match(/^blockid:(\d+)/i);
+    if (blockIdMatch) {
+      const blockId = parseInt(blockIdMatch[1], 10);
+      if (blockId > 0) {
+        flushBuffer();
+        nodes.push({
+          type: "link",
+          url: `orca-block:${blockId}`,
+          children: [{ type: "text", content: `块 ID: ${blockId}` }],
+        });
+        i += blockIdMatch[0].length;
+        continue;
+      }
+    }
+
     // Block reference: "block #123", "Block 123", "块 #123", "笔记 #123", "(block #123)"
     // Convert to clickable orca-block links at AST level (safe from code block pollution)
     const blockRefMatch = text.slice(i).match(/^(?:\(?\s*)(?:block|Block|块|笔记)\s*#?(\d+)(?:\s*\)?)/);
