@@ -189,7 +189,7 @@ export const headingStyle = (level: number): React.CSSProperties => ({
 });
 
 export const linkStyle: React.CSSProperties = {
-  color: "var(--orca-color-primary)",
+  color: "var(--orca-color-primary, #007bff)",
   textDecoration: "underline",
   cursor: "pointer",
 };
@@ -207,7 +207,7 @@ export const blockLinkContainerStyle: React.CSSProperties = {
 };
 
 export const blockLinkTextStyle: React.CSSProperties = {
-  color: "var(--orca-color-primary)",
+  color: "var(--orca-color-primary, #007bff)",
   fontWeight: 500,
   flex: 1,
 };
@@ -219,8 +219,8 @@ export const blockLinkArrowStyle: React.CSSProperties = {
   width: "18px",
   height: "18px",
   borderRadius: "3px",
-  background: "var(--orca-color-primary)",
-  color: "var(--orca-color-text-inverse)",
+  background: "var(--orca-color-primary, #007bff)",
+  color: "var(--orca-color-text-inverse, #fff)",
   fontSize: "11px",
   flexShrink: 0,
   transition: "transform 0.2s ease",
