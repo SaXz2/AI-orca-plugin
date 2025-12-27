@@ -457,17 +457,26 @@ function buildLimitWarning(resultCount: number, maxResults: number, actualLimit:
  * 格式化简洁模式的搜索结果（标题+摘要+ID）
  */
 function formatBriefResult(result: any, index: number): string {
-  const title = result.title || `(Block ${result.id})`;
-  // 提取内容摘要（前80字符）
-  const content = result.content || result.fullContent || "";
+  // 清理标题中的链接格式，避免嵌套
+  let title = result.title || `Block #${result.id}`;
+  title = title.replace(/\[([^\]]+)\]\(orca-block:\d+\)/g, "$1"); // 移除已有的 block link
+  title = title.replace(/[\[\]]/g, ""); // 移除方括号
+  
+  if (!title || title.trim() === "" || title === "(untitled)") {
+    title = `Block #${result.id}`;
+  }
+  
+  // 提取内容摘要（前80字符），同样清理链接格式
+  let content = result.content || result.fullContent || "";
+  content = content.replace(/\[([^\]]+)\]\(orca-block:\d+\)/g, "$1");
   const summary = content.length > 80 
     ? content.substring(0, 80).replace(/\n/g, " ") + "..."
     : content.replace(/\n/g, " ");
   
-  if (summary && summary !== title) {
-    return `${index + 1}. **${title}** [${result.id}](orca-block:${result.id})\n   ${summary}`;
+  if (summary && summary.trim() && summary !== title) {
+    return `${index + 1}. [${title}](orca-block:${result.id})\n   ${summary}`;
   }
-  return `${index + 1}. **${title}** [${result.id}](orca-block:${result.id})`;
+  return `${index + 1}. [${title}](orca-block:${result.id})`;
 }
 
 /**
@@ -551,7 +560,6 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
     } else if (toolName === "searchBlocksByText") {
       try {
         const query = args.query;
-        const countOnly = args.countOnly === true;
         const countOnly = args.countOnly === true;
         const briefMode = args.briefMode === true;
         const offset = Math.max(0, Math.trunc(args.offset || 0));
