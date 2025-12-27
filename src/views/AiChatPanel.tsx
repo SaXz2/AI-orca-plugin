@@ -2,11 +2,11 @@ import type { PanelProps } from "../orca.d.ts";
 
 import { buildContextForSend } from "../services/context-builder";
 import { contextStore, type ContextRef } from "../store/context-store";
-
+import { skillStore, replaceVariables } from "../store/skill-store";
+import { filterToolsBySkill } from "../services/ai-tools";
 import { closeAiChatPanel, getAiChatPluginName } from "../ui/ai-chat-ui";
 import { uiStore } from "../store/ui-store";
 import { memoryStore } from "../store/memory-store";
-import { chatModeStore, getMode } from "../store/chat-mode-store";
 import { findViewPanelById } from "../utils/panel-tree";
 import ChatInput from "./ChatInput";
 import MarkdownMessage from "../components/MarkdownMessage";
@@ -36,8 +36,8 @@ import {
 import { sessionStore, updateSessionStore, markSessionSaved, clearSessionStore } from "../store/session-store";
 import { TOOLS, executeTool } from "../services/ai-tools";
 import { nowId, safeText } from "../utils/text-utils";
-import { buildConversationMessages, shouldIncludeTools } from "../services/message-builder";
-import { streamChatWithRetry, routeToolCallsByMode, type ToolCallInfo } from "../services/chat-stream-handler";
+import { buildConversationMessages } from "../services/message-builder";
+import { streamChatWithRetry, type ToolCallInfo } from "../services/chat-stream-handler";
 import {
   panelContainerStyle,
   headerStyle,
@@ -267,7 +267,32 @@ export default function AiChatPanel({ panelId }: PanelProps) {
 	    // 系统提示词模板变量：支持 {maxToolRounds}，按当前 MAX_TOOL_ROUNDS 注入
 	    let systemPrompt = settings.systemPrompt.split("{maxToolRounds}").join(String(MAX_TOOL_ROUNDS));
 
+	    // ═══════════════════════════════════════════════════════════════════════
+	    // Skill 集成
+	    // ═══════════════════════════════════════════════════════════════════════
+	    const activeSkill = skillStore.activeSkill;
+	    let activeTools = TOOLS; // 默认使用全部工具
 
+	    if (activeSkill) {
+	      // 1. 追加 Skill 指令到 System Prompt
+	      let skillPrompt = activeSkill.prompt || "";
+
+	      // 替换变量（如果有）
+	      if (activeSkill.variables?.length && Object.keys(skillStore.variables).length > 0) {
+	        skillPrompt = replaceVariables(skillPrompt, skillStore.variables);
+	      }
+
+	      if (skillPrompt) {
+	        systemPrompt += `\n\n---\n## 当前激活技能: ${activeSkill.name}\n${activeSkill.description ? activeSkill.description + "\n\n" : ""}${skillPrompt}`;
+	      }
+
+	      // 2. 工具型 Skill 过滤工具集
+	      if (activeSkill.type === "tools") {
+	        activeTools = filterToolsBySkill(activeSkill);
+	        console.log(`[AiChatPanel] Skill "${activeSkill.name}" filtered tools: ${activeTools.length}/${TOOLS.length}`);
+	      }
+	    }
+	    // ═══════════════════════════════════════════════════════════════════════
 
 	    const model = (currentSession.model || "").trim() || resolveAiModel(settings);
 	    const validationError = validateAiChatSettingsWithModel(settings, model);
@@ -302,10 +327,6 @@ export default function AiChatPanel({ panelId }: PanelProps) {
         orca.notify("warn", `Context build failed: ${String(err?.message ?? err ?? "unknown error")}`);
       }
 
-      // Get current chat mode for tool handling
-      const currentChatMode = getMode();
-      const includeTools = shouldIncludeTools(currentChatMode);
-
       // Maintain an in-memory conversation so multi-round tool calls include prior tool results.
       // Use historyOverride if available to build conversation
       const baseMessages = historyOverride || messages;
@@ -331,7 +352,6 @@ export default function AiChatPanel({ panelId }: PanelProps) {
 	        systemPrompt,
 	        contextText,
 	        customMemory: memoryText,
-	        chatMode: currentChatMode,
 	      });
 
       for await (const chunk of streamChatWithRetry(
@@ -342,7 +362,7 @@ export default function AiChatPanel({ panelId }: PanelProps) {
           temperature: settings.temperature,
           maxTokens: settings.maxTokens,
           signal: aborter.signal,
-          tools: includeTools ? TOOLS : undefined,
+          tools: activeTools,
         },
         apiMessages,
         apiMessagesFallback,
@@ -385,27 +405,9 @@ export default function AiChatPanel({ panelId }: PanelProps) {
         const assistantIdx = conversation.findIndex((m) => m.id === currentAssistantId);
         if (assistantIdx >= 0) conversation[assistantIdx].tool_calls = currentToolCalls;
 
-        // Route tool calls based on current chat mode
-        const routingResult = routeToolCallsByMode(currentToolCalls, currentChatMode);
-        
-        // In Supervised mode, pause execution and wait for user confirmation
-        if (routingResult.shouldPauseForConfirmation) {
-          console.log(`[AI] [Round ${toolRound}] Supervised mode - pausing for user confirmation`);
-          console.log(`[AI] [Round ${toolRound}] Queued ${routingResult.pendingForConfirmation.length} tool call(s) for confirmation`);
-          // Break out of the loop - tool execution will resume when user approves
-          break;
-        }
-
-        // Agent mode: execute tools immediately
-        const toolsToExecute = routingResult.executeImmediately;
-        if (toolsToExecute.length === 0) {
-          console.log(`[AI] [Round ${toolRound}] No tools to execute immediately`);
-          break;
-        }
-
         // Execute tools
         const toolResultMessages: Message[] = [];
-        for (const toolCall of toolsToExecute) {
+        for (const toolCall of currentToolCalls) {
           const toolName = toolCall.function.name;
           let args: any = {};
           let parseError: string | null = null;
@@ -470,7 +472,6 @@ export default function AiChatPanel({ panelId }: PanelProps) {
 	          systemPrompt,
 	          contextText,
 	          customMemory: memoryText,
-	          chatMode: currentChatMode,
 	        });
 
         // Create assistant message for next response
@@ -493,7 +494,7 @@ export default function AiChatPanel({ panelId }: PanelProps) {
               temperature: settings.temperature,
               maxTokens: settings.maxTokens,
               signal: aborter.signal,
-              tools: enableTools ? TOOLS : undefined, // Last round: disable tools to force an answer
+              tools: enableTools ? activeTools : undefined, // Last round: disable tools to force an answer
             },
             standard,
             fallback,
