@@ -104,21 +104,49 @@ export const chatAnimations = `
 .md-table-container {
     overflow-x: auto;
     margin: 12px 0;
-    position: relative;
 }
 
 .md-table-header {
     display: flex;
-    justify-content: flex-end;
-    position: absolute;
-    top: 0;
-    right: 0;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 4px;
     opacity: 0;
     transition: opacity 0.2s;
 }
 
 .md-table-container:hover .md-table-header {
     opacity: 1;
+}
+
+.md-table-view-switcher {
+    display: flex;
+    gap: 2px;
+    background: var(--orca-color-bg-3, rgba(128, 128, 128, 0.1));
+    border-radius: 6px;
+    padding: 2px;
+}
+
+.md-table-view-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    border-radius: 4px;
+    cursor: pointer;
+    color: var(--orca-color-text-2, #666);
+    transition: all 0.2s;
+}
+
+.md-table-view-btn:hover {
+    background: var(--orca-color-bg-2, rgba(128, 128, 128, 0.15));
+    color: var(--orca-color-text-1, inherit);
+}
+
+.md-table-view-btn.active {
+    background: var(--orca-color-primary-5, var(--orca-color-primary, #007bff));
+    color: #fff;
 }
 
 .md-table-copy-btn {
@@ -176,6 +204,79 @@ export const chatAnimations = `
     text-align: right;
 }
 
+/* Card View */
+.md-table-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 12px;
+}
+
+.md-table-card {
+    padding: 12px;
+    border-radius: 8px;
+    background: var(--orca-color-bg-2, rgba(128, 128, 128, 0.05));
+    border: 1px solid var(--orca-color-border, rgba(128, 128, 128, 0.2));
+    transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.md-table-card:hover {
+    border-color: var(--orca-color-primary-5, var(--orca-color-primary, #007bff));
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.md-table-card-field {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin-bottom: 8px;
+}
+
+.md-table-card-field:last-child {
+    margin-bottom: 0;
+}
+
+.md-table-card-label {
+    font-size: 11px;
+    color: var(--orca-color-text-2, #666);
+    font-weight: 500;
+}
+
+.md-table-card-value {
+    font-size: 14px;
+    color: var(--orca-color-text-1, inherit);
+}
+
+/* List View */
+.md-table-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.md-table-list-item {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    padding: 8px 12px;
+    border-radius: 6px;
+    background: var(--orca-color-bg-2, rgba(128, 128, 128, 0.05));
+    transition: background 0.2s;
+}
+
+.md-table-list-item:hover {
+    background: var(--orca-color-bg-3, rgba(128, 128, 128, 0.1));
+}
+
+.md-table-list-cell {
+    display: inline-flex;
+    align-items: center;
+}
+
+.md-table-list-sep {
+    margin: 0 8px;
+    color: var(--orca-color-text-3, #999);
+}
+
 /* ─────────────────────────────────────────────────────────────────────────────
    Horizontal Rule
    ─────────────────────────────────────────────────────────────────────────── */
@@ -184,6 +285,43 @@ export const chatAnimations = `
     border: none;
     border-top: 1px solid var(--orca-color-border, rgba(128, 128, 128, 0.3));
     margin: 16px 0;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Progress Bar
+   ─────────────────────────────────────────────────────────────────────────── */
+
+.md-progress {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 12px 0;
+}
+
+.md-progress-bar {
+    flex: 1;
+    height: 8px;
+    background: var(--orca-color-bg-3, rgba(128, 128, 128, 0.15));
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.md-progress-fill {
+    height: 100%;
+    border-radius: 4px;
+    transition: width 0.3s ease;
+}
+
+.md-progress-text {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--orca-color-text-1, inherit);
+    min-width: 45px;
+}
+
+.md-progress-label {
+    font-weight: 400;
+    color: var(--orca-color-text-2, #666);
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -231,7 +369,7 @@ export const chatAnimations = `
 
 .md-checklist-item {
     display: flex;
-    align-items: flex-start;
+    align-items: center;
     gap: 10px;
     padding: 8px 12px;
     border-radius: 8px;

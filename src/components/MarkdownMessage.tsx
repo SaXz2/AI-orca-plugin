@@ -1,4 +1,4 @@
-import { parseMarkdown, type MarkdownInlineNode, type MarkdownNode, type TableAlignment, type CheckboxItem, type TaskCardData } from "../utils/markdown-renderer";
+import { parseMarkdown, type MarkdownInlineNode, type MarkdownNode, type TableAlignment, type CheckboxItem, type TaskCardData, type ProgressData } from "../utils/markdown-renderer";
 import {
   codeBlockContainerStyle,
   codeBlockHeaderStyle,
@@ -75,7 +75,10 @@ function CodeBlock({ language, content }: { language?: string; content: string }
   );
 }
 
-// Helper component for Table with Copy
+// Table view types
+type TableViewMode = "table" | "card" | "list";
+
+// Helper component for Table with multiple view modes
 function TableBlock({ 
   headers, 
   alignments, 
@@ -87,7 +90,8 @@ function TableBlock({
   rows: MarkdownInlineNode[][][];
   renderInline: (node: MarkdownInlineNode, key: number) => any;
 }) {
-  const [copyFormat, setCopyFormat] = useState(null as "md" | "logseq" | null);
+  const [copied, setCopied] = useState(false);
+  const [viewMode, setViewMode] = useState("table" as TableViewMode);
 
   const getTextFromNodes = (nodes: MarkdownInlineNode[]): string => {
     return nodes.map(n => {
@@ -114,22 +118,11 @@ function TableBlock({
     return headerRow + "\n" + separatorRow + "\n" + dataRows;
   };
 
-  // Logseq outline format
-  const getLogseqOutline = (): string => {
-    const headerTexts = headers.map(h => getTextFromNodes(h));
-    return rows.map(row => {
-      const cells = row.map(cell => getTextFromNodes(cell));
-      const pairs = headerTexts.map((header, i) => `${header}:: ${cells[i] || ""}`);
-      return "- " + pairs.join("\n  ");
-    }).join("\n");
-  };
-
-  const handleCopy = async (format: "md" | "logseq") => {
+  const handleCopy = async () => {
     try {
-      const text = format === "md" ? getMarkdownTable() : getLogseqOutline();
-      await navigator.clipboard.writeText(text);
-      setCopyFormat(format);
-      setTimeout(() => setCopyFormat(null), 2000);
+      await navigator.clipboard.writeText(getMarkdownTable());
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
     } catch (err) {
       console.error("Failed to copy table:", err);
     }
@@ -141,71 +134,147 @@ function TableBlock({
     return "align-left";
   };
 
-  return createElement(
-    "div",
-    { className: "md-table-container" },
-    // Copy buttons
+  // Render table view
+  const renderTableView = () => createElement(
+    "table",
+    { className: "md-table" },
     createElement(
-      "div",
-      { className: "md-table-header" },
+      "thead",
+      null,
       createElement(
-        "div",
-        { 
-          className: `md-table-copy-btn ${copyFormat === "md" ? "copied" : ""}`,
-          onClick: () => handleCopy("md"),
-          title: "复制为 Markdown 表格"
-        },
-        createElement("i", { className: copyFormat === "md" ? "ti ti-check" : "ti ti-table" }),
-        copyFormat === "md" ? "Copied!" : "MD"
-      ),
-      createElement(
-        "div",
-        { 
-          className: `md-table-copy-btn ${copyFormat === "logseq" ? "copied" : ""}`,
-          onClick: () => handleCopy("logseq"),
-          title: "复制为 Logseq 大纲格式"
-        },
-        createElement("i", { className: copyFormat === "logseq" ? "ti ti-check" : "ti ti-list" }),
-        copyFormat === "logseq" ? "Copied!" : "Logseq"
-      )
-    ),
-    // Table
-    createElement(
-      "table",
-      { className: "md-table" },
-      createElement(
-        "thead",
+        "tr",
         null,
-        createElement(
-          "tr",
-          null,
-          ...headers.map((headerCells, colIndex) =>
-            createElement(
-              "th",
-              { key: colIndex, className: getAlignClass(alignments[colIndex]) },
-              ...headerCells.map((child, i) => renderInline(child, i))
-            )
+        ...headers.map((headerCells, colIndex) =>
+          createElement(
+            "th",
+            { key: colIndex, className: getAlignClass(alignments[colIndex]) },
+            ...headerCells.map((child, i) => renderInline(child, i))
           )
         )
-      ),
-      createElement(
-        "tbody",
-        null,
-        ...rows.map((row, rowIndex) =>
-          createElement(
-            "tr",
-            { key: rowIndex },
-            ...row.map((cellNodes, colIndex) =>
-              createElement(
-                "td",
-                { key: colIndex, className: getAlignClass(alignments[colIndex]) },
-                ...cellNodes.map((child, i) => renderInline(child, i))
-              )
+      )
+    ),
+    createElement(
+      "tbody",
+      null,
+      ...rows.map((row, rowIndex) =>
+        createElement(
+          "tr",
+          { key: rowIndex },
+          ...row.map((cellNodes, colIndex) =>
+            createElement(
+              "td",
+              { key: colIndex, className: getAlignClass(alignments[colIndex]) },
+              ...cellNodes.map((child, i) => renderInline(child, i))
             )
           )
         )
       )
     )
+  );
+
+  // Render card view
+  const renderCardView = () => createElement(
+    "div",
+    { className: "md-table-cards" },
+    ...rows.map((row, rowIndex) =>
+      createElement(
+        "div",
+        { key: rowIndex, className: "md-table-card" },
+        ...row.map((cellNodes, colIndex) =>
+          createElement(
+            "div",
+            { key: colIndex, className: "md-table-card-field" },
+            createElement(
+              "span",
+              { className: "md-table-card-label" },
+              ...headers[colIndex].map((child, i) => renderInline(child, i))
+            ),
+            createElement(
+              "span",
+              { className: "md-table-card-value" },
+              ...cellNodes.map((child, i) => renderInline(child, i))
+            )
+          )
+        )
+      )
+    )
+  );
+
+  // Render list view
+  const renderListView = () => createElement(
+    "div",
+    { className: "md-table-list" },
+    ...rows.map((row, rowIndex) =>
+      createElement(
+        "div",
+        { key: rowIndex, className: "md-table-list-item" },
+        ...row.map((cellNodes, colIndex) =>
+          createElement(
+            "span",
+            { key: colIndex, className: "md-table-list-cell" },
+            colIndex > 0 && createElement("span", { className: "md-table-list-sep" }, "·"),
+            ...cellNodes.map((child, i) => renderInline(child, i))
+          )
+        )
+      )
+    )
+  );
+
+  return createElement(
+    "div",
+    { className: "md-table-container" },
+    // Header with view switcher and copy button
+    createElement(
+      "div",
+      { className: "md-table-header" },
+      // View mode switcher
+      createElement(
+        "div",
+        { className: "md-table-view-switcher" },
+        createElement(
+          "div",
+          { 
+            className: `md-table-view-btn ${viewMode === "table" ? "active" : ""}`,
+            onClick: () => setViewMode("table"),
+            title: "表格视图"
+          },
+          createElement("i", { className: "ti ti-table" })
+        ),
+        createElement(
+          "div",
+          { 
+            className: `md-table-view-btn ${viewMode === "card" ? "active" : ""}`,
+            onClick: () => setViewMode("card"),
+            title: "卡片视图"
+          },
+          createElement("i", { className: "ti ti-layout-grid" })
+        ),
+        createElement(
+          "div",
+          { 
+            className: `md-table-view-btn ${viewMode === "list" ? "active" : ""}`,
+            onClick: () => setViewMode("list"),
+            title: "列表视图"
+          },
+          createElement("i", { className: "ti ti-list" })
+        )
+      ),
+      // Copy button
+      createElement(
+        "div",
+        { 
+          className: `md-table-copy-btn ${copied ? "copied" : ""}`,
+          onClick: handleCopy,
+          title: "复制为 Markdown 表格"
+        },
+        createElement("i", { className: copied ? "ti ti-check" : "ti ti-copy" }),
+        copied ? "Copied!" : "Copy"
+      )
+    ),
+    // Content based on view mode
+    viewMode === "table" ? renderTableView() :
+    viewMode === "card" ? renderCardView() :
+    renderListView()
   );
 }
 
@@ -329,6 +398,35 @@ function TaskCardBlock({ task }: { task: TaskCardData }) {
   );
 }
 
+// Helper component for Progress Bar
+function ProgressBar({ data }: { data: ProgressData }) {
+  const getColor = (value: number): string => {
+    if (value >= 80) return "var(--orca-color-success, #28a745)";
+    if (value >= 50) return "var(--orca-color-primary-5, var(--orca-color-primary, #007bff))";
+    if (value >= 30) return "var(--orca-color-warning, #ffc107)";
+    return "var(--orca-color-danger, #dc3545)";
+  };
+
+  return createElement(
+    "div",
+    { className: "md-progress" },
+    createElement(
+      "div",
+      { className: "md-progress-bar" },
+      createElement("div", {
+        className: "md-progress-fill",
+        style: { width: `${data.value}%`, background: getColor(data.value) }
+      })
+    ),
+    createElement(
+      "span",
+      { className: "md-progress-text" },
+      `${data.value}%`,
+      data.label && createElement("span", { className: "md-progress-label" }, ` ${data.label}`)
+    )
+  );
+}
+
 function renderInlineNode(node: MarkdownInlineNode, key: number): any {
   switch (node.type) {
     case "text":
@@ -389,9 +487,16 @@ function renderInlineNode(node: MarkdownInlineNode, key: number): any {
           }
         };
 
-        // Check if link text is just a block ID reference (e.g., "块 ID: 123", "Block 123", "blockid:123", or pure number)
-        const linkText = node.children.map(c => c.type === "text" ? c.content : "").join("");
-        const isBlockIdOnly = /^(块\s*ID\s*[:：]?\s*\d+|block\s*#?\d+|Block\s*#?\d+|笔记\s*#?\d+|blockid[:：]?\d+|\d+)$/i.test(linkText.trim());
+        // Check if link text is a "meaningless reference" that should be rendered as a dot
+        // Rules:
+        // 1. Pure numbers (e.g., "123", "14817")
+        // 2. Contains block/ID keywords (e.g., "Block 123", "块 ID: 456", "blockid:789")
+        // 3. Contains action words (e.g., "查看详情", "点击跳转", "查看")
+        const linkText = node.children.map(c => c.type === "text" ? c.content : "").join("").trim();
+        const isBlockIdOnly = 
+          /^\d+$/.test(linkText) || // Pure numbers
+          /block|块|ID|笔记|blockid/i.test(linkText) || // Block/ID keywords
+          /^(查看|详情|点击|跳转|打开|前往|查看详情|点击查看|查看更多)$/i.test(linkText); // Action words
 
         // Render as small dot if it's just a block ID reference
         if (isBlockIdOnly) {
@@ -559,6 +664,13 @@ function renderBlockNode(node: MarkdownNode, key: number): any {
       return createElement(TaskCardBlock, {
         key,
         task: node.task,
+      });
+    }
+
+    case "progress": {
+      return createElement(ProgressBar, {
+        key,
+        data: node.data,
       });
     }
 
