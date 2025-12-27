@@ -11,11 +11,13 @@ import {
 } from "../utils/query-builder";
 import type {
   QueryBlocksByTagOptions,
+  QueryPropertyFilterInput,
   QueryDateSpec,
   TaskQueryOptions,
   JournalQueryOptions,
   AdvancedQueryOptions,
 } from "../utils/query-types";
+import { PropType } from "../utils/query-types";
 import { safeText, extractTitle, extractContent } from "../utils/text-utils";
 import {
   unwrapBackendResult,
@@ -211,9 +213,60 @@ export async function queryBlocksByTag(
       return await searchBlocksByTag(tagName, maxResults);
     }
 
+    // Enhance property filters with type information from tag schema
+    let enhancedProperties = options.properties;
+    try {
+      const schema = await getCachedTagSchema(tagName);
+      enhancedProperties = options.properties.map((filter) => {
+        const schemaProperty = schema.properties.find(
+          (p) => p.name.toLowerCase() === filter.name.toLowerCase()
+        );
+        if (!schemaProperty) return filter;
+
+        const enhanced: QueryPropertyFilterInput = {
+          ...filter,
+          name: schemaProperty.name, // Use exact case from schema
+          type: filter.type ?? schemaProperty.type,
+        };
+
+        // For TextChoices type, special handling is needed
+        if (schemaProperty.type === PropType.TextChoices) {
+          // Convert == to includes since value is stored as array
+          if (filter.op === "==") {
+            console.log(
+              `[queryBlocksByTag] Converting == to includes for TextChoices property "${filter.name}"`
+            );
+            enhanced.op = "includes";
+          }
+
+          // Convert numeric value to string label
+          // AI often passes the numeric value (e.g., 2 for "Done") based on schema options
+          // But Orca query API expects the string label (e.g., "Done")
+          if (typeof filter.value === "number" && (schemaProperty as any).options) {
+            const options = (schemaProperty as any).options as Array<{ label: string; value: number }>;
+            const matchingOption = options.find((opt) => opt.value === filter.value);
+            if (matchingOption) {
+              console.log(
+                `[queryBlocksByTag] Converting numeric value ${filter.value} to string label "${matchingOption.label}" for TextChoices property "${filter.name}"`
+              );
+              enhanced.value = matchingOption.label;
+            }
+          }
+        }
+
+        return enhanced;
+      });
+      console.log("[queryBlocksByTag] Enhanced properties:", enhancedProperties);
+    } catch (schemaError) {
+      console.warn(
+        "[queryBlocksByTag] Failed to get tag schema, using original properties:",
+        schemaError
+      );
+    }
+
     const description = buildQueryDescription({
       tagName,
-      properties: options.properties,
+      properties: enhancedProperties,
       sort: options.sort ?? [{ field: "_modified", direction: "DESC" }],
       page: options.page,
       pageSize: options.pageSize,

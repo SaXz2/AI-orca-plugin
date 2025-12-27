@@ -378,6 +378,13 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
     if (toolName === "searchBlocksByTag") {
       try {
         const tagQuery = args.tag_query || args.tagQuery || args.tag;
+        
+        // Early validation: check for undefined tagQuery
+        if (!tagQuery) {
+          console.error("[Tool] searchBlocksByTag: Missing tag_query parameter. Args:", args);
+          return "Error: Missing tag_query parameter. Please specify which tag to search for.";
+        }
+        
         const maxResults = args.maxResults || 20;
         
         console.log(`[Tool] searchBlocksByTag: "${tagQuery}"`);
@@ -420,8 +427,25 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
     } else if (toolName === "query_blocks_by_tag") {
       try {
         const tagName = args.tagName;
-        const filters = args.filters || [];
+        
+        // Early validation: check for undefined tagName
+        if (!tagName) {
+          console.error("[Tool] query_blocks_by_tag: Missing tagName parameter. Args:", args);
+          return "Error: Missing tagName parameter. Please specify which tag to search for.";
+        }
+        
+        let filters = args.filters || args.properties || [];
         const maxResults = args.maxResults || 20;
+
+        // Handle case where AI passes filters as a JSON string instead of array
+        if (typeof filters === "string") {
+          try {
+            filters = JSON.parse(filters);
+          } catch (parseErr) {
+            console.warn("[Tool] Failed to parse filters string:", filters);
+            filters = [];
+          }
+        }
 
         console.log(`[Tool] query_blocks_by_tag: #${tagName}`, { filters, maxResults });
         const results = await queryBlocksByTag(tagName, { properties: filters, maxResults });
@@ -429,13 +453,14 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
 
         if (results.length === 0) {
           const filterDesc = filters.length > 0 ? " with specified filters" : "";
-          return `No blocks found for #${tagName}${filterDesc}.`;
+          return `No blocks found for #${tagName}${filterDesc}. This is the complete result - no further queries needed.`;
         }
 
         const preservationNote = addLinkPreservationNote(results.length);
         const summary = results.map((r: any, i: number) => formatBlockResult(r, i)).join("\n\n");
 
-        return `${preservationNote}Found ${results.length} block(s) for #${tagName}:\n${summary}`;
+        // Add explicit completion indicator to prevent unnecessary follow-up queries
+        return `${preservationNote}✅ Search complete. Found ${results.length} block(s) for #${tagName}:\n${summary}\n\n---\n📋 Above are all matching results. You can directly reference these blocks using the blockid format shown. No further queries needed.`;
       } catch (err: any) {
         console.error(`[Tool] Error in query_blocks_by_tag:`, err);
         return `Error querying tag with filters: ${err.message}`;
