@@ -33,6 +33,7 @@ export type MarkdownNode =
   | { type: "checklist"; items: CheckboxItem[] }
   | { type: "timeline"; items: TimelineItem[] }
   | { type: "compare"; leftTitle: MarkdownInlineNode[]; rightTitle: MarkdownInlineNode[]; items: CompareItem[] }
+  | { type: "localgraph"; blockId: number }
   | { type: "quote"; children: MarkdownNode[] }
   | { type: "codeblock"; content: string; language?: string }
   | { type: "table"; headers: MarkdownInlineNode[][]; alignments: TableAlignment[]; rows: MarkdownInlineNode[][][] }
@@ -266,6 +267,22 @@ export function parseMarkdown(text: string): MarkdownNode[] {
           leftTitle: compareData.leftTitle,
           rightTitle: compareData.rightTitle,
           items: compareData.items,
+        });
+        inCodeBlock = false;
+        codeBlockLang = "";
+        codeBlockLines = [];
+        return;
+      }
+    }
+    
+    // Check if it's a localgraph code block
+    if (codeBlockLang.toLowerCase() === "localgraph") {
+      const blockIdStr = codeBlockLines.join("\n").trim();
+      const blockId = parseInt(blockIdStr, 10);
+      if (blockId > 0) {
+        nodes.push({
+          type: "localgraph",
+          blockId,
         });
         inCodeBlock = false;
         codeBlockLang = "";

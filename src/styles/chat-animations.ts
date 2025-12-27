@@ -554,6 +554,62 @@ br + .md-block-dot {
     flex-shrink: 0;
 }
 
+/* ─────────────────────────────────────────────────────────────────────────────
+   Local Graph Styles (Obsidian-like relationship graph)
+   ─────────────────────────────────────────────────────────────────────────── */
+
+.local-graph-container {
+    margin: 12px 0;
+    padding: 12px;
+    background: var(--orca-color-bg-2, rgba(128, 128, 128, 0.05));
+    border-radius: 8px;
+    border: 1px solid var(--orca-color-border, rgba(128, 128, 128, 0.15));
+}
+
+.local-graph-empty {
+    padding: 24px;
+    text-align: center;
+    color: var(--orca-color-text-2, #666);
+    font-size: 13px;
+}
+
+.local-graph-svg {
+    display: block;
+    margin: 0 auto;
+}
+
+.local-graph-link {
+    stroke: var(--orca-color-border, rgba(128, 128, 128, 0.4));
+    stroke-width: 1.5;
+    stroke-opacity: 0.6;
+}
+
+.local-graph-node {
+    cursor: pointer;
+}
+
+.local-graph-node:hover .local-graph-circle {
+    filter: brightness(1.2);
+    transform: scale(1.3);
+}
+
+.local-graph-circle {
+    transition: transform 0.2s, filter 0.2s;
+    stroke: var(--orca-color-bg-1, #fff);
+    stroke-width: 2;
+}
+
+.local-graph-label {
+    font-size: 10px;
+    fill: var(--orca-color-text-1, #333);
+    pointer-events: none;
+    user-select: none;
+}
+
+.local-graph-node:hover .local-graph-label {
+    font-weight: 600;
+}
+
 `;
 
 let styleElement: HTMLStyleElement | null = null;

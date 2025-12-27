@@ -344,6 +344,29 @@ export default function AiChatPanel({ panelId }: PanelProps) {
 4. 对比项要一一对应，便于比较`;
 	    }
 
+	    // /graph - 链接关系图谱
+	    if (content.includes("/graph")) {
+	      processedContent = processedContent.replace(/\/graph/g, "").trim();
+	      // 获取当前页面的 blockId（从 context 或 active panel 获取）
+	      let graphBlockId: number | null = null;
+	      try {
+	        const activePanel = orca.state.activePanel;
+	        if (activePanel && activePanel !== uiStore.aiChatPanelId) {
+	          const vp = orca.nav.findViewPanel(activePanel, orca.state.panels);
+	          if (vp?.view === "block" && vp.viewArgs?.blockId) {
+	            graphBlockId = vp.viewArgs.blockId;
+	          }
+	        }
+	      } catch (e) {}
+	      
+	      if (graphBlockId) {
+	        processedContent = processedContent || `显示块 ${graphBlockId} 的链接关系`;
+	        systemPrompt += `\n\n【特殊指令 - 图谱】用户要求显示链接关系图谱。请调用 getBlockLinks 工具获取块 ${graphBlockId} 的链接关系。`;
+	      } else {
+	        processedContent = processedContent || "请先选择一个页面或块，然后使用 /graph 命令查看其链接关系";
+	      }
+	    }
+
 	    // Get current chat mode for tool handling
 	    const currentChatMode = getMode();
 	    const includeTools = currentChatMode !== 'ask';

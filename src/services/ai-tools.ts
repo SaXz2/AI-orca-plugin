@@ -465,6 +465,24 @@ export const TOOLS: OpenAITool[] = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "getBlockLinks",
+      description: `获取指定块的链接关系图谱数据。返回该块的出链（引用的其他块）和入链（被其他块引用）。
+用于展示笔记之间的关联关系，类似 Obsidian 的 Local Graph。`,
+      parameters: {
+        type: "object",
+        properties: {
+          blockId: {
+            type: "number",
+            description: "要查询链接关系的块 ID",
+          },
+        },
+        required: ["blockId"],
+      },
+    },
+  },
 ];
 
 /**
@@ -1309,6 +1327,71 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
         return `Added tag #${tagName} to block ${blockId}`;
       } catch (err: any) {
         return `Error inserting tag: ${err.message}`;
+      }
+    } else if (toolName === "getBlockLinks") {
+      try {
+        let blockIdRaw = args.blockId || args.block_id || args.id;
+        if (typeof blockIdRaw === "string") {
+          const match = blockIdRaw.match(/^(?:orca-block:|blockid:)?(\d+)$/i);
+          if (match) blockIdRaw = parseInt(match[1], 10);
+        }
+        const blockId = toFiniteNumber(blockIdRaw);
+        if (!blockId) return "Error: Missing or invalid blockId.";
+
+        const block = orca.state.blocks[blockId];
+        if (!block) return `Error: Block ${blockId} not found.`;
+
+        const getTitle = (id: number): string => {
+          const b = orca.state.blocks[id];
+          if (!b) return `Block ${id}`;
+          // Ensure text is a string before splitting
+          const rawText = b.text;
+          const text = typeof rawText === "string" ? rawText.split("\n")[0]?.trim() || "" : "";
+          return text.length > 40 ? text.substring(0, 40) + "..." : (text || `Block ${id}`);
+        };
+
+        const centerTitle = getTitle(blockId);
+        const outLinks: string[] = [];
+        const inLinks: string[] = [];
+
+        // Outgoing refs
+        if (block.refs && Array.isArray(block.refs)) {
+          for (const ref of block.refs) {
+            const title = getTitle(ref.to);
+            outLinks.push(`[${title}](orca-block:${ref.to})`);
+          }
+        }
+
+        // Incoming refs (backlinks)
+        if (block.backRefs && Array.isArray(block.backRefs)) {
+          for (const ref of block.backRefs) {
+            const title = getTitle(ref.from);
+            inLinks.push(`[${title}](orca-block:${ref.from})`);
+          }
+        }
+
+        // Build response with graph data marker
+        let result = `## 📊 [${centerTitle}](orca-block:${blockId}) 的链接关系\n\n`;
+        
+        if (outLinks.length === 0 && inLinks.length === 0) {
+          result += "该块暂无链接关系。";
+        } else {
+          if (outLinks.length > 0) {
+            result += `### 出链 (${outLinks.length})\n`;
+            result += outLinks.map(l => `- ${l}`).join("\n") + "\n\n";
+          }
+          if (inLinks.length > 0) {
+            result += `### 入链 (${inLinks.length})\n`;
+            result += inLinks.map(l => `- ${l}`).join("\n") + "\n\n";
+          }
+          
+          // Add graph marker for rendering
+          result += `\n\`\`\`localgraph\n${blockId}\n\`\`\``;
+        }
+
+        return result;
+      } catch (err: any) {
+        return `Error getting block links: ${err.message}`;
       }
     } else {
       console.error("[Tool] Unknown tool:", toolName);

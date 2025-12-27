@@ -1,4 +1,5 @@
 import { parseMarkdown, type MarkdownInlineNode, type MarkdownNode, type TableAlignment, type CheckboxItem, type TimelineItem, type CompareItem } from "../utils/markdown-renderer";
+import LocalGraph from "./LocalGraph";
 import {
   codeBlockContainerStyle,
   codeBlockHeaderStyle,
@@ -762,6 +763,13 @@ function renderBlockNode(node: MarkdownNode, key: number): any {
         rightTitle: node.rightTitle,
         items: node.items,
         renderInline: renderInlineNode,
+      });
+    }
+
+    case "localgraph": {
+      return createElement(LocalGraph, {
+        key,
+        blockId: node.blockId,
       });
     }
 
