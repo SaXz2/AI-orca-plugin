@@ -1,6 +1,6 @@
 /**
  * Chat Mode Store - Manages AI chat interaction modes
- * Supports three modes: Agent (auto-execute), Supervised (confirm), Ask (text-only)
+ * Supports two modes: Agent (auto-execute), Ask (text-only)
  */
 
 const { proxy } = (window as any).Valtio as {
@@ -14,10 +14,9 @@ const { proxy } = (window as any).Valtio as {
 /**
  * Chat mode determines how AI handles tool calls
  * - agent: Execute tool calls automatically without confirmation
- * - supervised: Queue tool calls for user confirmation before execution
  * - ask: Text-only mode, no tool calls sent to AI
  */
-export type ChatMode = 'agent' | 'supervised' | 'ask';
+export type ChatMode = 'agent' | 'ask';
 
 /**
  * Status of a pending tool call
@@ -82,7 +81,7 @@ export function generateToolCallId(): string {
  * Validate that a mode value is valid
  */
 function isValidMode(mode: unknown): mode is ChatMode {
-  return mode === 'agent' || mode === 'supervised' || mode === 'ask';
+  return mode === 'agent' || mode === 'ask';
 }
 
 // ============================================================================

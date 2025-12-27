@@ -1,6 +1,6 @@
 /**
  * ModeSelectorButton - Chat mode selector component
- * Displays current mode (Agent/Supervised/Ask) with icon
+ * Displays current mode (Agent/Ask) with icon
  * Provides dropdown menu for mode selection
  * 
  * Requirements: 1.1, 1.2, 1.3, 6.1, 6.2, 6.3, 6.4
@@ -37,11 +37,6 @@ const MODE_CONFIGS: Record<ChatMode, ModeConfig> = {
     icon: "⚡",
     label: "Agent",
     description: "AI 自动执行工具调用，无需确认",
-  },
-  supervised: {
-    icon: "🛡️",
-    label: "Supervised",
-    description: "AI 可以调用工具，但需要用户确认",
   },
   ask: {
     icon: "💬",
@@ -183,7 +178,6 @@ export default function ModeSelectorButton() {
         "div",
         { style: menuContainerStyle },
         renderMenuItem("agent", close),
-        renderMenuItem("supervised", close),
         renderMenuItem("ask", close)
       );
     },
