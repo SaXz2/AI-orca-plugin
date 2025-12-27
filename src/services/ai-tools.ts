@@ -1075,7 +1075,9 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
 
         // Build content
         let content = block.content || "";
-        let title = block.alias?.[0] || content.split("\n")[0]?.substring(0, 50) || `Block #${blockId}`;
+        // Ensure content is a string before splitting
+        const contentStr = typeof content === "string" ? content : "";
+        let title = block.alias?.[0] || contentStr.split("\n")[0]?.substring(0, 50) || `Block #${blockId}`;
         title = title.replace(/[\[\]]/g, "");
 
         // Get children content if requested
