@@ -17,6 +17,7 @@ export type TimelineItem = {
   date: string;
   title: MarkdownInlineNode[];  // 支持链接等 inline 元素
   description?: string;
+  category?: string;  // 事件类型：work, fun, study, life 等
 };
 
 export type MarkdownNode =
@@ -115,8 +116,9 @@ function isCheckboxLine(line: string): { checked: boolean; text: string } | null
 
 /**
  * Parse timeline from code block content
- * Format: date | title | description (optional)
+ * Format: date | title | description (optional) | category (optional)
  * Title supports inline markdown (links, bold, etc.)
+ * Category determines dot color: work(blue), fun(pink), study(green), life(orange)
  */
 function parseTimeline(content: string): TimelineItem[] | null {
   const lines = content.trim().split("\n").filter(l => l.trim());
@@ -130,6 +132,7 @@ function parseTimeline(content: string): TimelineItem[] | null {
         date: parts[0],
         title: parseInlineMarkdown(parts[1]),  // 解析为 inline nodes 支持链接
         description: parts[2] || undefined,
+        category: parts[3]?.toLowerCase() || undefined,  // 事件类型
       });
     }
   }

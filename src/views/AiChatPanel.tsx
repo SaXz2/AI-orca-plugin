@@ -268,19 +268,52 @@ export default function AiChatPanel({ panelId }: PanelProps) {
 
 	    // 检测用户指令并追加格式要求
 	    let processedContent = content;
+	    
+	    // /timeline - 时间线格式
 	    if (content.includes("/timeline")) {
-	      processedContent = content.replace(/\/timeline/g, "").trim();
+	      processedContent = processedContent.replace(/\/timeline/g, "").trim();
 	      systemPrompt += `\n\n【格式要求 - 时间线】用户要求使用时间线格式展示结果。
 格式：
 \`\`\`timeline
-日期 | [标题](orca-block:id) | 详细描述
+日期 | [标题](orca-block:id) | 详细描述 | 类型
 \`\`\`
 要求：
-1. 每行一个事件，用 | 分隔：日期 | 标题（带跳转链接） | 描述
-2. 标题必须使用 [标题](orca-block:id) 格式，让用户可以点击跳转
-3. 描述要详细，包含关键内容摘要，不要只写一两个字
-4. 按时间顺序排列（从早到晚或从晚到早）
-5. 日期格式统一，如 2024-12-01 或 12月1日`;
+1. 每行一个事件，用 | 分隔：日期 | 标题 | 描述 | 类型
+2. 标题使用 [标题](orca-block:id) 格式，让用户可以点击跳转
+3. 描述要详细，包含关键内容摘要
+4. 类型用于区分颜色，可选值：work(工作/蓝)、fun(娱乐/粉)、study(学习/绿)、life(生活/橙)、health(健康/青)、travel(旅行/紫)、finance(财务/黄)、social(社交/蓝绿)
+5. 根据内容智能判断类型，如日记默认life，任务默认work
+6. 按时间顺序排列`;
+	    }
+	    
+	    // /brief - 简洁回答
+	    if (content.includes("/brief")) {
+	      processedContent = processedContent.replace(/\/brief/g, "").trim();
+	      systemPrompt += `\n\n【回答风格】用户要求简洁回答。请：
+1. 直接给出答案，不要铺垫
+2. 使用短句，避免长段落
+3. 要点用列表呈现
+4. 省略不必要的解释和背景`;
+	    }
+	    
+	    // /detail - 详细回答
+	    if (content.includes("/detail")) {
+	      processedContent = processedContent.replace(/\/detail/g, "").trim();
+	      systemPrompt += `\n\n【回答风格】用户要求详细回答。请：
+1. 充分展开说明，提供完整信息
+2. 包含背景、原因、细节
+3. 举例说明关键点
+4. 如有相关内容，主动补充`;
+	    }
+	    
+	    // /table - 表格格式
+	    if (content.includes("/table")) {
+	      processedContent = processedContent.replace(/\/table/g, "").trim();
+	      systemPrompt += `\n\n【格式要求 - 表格】用户要求使用表格格式展示结果。请：
+1. 使用 Markdown 表格格式
+2. 第一行为表头，描述各列含义
+3. 合理设计列，让信息清晰对比
+4. 如有链接，使用 [标题](orca-block:id) 格式`;
 	    }
 
 	    // Get current chat mode for tool handling

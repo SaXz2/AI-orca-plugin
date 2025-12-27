@@ -308,20 +308,50 @@ function ChecklistBlock({
   );
 }
 
+// 时间线事件类型颜色映射
+const TIMELINE_CATEGORY_COLORS: Record<string, string> = {
+  work: "#007bff",      // 工作 - 蓝色
+  fun: "#e83e8c",       // 娱乐 - 粉色
+  study: "#28a745",     // 学习 - 绿色
+  life: "#fd7e14",      // 生活 - 橙色
+  health: "#20c997",    // 健康 - 青色
+  travel: "#6f42c1",    // 旅行 - 紫色
+  finance: "#ffc107",   // 财务 - 黄色
+  social: "#17a2b8",    // 社交 - 蓝绿色
+};
+
+function getTimelineDotColor(category?: string): string {
+  if (!category) return "var(--orca-color-primary, #007bff)";
+  return TIMELINE_CATEGORY_COLORS[category] || "var(--orca-color-primary, #007bff)";
+}
+
 // Helper component for Timeline
 function TimelineBlock({ items, renderInline }: { items: TimelineItem[], renderInline: (node: MarkdownInlineNode, key: number) => any }) {
   return createElement(
     "div",
     { className: "md-timeline" },
-    ...items.map((item, index) =>
-      createElement(
+    ...items.map((item, index) => {
+      const dotColor = getTimelineDotColor(item.category);
+      return createElement(
         "div",
         { key: index, className: "md-timeline-item" },
-        createElement("div", { className: "md-timeline-dot" }),
+        createElement("div", { 
+          className: "md-timeline-dot",
+          style: { background: dotColor, boxShadow: `0 0 0 2px ${dotColor}` }
+        }),
         createElement(
           "div",
           { className: "md-timeline-content" },
-          createElement("div", { className: "md-timeline-date" }, item.date),
+          createElement(
+            "div",
+            { className: "md-timeline-date", style: { color: dotColor } },
+            item.date,
+            item.category && createElement(
+              "span",
+              { className: "md-timeline-category", style: { background: dotColor } },
+              item.category
+            )
+          ),
           createElement(
             "div",
             { className: "md-timeline-title" },
@@ -329,8 +359,8 @@ function TimelineBlock({ items, renderInline }: { items: TimelineItem[], renderI
           ),
           item.description && createElement("div", { className: "md-timeline-desc" }, item.description)
         )
-      )
-    )
+      );
+    })
   );
 }
 

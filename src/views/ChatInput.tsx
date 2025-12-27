@@ -28,6 +28,9 @@ const { createElement, useRef, useState, useCallback, useEffect, useMemo } = Rea
 // 斜杠命令定义
 const SLASH_COMMANDS = [
   { command: "/timeline", description: "以时间线格式展示结果" },
+  { command: "/brief", description: "简洁回答，不要长篇大论" },
+  { command: "/detail", description: "详细回答，展开说明" },
+  { command: "/table", description: "用表格格式展示结果" },
 ];
 
 const { useSnapshot } = (window as any).Valtio as {

@@ -449,6 +449,17 @@ export const chatAnimations = `
     line-height: 1.5;
 }
 
+.md-timeline-category {
+    display: inline-block;
+    margin-left: 8px;
+    padding: 1px 6px;
+    border-radius: 8px;
+    font-size: 10px;
+    font-weight: 500;
+    color: #fff;
+    text-transform: capitalize;
+}
+
 /* Block reference dot (inline) */
 .md-block-dot {
     display: inline-block;
