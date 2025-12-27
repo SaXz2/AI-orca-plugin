@@ -1,4 +1,4 @@
-import { parseMarkdown, type MarkdownInlineNode, type MarkdownNode, type TableAlignment } from "../utils/markdown-renderer";
+import { parseMarkdown, type MarkdownInlineNode, type MarkdownNode, type TableAlignment, type CheckboxItem, type TaskCardData } from "../utils/markdown-renderer";
 import {
   codeBlockContainerStyle,
   codeBlockHeaderStyle,
@@ -171,6 +171,126 @@ function TableBlock({
               )
             )
           )
+        )
+      )
+    )
+  );
+}
+
+// Helper component for Checklist (- [ ] / - [x])
+function ChecklistBlock({
+  items,
+  renderInline,
+}: {
+  items: CheckboxItem[];
+  renderInline: (node: MarkdownInlineNode, key: number) => any;
+}) {
+  return createElement(
+    "div",
+    { className: "md-checklist" },
+    ...items.map((item, index) =>
+      createElement(
+        "div",
+        { key: index, className: `md-checklist-item ${item.checked ? "checked" : ""}` },
+        createElement(
+          "span",
+          { className: `md-checkbox ${item.checked ? "checked" : ""}` },
+          item.checked && createElement("i", { className: "ti ti-check" })
+        ),
+        createElement(
+          "span",
+          { className: "md-checklist-text" },
+          ...item.children.map((child, i) => renderInline(child, i))
+        )
+      )
+    )
+  );
+}
+
+// Helper component for Task Card
+function TaskCardBlock({ task }: { task: TaskCardData }) {
+  const statusConfig: Record<string, { icon: string; label: string; className: string }> = {
+    todo: { icon: "ti ti-circle", label: "待办", className: "status-todo" },
+    done: { icon: "ti ti-circle-check", label: "已完成", className: "status-done" },
+    "in-progress": { icon: "ti ti-loader", label: "进行中", className: "status-progress" },
+    cancelled: { icon: "ti ti-circle-x", label: "已取消", className: "status-cancelled" },
+  };
+
+  const priorityConfig: Record<string, { icon: string; label: string; className: string }> = {
+    high: { icon: "ti ti-arrow-up", label: "高", className: "priority-high" },
+    medium: { icon: "ti ti-minus", label: "中", className: "priority-medium" },
+    low: { icon: "ti ti-arrow-down", label: "低", className: "priority-low" },
+  };
+
+  const status = statusConfig[task.status] || statusConfig.todo;
+  const priority = task.priority ? priorityConfig[task.priority] : null;
+
+  const handleBlockClick = () => {
+    if (task.blockId) {
+      try {
+        orca.nav.openInLastPanel("block", { blockId: task.blockId });
+      } catch (error) {
+        console.error("[TaskCard] Navigation failed:", error);
+      }
+    }
+  };
+
+  return createElement(
+    "div",
+    { className: "md-task-card" },
+    // Header: status + title
+    createElement(
+      "div",
+      { className: "md-task-header" },
+      createElement(
+        "span",
+        { className: `md-task-status ${status.className}` },
+        createElement("i", { className: status.icon }),
+        status.label
+      ),
+      priority && createElement(
+        "span",
+        { className: `md-task-priority ${priority.className}` },
+        createElement("i", { className: priority.icon }),
+        priority.label
+      )
+    ),
+    // Title with link indicator (using BlockPreviewPopup for hover preview)
+    createElement(
+      "div",
+      { className: "md-task-title-row" },
+      task.blockId && createElement(
+        orca.components.BlockPreviewPopup,
+        { blockId: task.blockId, delay: 300 },
+        createElement(
+          "span",
+          { 
+            className: "md-task-link-dot",
+            onClick: handleBlockClick,
+          }
+        )
+      ),
+      createElement(
+        "span",
+        { className: "md-task-title" },
+        task.title
+      )
+    ),
+    // Footer: due date + tags
+    (task.dueDate || task.tags.length > 0) && createElement(
+      "div",
+      { className: "md-task-footer" },
+      task.dueDate && createElement(
+        "span",
+        { className: "md-task-due" },
+        createElement("i", { className: "ti ti-calendar" }),
+        task.dueDate
+      ),
+      task.tags.length > 0 && createElement(
+        "div",
+        { className: "md-task-tags" },
+        ...task.tags.map((tag, i) =>
+          createElement("span", { key: i, className: "md-task-tag" }, tag)
         )
       )
     )
@@ -372,6 +492,21 @@ function renderBlockNode(node: MarkdownNode, key: number): any {
         alignments: node.alignments,
         rows: node.rows,
         renderInline: renderInlineNode,
+      });
+    }
+
+    case "checklist": {
+      return createElement(ChecklistBlock, {
+        key,
+        items: node.items,
+        renderInline: renderInlineNode,
+      });
+    }
+
+    case "taskcard": {
+      return createElement(TaskCardBlock, {
+        key,
+        task: node.task,
       });
     }
 
