@@ -42,6 +42,7 @@ export const TOOLS: OpenAITool[] = [
 - 用户问"有多少条X"时，用 countOnly:true 只返回数量
 - 用户要"列出所有X"时，用 briefMode:true 返回简洁列表
 - 用户要"详细看看"时，用默认模式返回完整内容
+- 用户要"最近修改/创建的"时，用 sortBy + sortOrder 排序
 - 结果超过50条时，用 offset 分页获取更多`,
       parameters: {
         type: "object",
@@ -66,6 +67,16 @@ export const TOOLS: OpenAITool[] = [
             type: "boolean",
             description: "简洁模式：返回标题+摘要，不返回完整内容（用于列表概览）",
           },
+          sortBy: {
+            type: "string",
+            enum: ["created", "modified"],
+            description: "排序字段：created（创建时间）或 modified（修改时间）",
+          },
+          sortOrder: {
+            type: "string",
+            enum: ["asc", "desc"],
+            description: "排序顺序：asc（升序/最早）或 desc（降序/最新），默认 desc",
+          },
         },
         required: ["tag_query"],
       },
@@ -79,6 +90,7 @@ export const TOOLS: OpenAITool[] = [
 使用建议：
 - 用户问"有多少条包含X的笔记"时，用 countOnly:true
 - 用户要"列出包含X的笔记"时，用 briefMode:true
+- 用户要"最近修改/创建的"时，用 sortBy + sortOrder 排序
 - 结果超过50条时，用 offset 分页`,
       parameters: {
         type: "object",
@@ -102,6 +114,16 @@ export const TOOLS: OpenAITool[] = [
           briefMode: {
             type: "boolean",
             description: "简洁模式：返回标题+摘要（用于列表概览）",
+          },
+          sortBy: {
+            type: "string",
+            enum: ["created", "modified"],
+            description: "排序字段：created（创建时间）或 modified（修改时间）",
+          },
+          sortOrder: {
+            type: "string",
+            enum: ["asc", "desc"],
+            description: "排序顺序：asc（升序/最早）或 desc（降序/最新），默认 desc",
           },
         },
         required: ["query"],
@@ -227,10 +249,6 @@ export const TOOLS: OpenAITool[] = [
             type: "boolean",
             description: "是否包含日记条目的子块（默认 true）",
           },
-          createIfNotExists: {
-            type: "boolean",
-            description: "如果今日日记不存在，是否自动创建（默认 false）",
-          },
         },
       },
     },
@@ -326,8 +344,40 @@ export const TOOLS: OpenAITool[] = [
             type: "boolean",
             description: "是否包含所有子块内容（默认 true）",
           },
+          includeMeta: {
+            type: "boolean",
+            description: "是否包含元数据（创建时间、修改时间）。当用户询问单个笔记的时间信息时设为 true",
+          },
         },
         required: ["blockId"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "getBlockMeta",
+      description: "批量获取多个块的元数据（创建时间、修改时间等）。适用于需要查询多个笔记时间信息的场景，如'最近修改的笔记'、'按时间排序'等。单个块请用 getBlock 的 includeMeta 参数。",
+      parameters: {
+        type: "object",
+        properties: {
+          blockIds: {
+            type: "array",
+            description: "块 ID 列表（数字数组）",
+            items: {
+              type: "number",
+            },
+          },
+          fields: {
+            type: "array",
+            description: "要获取的字段列表，可选值：created（创建时间）、modified（修改时间）、tags（标签）、properties（属性）。不传则返回所有字段。",
+            items: {
+              type: "string",
+              enum: ["created", "modified", "tags", "properties"],
+            },
+          },
+        },
+        required: ["blockIds"],
       },
     },
   },
@@ -535,11 +585,23 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
         const offset = Math.max(0, Math.trunc(args.offset || 0));
         const requestedMax = args.maxResults || (countOnly ? 200 : 20);
         const actualLimit = Math.min(requestedMax, countOnly ? 200 : 50);
-        // Fetch extra to support offset
+        const sortBy = args.sortBy as "created" | "modified" | undefined;
+        const sortOrder = (args.sortOrder || "desc") as "asc" | "desc";
+        // Fetch extra to support offset and sorting
         const fetchLimit = offset + actualLimit;
         
-        console.log(`[Tool] searchBlocksByTag: "${tagQuery}" (countOnly=${countOnly}, briefMode=${briefMode}, offset=${offset})`);
-        const allResults = await searchBlocksByTag(tagQuery, Math.min(fetchLimit, 200));
+        console.log(`[Tool] searchBlocksByTag: "${tagQuery}" (countOnly=${countOnly}, briefMode=${briefMode}, offset=${offset}, sortBy=${sortBy})`);
+        let allResults = await searchBlocksByTag(tagQuery, Math.min(fetchLimit, 200));
+        
+        // Sort results if sortBy is specified
+        if (sortBy && allResults.length > 0) {
+          allResults = [...allResults].sort((a: any, b: any) => {
+            const aTime = a[sortBy] ? new Date(a[sortBy]).getTime() : 0;
+            const bTime = b[sortBy] ? new Date(b[sortBy]).getTime() : 0;
+            return sortOrder === "desc" ? bTime - aTime : aTime - bTime;
+          });
+        }
+        
         const results = allResults.slice(offset, offset + actualLimit);
         const totalFetched = allResults.length;
         console.log(`[Tool] searchBlocksByTag found ${totalFetched} total, returning ${results.length} (offset=${offset})`);
@@ -572,8 +634,9 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
           }
         }
         const limitWarning = totalFetched >= fetchLimit ? buildLimitWarning(totalFetched, requestedMax, fetchLimit) : "";
+        const sortInfo = sortBy ? `\n🔄 按${sortBy === "created" ? "创建时间" : "修改时间"}${sortOrder === "desc" ? "降序" : "升序"}排列` : "";
 
-        return `${preservationNote}Found ${results.length} block(s) with tag "${tagQuery}":\n${summary}${paginationInfo}${limitWarning}`;
+        return `${preservationNote}Found ${results.length} block(s) with tag "${tagQuery}":${sortInfo}\n${summary}${paginationInfo}${limitWarning}`;
       } catch (err: any) {
         console.error(`[Tool] Error in searchBlocksByTag:`, err);
         return `Error searching by tag: ${err.message}`;
@@ -586,10 +649,22 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
         const offset = Math.max(0, Math.trunc(args.offset || 0));
         const requestedMax = args.maxResults || (countOnly ? 200 : 20);
         const actualLimit = Math.min(requestedMax, countOnly ? 200 : 50);
+        const sortBy = args.sortBy as "created" | "modified" | undefined;
+        const sortOrder = (args.sortOrder || "desc") as "asc" | "desc";
         const fetchLimit = offset + actualLimit;
 
-        console.log(`[Tool] searchBlocksByText: "${query}" (countOnly=${countOnly}, briefMode=${briefMode}, offset=${offset})`);
-        const allResults = await searchBlocksByText(query, Math.min(fetchLimit, 200));
+        console.log(`[Tool] searchBlocksByText: "${query}" (countOnly=${countOnly}, briefMode=${briefMode}, offset=${offset}, sortBy=${sortBy})`);
+        let allResults = await searchBlocksByText(query, Math.min(fetchLimit, 200));
+        
+        // Sort results if sortBy is specified
+        if (sortBy && allResults.length > 0) {
+          allResults = [...allResults].sort((a: any, b: any) => {
+            const aTime = a[sortBy] ? new Date(a[sortBy]).getTime() : 0;
+            const bTime = b[sortBy] ? new Date(b[sortBy]).getTime() : 0;
+            return sortOrder === "desc" ? bTime - aTime : aTime - bTime;
+          });
+        }
+        
         const results = allResults.slice(offset, offset + actualLimit);
         const totalFetched = allResults.length;
         console.log(`[Tool] searchBlocksByText found ${totalFetched} total, returning ${results.length} (offset=${offset})`);
@@ -622,8 +697,9 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
           }
         }
         const limitWarning = totalFetched >= fetchLimit ? buildLimitWarning(totalFetched, requestedMax, fetchLimit) : "";
+        const sortInfo = sortBy ? `\n🔄 按${sortBy === "created" ? "创建时间" : "修改时间"}${sortOrder === "desc" ? "降序" : "升序"}排列` : "";
 
-        return `${preservationNote}Found ${results.length} block(s) matching "${query}":\n${summary}${paginationInfo}${limitWarning}`;
+        return `${preservationNote}Found ${results.length} block(s) matching "${query}":${sortInfo}\n${summary}${paginationInfo}${limitWarning}`;
       } catch (err: any) {
         console.error(`[Tool] Error in searchBlocksByText:`, err);
         return `Error searching by text: ${err.message}`;
@@ -717,9 +793,8 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
     } else if (toolName === "getTodayJournal") {
       try {
         const includeChildren = args.includeChildren !== false; // default true
-        const createIfNotExists = args.createIfNotExists === true; // default false
 
-        console.log("[Tool] getTodayJournal:", { includeChildren, createIfNotExists });
+        console.log("[Tool] getTodayJournal:", { includeChildren });
 
         // Get today's date in YYYY-MM-DD format
         const today = new Date();
@@ -739,22 +814,7 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
           console.log(`[Tool] getTodayJournal: Journal not found, error: ${journalErr.message}`);
         }
 
-        // No journal found for today
-        if (createIfNotExists) {
-          // Try to create today's journal by navigating to it
-          try {
-            const journalPageName = todayStr;
-            const pageResult = await getPageByName(journalPageName, true);
-            if (pageResult && pageResult.id) {
-              return `Created today's journal: [${todayStr}](orca-block:${pageResult.id})\n\nThe journal is empty. You can add content using createBlock with this block ID.`;
-            }
-          } catch (createErr: any) {
-            console.error(`[Tool] Error creating today's journal:`, createErr);
-          }
-          return `Could not create today's journal. Please create it manually.`;
-        }
-
-        return `No journal entry found for today (${todayStr}). Use createIfNotExists: true to create one.`;
+        return `No journal entry found for today (${todayStr}). Please create it manually in Orca.`;
       } catch (err: any) {
         console.error(`[Tool] Error in getTodayJournal:`, err);
         return `Error getting today's journal: ${err.message}`;
@@ -959,6 +1019,7 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
       try {
         let blockIdRaw = args.blockId || args.block_id || args.id;
         const includeChildren = args.includeChildren !== false;
+        const includeMeta = args.includeMeta === true;
 
         // Handle orca-block:xxx and blockid:xxx formats
         if (typeof blockIdRaw === "string") {
@@ -973,13 +1034,26 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
           return "Error: Missing or invalid blockId parameter. Please provide a valid block ID number.";
         }
 
-        console.log("[Tool] getBlock:", { blockId, includeChildren });
+        console.log("[Tool] getBlock:", { blockId, includeChildren, includeMeta });
 
         // Get block from state or backend
         let block = orca.state.blocks[blockId] || await orca.invokeBackend("get-block", blockId);
         if (!block) {
           return `Block ${blockId} not found.`;
         }
+
+        // Format date helper
+        const formatDate = (date: any): string => {
+          if (!date) return "未知";
+          const d = new Date(date);
+          if (isNaN(d.getTime())) return "未知";
+          const year = d.getFullYear();
+          const month = String(d.getMonth() + 1).padStart(2, "0");
+          const day = String(d.getDate()).padStart(2, "0");
+          const hour = String(d.getHours()).padStart(2, "0");
+          const min = String(d.getMinutes()).padStart(2, "0");
+          return `${year}-${month}-${day} ${hour}:${min}`;
+        };
 
         // Build content
         let content = block.content || "";
@@ -1001,10 +1075,103 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
           }
         }
 
-        return `# ${title}\n\n${content}${childrenContent}\n\n---\n📄 [查看原块](orca-block:${blockId})`;
+        // Build meta info if requested
+        let metaInfo = "";
+        if (includeMeta) {
+          const metaParts: string[] = [];
+          if (block.created) metaParts.push(`创建: ${formatDate(block.created)}`);
+          if (block.modified) metaParts.push(`修改: ${formatDate(block.modified)}`);
+          if (metaParts.length > 0) {
+            metaInfo = `\n📅 ${metaParts.join(" | ")}`;
+          }
+        }
+
+        return `# ${title}${metaInfo}\n\n${content}${childrenContent}\n\n---\n📄 [查看原块](orca-block:${blockId})`;
       } catch (err: any) {
         console.error(`[Tool] Error in getBlock:`, err);
         return `Error getting block ${args.blockId}: ${err.message}`;
+      }
+    } else if (toolName === "getBlockMeta") {
+      try {
+        // Support both single blockId and batch blockIds
+        let blockIds: number[] = [];
+        
+        if (args.blockIds && Array.isArray(args.blockIds)) {
+          blockIds = args.blockIds.map((id: any) => {
+            if (typeof id === "string") {
+              const match = id.match(/^(?:orca-block:|blockid:)?(\d+)$/i);
+              if (match) return parseInt(match[1], 10);
+            }
+            return toFiniteNumber(id);
+          }).filter((id: number | undefined): id is number => !!id);
+        } else {
+          // Fallback for single blockId (backward compatibility)
+          let blockIdRaw = args.blockId || args.block_id || args.id;
+          if (typeof blockIdRaw === "string") {
+            const match = blockIdRaw.match(/^(?:orca-block:|blockid:)?(\d+)$/i);
+            if (match) blockIdRaw = parseInt(match[1], 10);
+          }
+          const singleId = toFiniteNumber(blockIdRaw);
+          if (singleId) blockIds = [singleId];
+        }
+
+        const fields: string[] = args.fields || ["created", "modified", "tags", "properties"];
+
+        if (blockIds.length === 0) {
+          console.error("[Tool] getBlockMeta: Missing or invalid blockIds");
+          return "Error: Missing or invalid blockIds parameter.";
+        }
+
+        // Limit batch size
+        if (blockIds.length > 100) {
+          blockIds = blockIds.slice(0, 100);
+        }
+
+        console.log("[Tool] getBlockMeta:", { blockIds: blockIds.length, fields });
+
+        // Format date helper
+        const formatDate = (date: any): string => {
+          if (!date) return "未知";
+          const d = new Date(date);
+          if (isNaN(d.getTime())) return "未知";
+          const year = d.getFullYear();
+          const month = String(d.getMonth() + 1).padStart(2, "0");
+          const day = String(d.getDate()).padStart(2, "0");
+          const hour = String(d.getHours()).padStart(2, "0");
+          const min = String(d.getMinutes()).padStart(2, "0");
+          return `${year}-${month}-${day} ${hour}:${min}`;
+        };
+
+        // Fetch all blocks
+        const results: string[] = [];
+        for (const blockId of blockIds) {
+          const block = orca.state.blocks[blockId] || await orca.invokeBackend("get-block", blockId);
+          if (!block) {
+            results.push(`- blockid:${blockId} - 未找到`);
+            continue;
+          }
+
+          const parts: string[] = [`blockid:${blockId}`];
+          if (fields.includes("created")) {
+            parts.push(`创建: ${formatDate(block.created)}`);
+          }
+          if (fields.includes("modified")) {
+            parts.push(`修改: ${formatDate(block.modified)}`);
+          }
+          if (fields.includes("tags") && block.aliases && block.aliases.length > 0) {
+            parts.push(`标签: ${block.aliases.map((t: string) => `#${t}`).join(", ")}`);
+          }
+          if (fields.includes("properties") && block.properties && block.properties.length > 0) {
+            const props = block.properties.map((p: any) => `${p.name}: ${p.value}`).join(", ");
+            parts.push(`属性: ${props}`);
+          }
+          results.push(`- ${parts.join(" | ")}`);
+        }
+
+        return `📋 ${blockIds.length} 个块的元数据：\n${results.join("\n")}`;
+      } catch (err: any) {
+        console.error(`[Tool] Error in getBlockMeta:`, err);
+        return `Error getting block metadata: ${err.message}`;
       }
     } else if (toolName === "createBlock") {
       try {
