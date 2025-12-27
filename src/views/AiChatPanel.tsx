@@ -2,11 +2,10 @@ import type { PanelProps } from "../orca.d.ts";
 
 import { buildContextForSend } from "../services/context-builder";
 import { contextStore, type ContextRef } from "../store/context-store";
-import { skillStore, replaceVariables } from "../store/skill-store";
-import { filterToolsBySkill } from "../services/ai-tools";
 import { closeAiChatPanel, getAiChatPluginName } from "../ui/ai-chat-ui";
 import { uiStore } from "../store/ui-store";
 import { memoryStore } from "../store/memory-store";
+import { getMode } from "../store/chat-mode-store";
 import { findViewPanelById } from "../utils/panel-tree";
 import ChatInput from "./ChatInput";
 import MarkdownMessage from "../components/MarkdownMessage";
@@ -267,32 +266,9 @@ export default function AiChatPanel({ panelId }: PanelProps) {
 	    // 系统提示词模板变量：支持 {maxToolRounds}，按当前 MAX_TOOL_ROUNDS 注入
 	    let systemPrompt = settings.systemPrompt.split("{maxToolRounds}").join(String(MAX_TOOL_ROUNDS));
 
-	    // ═══════════════════════════════════════════════════════════════════════
-	    // Skill 集成
-	    // ═══════════════════════════════════════════════════════════════════════
-	    const activeSkill = skillStore.activeSkill;
-	    let activeTools = TOOLS; // 默认使用全部工具
-
-	    if (activeSkill) {
-	      // 1. 追加 Skill 指令到 System Prompt
-	      let skillPrompt = activeSkill.prompt || "";
-
-	      // 替换变量（如果有）
-	      if (activeSkill.variables?.length && Object.keys(skillStore.variables).length > 0) {
-	        skillPrompt = replaceVariables(skillPrompt, skillStore.variables);
-	      }
-
-	      if (skillPrompt) {
-	        systemPrompt += `\n\n---\n## 当前激活技能: ${activeSkill.name}\n${activeSkill.description ? activeSkill.description + "\n\n" : ""}${skillPrompt}`;
-	      }
-
-	      // 2. 工具型 Skill 过滤工具集
-	      if (activeSkill.type === "tools") {
-	        activeTools = filterToolsBySkill(activeSkill);
-	        console.log(`[AiChatPanel] Skill "${activeSkill.name}" filtered tools: ${activeTools.length}/${TOOLS.length}`);
-	      }
-	    }
-	    // ═══════════════════════════════════════════════════════════════════════
+	    // Get current chat mode for tool handling
+	    const currentChatMode = getMode();
+	    const includeTools = currentChatMode !== 'ask';
 
 	    const model = (currentSession.model || "").trim() || resolveAiModel(settings);
 	    const validationError = validateAiChatSettingsWithModel(settings, model);
@@ -352,6 +328,7 @@ export default function AiChatPanel({ panelId }: PanelProps) {
 	        systemPrompt,
 	        contextText,
 	        customMemory: memoryText,
+	        chatMode: currentChatMode,
 	      });
 
       for await (const chunk of streamChatWithRetry(
@@ -362,7 +339,7 @@ export default function AiChatPanel({ panelId }: PanelProps) {
           temperature: settings.temperature,
           maxTokens: settings.maxTokens,
           signal: aborter.signal,
-          tools: activeTools,
+          tools: includeTools ? TOOLS : undefined,
         },
         apiMessages,
         apiMessagesFallback,
@@ -472,6 +449,7 @@ export default function AiChatPanel({ panelId }: PanelProps) {
 	          systemPrompt,
 	          contextText,
 	          customMemory: memoryText,
+	          chatMode: currentChatMode,
 	        });
 
         // Create assistant message for next response
@@ -494,7 +472,7 @@ export default function AiChatPanel({ panelId }: PanelProps) {
               temperature: settings.temperature,
               maxTokens: settings.maxTokens,
               signal: aborter.signal,
-              tools: enableTools ? activeTools : undefined, // Last round: disable tools to force an answer
+              tools: enableTools ? TOOLS : undefined, // Last round: disable tools to force an answer
             },
             standard,
             fallback,

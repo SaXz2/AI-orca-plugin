@@ -6,7 +6,7 @@
 
 import type { OpenAIChatMessage } from "./openai-client";
 import type { Message } from "./session-service";
-import { type ChatMode, getMode } from "../store/chat-mode-store";
+import type { ChatMode } from "../store/chat-mode-store";
 
 export interface MessageBuildParams {
   messages: Message[];
@@ -33,9 +33,8 @@ export interface ToolResultParams extends MessageBuildParams {
 
 /**
  * Ask mode instruction to append to system prompt
- * Instructs AI to only answer questions without executing any operations
  */
-export const ASK_MODE_INSTRUCTION = `
+const ASK_MODE_INSTRUCTION = `
 
 ---
 ## 重要提示：当前为 Ask 模式
@@ -44,16 +43,6 @@ export const ASK_MODE_INSTRUCTION = `
 - 你不能执行任何操作或调用任何工具
 - 如果用户请求执行操作，请解释你当前无法执行操作，但可以提供相关信息或建议
 - 专注于提供有帮助的、信息性的回答`;
-
-/**
- * Check if tools should be included in the API request based on chat mode
- * @param chatMode - Current chat mode (optional, defaults to store value)
- * @returns true if tools should be included, false if in Ask mode
- */
-export function shouldIncludeTools(chatMode?: ChatMode): boolean {
-  const mode = chatMode ?? getMode();
-  return mode !== 'ask';
-}
 
 /**
  * Convert internal Message to OpenAI API format
@@ -73,10 +62,6 @@ function messageToApi(m: Message): OpenAIChatMessage {
 
 /**
  * Build system message content from prompt, context, and memory
- * @param systemPrompt - Base system prompt
- * @param contextText - Context text from selected contexts
- * @param customMemory - Custom memory text
- * @param chatMode - Current chat mode (optional, defaults to store value)
  */
 function buildSystemContent(
   systemPrompt?: string,
@@ -90,8 +75,7 @@ function buildSystemContent(
   if (contextText?.trim()) parts.push(`Context:\n${contextText.trim()}`);
   
   // Append Ask mode instruction when in Ask mode
-  const mode = chatMode ?? getMode();
-  if (mode === 'ask') {
+  if (chatMode === 'ask') {
     parts.push(ASK_MODE_INSTRUCTION.trim());
   }
   
