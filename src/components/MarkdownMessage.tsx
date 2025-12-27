@@ -357,46 +357,47 @@ function renderInlineNode(node: MarkdownInlineNode, key: number): any {
           }
         };
         
+        // Wrap with BlockPreviewPopup for hover preview
         return createElement(
-          "span",
-          {
-            key,
-            style: blockLinkContainerStyle,
-            title: `Jump to block #${blockId}`,
-            onClick: handleBlockNavigation,
-            onMouseEnter: (e: any) => {
-              e.currentTarget.style.background = "rgba(0, 123, 255, 0.08)";
-              e.currentTarget.style.borderColor = "rgba(0, 123, 255, 0.2)";
-              e.currentTarget.style.transform = "translateX(2px)";
-            },
-            onMouseLeave: (e: any) => {
-              e.currentTarget.style.background = "transparent";
-              e.currentTarget.style.borderColor = "transparent";
-              e.currentTarget.style.transform = "translateX(0)";
-            },
-          },
-          // Link text
+          orca.components.BlockPreviewPopup,
+          { key, blockId, delay: 300 },
           createElement(
             "span",
             {
-              style: blockLinkTextStyle,
-            },
-            ...node.children.map((child, i) => renderInlineNode(child, i)),
-          ),
-          // Jump arrow icon
-          createElement(
-            "span",
-            {
-              style: blockLinkArrowStyle,
+              style: blockLinkContainerStyle,
+              onClick: handleBlockNavigation,
               onMouseEnter: (e: any) => {
+                e.currentTarget.style.background = "rgba(0, 123, 255, 0.08)";
+                e.currentTarget.style.borderColor = "rgba(0, 123, 255, 0.2)";
                 e.currentTarget.style.transform = "translateX(2px)";
               },
               onMouseLeave: (e: any) => {
+                e.currentTarget.style.background = "transparent";
+                e.currentTarget.style.borderColor = "transparent";
                 e.currentTarget.style.transform = "translateX(0)";
               },
             },
-            createElement("i", { className: "ti ti-arrow-right" }),
-          ),
+            // Link text
+            createElement(
+              "span",
+              { style: blockLinkTextStyle },
+              ...node.children.map((child, i) => renderInlineNode(child, i)),
+            ),
+            // Jump arrow icon
+            createElement(
+              "span",
+              {
+                style: blockLinkArrowStyle,
+                onMouseEnter: (e: any) => {
+                  e.currentTarget.style.transform = "translateX(2px)";
+                },
+                onMouseLeave: (e: any) => {
+                  e.currentTarget.style.transform = "translateX(0)";
+                },
+              },
+              createElement("i", { className: "ti ti-arrow-right" }),
+            ),
+          )
         );
       }
       // Normal external link
