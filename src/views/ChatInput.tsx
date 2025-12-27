@@ -31,6 +31,8 @@ const SLASH_COMMANDS = [
   { command: "/brief", description: "简洁回答，不要长篇大论" },
   { command: "/detail", description: "详细回答，展开说明" },
   { command: "/table", description: "用表格格式展示结果" },
+  { command: "/summary", description: "总结模式，精炼内容要点" },
+  { command: "/compare", description: "对比模式，左右对比展示" },
 ];
 
 const { useSnapshot } = (window as any).Valtio as {

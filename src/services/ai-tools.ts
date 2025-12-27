@@ -133,8 +133,8 @@ export const TOOLS: OpenAITool[] = [
                   description: "操作符" 
                 },
                 value: { 
-                  type: ["string", "number", "boolean"], 
-                  description: "属性值" 
+                  type: "string", 
+                  description: "属性值（字符串形式，数字和布尔值也用字符串表示）" 
                 },
               },
               required: ["name", "op", "value"],
@@ -405,7 +405,7 @@ export const TOOLS: OpenAITool[] = [
               type: "object",
               properties: {
                 name: { type: "string", description: "属性名" },
-                value: { type: ["string", "number", "boolean"], description: "属性值" },
+                value: { type: "string", description: "属性值（字符串形式）" },
               },
               required: ["name", "value"],
             },
@@ -960,9 +960,9 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
         let blockIdRaw = args.blockId || args.block_id || args.id;
         const includeChildren = args.includeChildren !== false;
 
-        // Handle orca-block:xxx format
+        // Handle orca-block:xxx and blockid:xxx formats
         if (typeof blockIdRaw === "string") {
-          const match = blockIdRaw.match(/^(?:orca-block:)?(\d+)$/);
+          const match = blockIdRaw.match(/^(?:orca-block:|blockid:)?(\d+)$/i);
           if (match) blockIdRaw = parseInt(match[1], 10);
         }
 

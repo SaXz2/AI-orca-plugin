@@ -1,4 +1,4 @@
-import { parseMarkdown, type MarkdownInlineNode, type MarkdownNode, type TableAlignment, type CheckboxItem, type TimelineItem } from "../utils/markdown-renderer";
+import { parseMarkdown, type MarkdownInlineNode, type MarkdownNode, type TableAlignment, type CheckboxItem, type TimelineItem, type CompareItem } from "../utils/markdown-renderer";
 import {
   codeBlockContainerStyle,
   codeBlockHeaderStyle,
@@ -357,10 +357,66 @@ function TimelineBlock({ items, renderInline }: { items: TimelineItem[], renderI
             { className: "md-timeline-title" },
             ...item.title.map((node, i) => renderInline(node, i))
           ),
-          item.description && createElement("div", { className: "md-timeline-desc" }, item.description)
+          item.description && item.description.length > 0 && createElement(
+            "div",
+            { className: "md-timeline-desc" },
+            ...item.description.map((node, i) => renderInline(node, i))
+          )
         )
       );
     })
+  );
+}
+
+// Helper component for Compare (left-right comparison view)
+function CompareBlock({ 
+  leftTitle, 
+  rightTitle, 
+  items, 
+  renderInline 
+}: { 
+  leftTitle: MarkdownInlineNode[]; 
+  rightTitle: MarkdownInlineNode[]; 
+  items: CompareItem[];
+  renderInline: (node: MarkdownInlineNode, key: number) => any;
+}) {
+  return createElement(
+    "div",
+    { className: "md-compare" },
+    // Header row with titles
+    createElement(
+      "div",
+      { className: "md-compare-header" },
+      createElement(
+        "div",
+        { className: "md-compare-title md-compare-left" },
+        ...leftTitle.map((node, i) => renderInline(node, i))
+      ),
+      createElement("div", { className: "md-compare-divider" }),
+      createElement(
+        "div",
+        { className: "md-compare-title md-compare-right" },
+        ...rightTitle.map((node, i) => renderInline(node, i))
+      )
+    ),
+    // Content rows
+    ...items.map((item, index) =>
+      createElement(
+        "div",
+        { key: index, className: "md-compare-row" },
+        createElement(
+          "div",
+          { className: "md-compare-cell md-compare-left" },
+          ...item.left.map((node, i) => renderInline(node, i))
+        ),
+        createElement("div", { className: "md-compare-divider" }),
+        createElement(
+          "div",
+          { className: "md-compare-cell md-compare-right" },
+          ...item.right.map((node, i) => renderInline(node, i))
+        )
+      )
+    )
   );
 }
 
@@ -657,6 +713,16 @@ function renderBlockNode(node: MarkdownNode, key: number): any {
     case "timeline": {
       return createElement(TimelineBlock, {
         key,
+        items: node.items,
+        renderInline: renderInlineNode,
+      });
+    }
+
+    case "compare": {
+      return createElement(CompareBlock, {
+        key,
+        leftTitle: node.leftTitle,
+        rightTitle: node.rightTitle,
         items: node.items,
         renderInline: renderInlineNode,
       });

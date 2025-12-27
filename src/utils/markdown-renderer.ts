@@ -16,8 +16,13 @@ export type CheckboxItem = {
 export type TimelineItem = {
   date: string;
   title: MarkdownInlineNode[];  // 支持链接等 inline 元素
-  description?: string;
+  description?: MarkdownInlineNode[];  // 支持链接等 inline 元素
   category?: string;  // 事件类型：work, fun, study, life 等
+};
+
+export type CompareItem = {
+  left: MarkdownInlineNode[];
+  right: MarkdownInlineNode[];
 };
 
 export type MarkdownNode =
@@ -26,6 +31,7 @@ export type MarkdownNode =
   | { type: "list"; ordered: boolean; items: MarkdownInlineNode[][] }
   | { type: "checklist"; items: CheckboxItem[] }
   | { type: "timeline"; items: TimelineItem[] }
+  | { type: "compare"; leftTitle: MarkdownInlineNode[]; rightTitle: MarkdownInlineNode[]; items: CompareItem[] }
   | { type: "quote"; children: MarkdownNode[] }
   | { type: "codeblock"; content: string; language?: string }
   | { type: "table"; headers: MarkdownInlineNode[][]; alignments: TableAlignment[]; rows: MarkdownInlineNode[][][] }
@@ -115,6 +121,45 @@ function isCheckboxLine(line: string): { checked: boolean; text: string } | null
 }
 
 /**
+ * Parse compare from code block content
+ * Format:
+ * 左侧标题 | 右侧标题
+ * ---
+ * 左侧内容 | 右侧内容
+ */
+function parseCompare(content: string): { leftTitle: MarkdownInlineNode[]; rightTitle: MarkdownInlineNode[]; items: CompareItem[] } | null {
+  const lines = content.trim().split("\n").filter(l => l.trim());
+  if (lines.length < 2) return null;
+  
+  // First line: titles
+  const titleParts = lines[0].split("|").map(p => p.trim());
+  if (titleParts.length < 2) return null;
+  
+  const leftTitle = parseInlineMarkdown(titleParts[0]);
+  const rightTitle = parseInlineMarkdown(titleParts[1]);
+  
+  // Find separator line (---)
+  let startIdx = 1;
+  if (lines[1].trim().match(/^-+$/)) {
+    startIdx = 2;
+  }
+  
+  // Parse items
+  const items: CompareItem[] = [];
+  for (let i = startIdx; i < lines.length; i++) {
+    const parts = lines[i].split("|").map(p => p.trim());
+    if (parts.length >= 2) {
+      items.push({
+        left: parseInlineMarkdown(parts[0]),
+        right: parseInlineMarkdown(parts[1]),
+      });
+    }
+  }
+  
+  return items.length > 0 ? { leftTitle, rightTitle, items } : null;
+}
+
+/**
  * Parse timeline from code block content
  * Format: date | title | description (optional) | category (optional)
  * Title supports inline markdown (links, bold, etc.)
@@ -131,7 +176,7 @@ function parseTimeline(content: string): TimelineItem[] | null {
       items.push({
         date: parts[0],
         title: parseInlineMarkdown(parts[1]),  // 解析为 inline nodes 支持链接
-        description: parts[2] || undefined,
+        description: parts[2] ? parseInlineMarkdown(parts[2]) : undefined,  // 解析为 inline nodes 支持链接
         category: parts[3]?.toLowerCase() || undefined,  // 事件类型
       });
     }
@@ -201,6 +246,23 @@ export function parseMarkdown(text: string): MarkdownNode[] {
         nodes.push({
           type: "timeline",
           items: timelineItems,
+        });
+        inCodeBlock = false;
+        codeBlockLang = "";
+        codeBlockLines = [];
+        return;
+      }
+    }
+    
+    // Check if it's a compare code block
+    if (codeBlockLang.toLowerCase() === "compare") {
+      const compareData = parseCompare(codeBlockLines.join("\n"));
+      if (compareData) {
+        nodes.push({
+          type: "compare",
+          leftTitle: compareData.leftTitle,
+          rightTitle: compareData.rightTitle,
+          items: compareData.items,
         });
         inCodeBlock = false;
         codeBlockLang = "";

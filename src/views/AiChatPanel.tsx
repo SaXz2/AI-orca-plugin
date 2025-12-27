@@ -315,6 +315,34 @@ export default function AiChatPanel({ panelId }: PanelProps) {
 3. 合理设计列，让信息清晰对比
 4. 如有链接，使用 [标题](orca-block:id) 格式`;
 	    }
+	    
+	    // /summary - 总结模式
+	    if (content.includes("/summary")) {
+	      processedContent = processedContent.replace(/\/summary/g, "").trim();
+	      systemPrompt += `\n\n【回答风格 - 总结】用户要求总结模式。请：
+1. 提炼核心要点，去除冗余信息
+2. 使用结构化格式（标题+要点）
+3. 每个要点一句话概括
+4. 最后给出一句话总结`;
+	    }
+	    
+	    // /compare - 对比模式
+	    if (content.includes("/compare")) {
+	      processedContent = processedContent.replace(/\/compare/g, "").trim();
+	      systemPrompt += `\n\n【格式要求 - 对比】用户要求对比展示。请使用以下格式：
+\`\`\`compare
+左侧标题 | 右侧标题
+---
+左侧内容第1点 | 右侧内容第1点
+左侧内容第2点 | 右侧内容第2点
+左侧内容第3点 | 右侧内容第3点
+\`\`\`
+要求：
+1. 第一行是两边的标题，用 | 分隔
+2. 第二行是分隔符 ---
+3. 后续每行是对应的对比项，用 | 分隔
+4. 对比项要一一对应，便于比较`;
+	    }
 
 	    // Get current chat mode for tool handling
 	    const currentChatMode = getMode();
