@@ -184,6 +184,26 @@ export const TOOLS: OpenAITool[] = [
   {
     type: "function",
     function: {
+      name: "getTodayJournal",
+      description: "获取今日日记的完整内容。当你需要了解用户今天的计划、记录或待办事项时使用。这是最常用的日记查询工具。",
+      parameters: {
+        type: "object",
+        properties: {
+          includeChildren: {
+            type: "boolean",
+            description: "是否包含日记条目的子块（默认 true）",
+          },
+          createIfNotExists: {
+            type: "boolean",
+            description: "如果今日日记不存在，是否自动创建（默认 false）",
+          },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "get_tag_schema",
       description: "获取特定标签的架构定义，包括其所有可用属性的名称、类型和选项值。在使用 query_blocks_by_tag 之前，如果你不确定属性名或枚举值，请先调用此工具。",
       parameters: {
@@ -507,6 +527,48 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
       } catch (err: any) {
         console.error(`[Tool] Error in getRecentJournals:`, err);
         return `Error getting recent journals: ${err.message}`;
+      }
+    } else if (toolName === "getTodayJournal") {
+      try {
+        const includeChildren = args.includeChildren !== false; // default true
+        const createIfNotExists = args.createIfNotExists === true; // default false
+
+        console.log("[Tool] getTodayJournal:", { includeChildren, createIfNotExists });
+
+        // Get today's date in YYYY-MM-DD format
+        const today = new Date();
+        const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+
+        // Try to get today's journal using getRecentJournals with days=1
+        const results = await getRecentJournals(1, includeChildren, 1);
+        
+        if (results.length > 0) {
+          const todayJournal = results[0];
+          const preservationNote = addLinkPreservationNote(1);
+          const formatted = formatBlockResult(todayJournal, 0);
+          return `${preservationNote}Today's journal (${todayStr}):\n${formatted}`;
+        }
+
+        // No journal found for today
+        if (createIfNotExists) {
+          // Try to create today's journal
+          try {
+            // Navigate to today's journal page - this should create it if it doesn't exist
+            const journalPageName = todayStr;
+            const pageResult = await getPageByName(journalPageName, true);
+            if (pageResult && pageResult.id) {
+              return `Created today's journal: [${todayStr}](orca-block:${pageResult.id})\n\nThe journal is empty. You can add content using createBlock with this block ID.`;
+            }
+          } catch (createErr: any) {
+            console.error(`[Tool] Error creating today's journal:`, createErr);
+          }
+          return `Could not create today's journal. Please create it manually.`;
+        }
+
+        return `No journal entry found for today (${todayStr}). Use createIfNotExists: true to create one.`;
+      } catch (err: any) {
+        console.error(`[Tool] Error in getTodayJournal:`, err);
+        return `Error getting today's journal: ${err.message}`;
       }
     } else if (toolName === "query_blocks") {
       try {
