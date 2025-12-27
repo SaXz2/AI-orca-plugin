@@ -268,9 +268,10 @@ export async function* streamChatWithRetry(
     yield* doStream(fallbackMessages);
   }
 
-  // Retry with fallback if response is empty
+  // Only retry with fallback if response is truly empty (no content AND no tool calls)
+  // Tool calls with empty content is a valid response - don't retry in that case
   if (!usedFallback && content.trim().length === 0 && toolCalls.length === 0) {
-    console.warn("[streamChatWithRetry] Empty response, retrying with fallback...");
+    console.warn("[streamChatWithRetry] Empty response (no content, no tools), retrying with fallback...");
     usedFallback = true;
     content = "";
     onRetry?.();
@@ -280,6 +281,9 @@ export async function* streamChatWithRetry(
     } catch (fallbackErr: any) {
       console.error("[streamChatWithRetry] Fallback retry failed:", fallbackErr);
     }
+  } else if (toolCalls.length > 0) {
+    // Log that we got tool calls - this is expected behavior, not an error
+    console.log(`[streamChatWithRetry] Response complete with ${toolCalls.length} tool call(s)`);
   }
 
   yield { type: "done", result: { content, toolCalls } };

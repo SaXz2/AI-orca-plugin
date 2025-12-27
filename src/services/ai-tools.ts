@@ -15,6 +15,7 @@ import {
   getPageByName,
   searchBlocksByReference,
   getRecentJournals,
+  getTodayJournal,
 } from "./search-service";
 import {
   formatBlockResult,
@@ -539,21 +540,24 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
         const today = new Date();
         const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
 
-        // Try to get today's journal using getRecentJournals with days=1
-        const results = await getRecentJournals(1, includeChildren, 1);
-        
-        if (results.length > 0) {
-          const todayJournal = results[0];
-          const preservationNote = addLinkPreservationNote(1);
-          const formatted = formatBlockResult(todayJournal, 0);
-          return `${preservationNote}Today's journal (${todayStr}):\n${formatted}`;
+        try {
+          // Use the dedicated getTodayJournal function from search-service
+          // This uses get-journal-block backend API with data-type="journal"
+          const todayJournal = await getTodayJournal(includeChildren);
+          
+          if (todayJournal) {
+            const preservationNote = addLinkPreservationNote(1);
+            const formatted = formatBlockResult(todayJournal, 0);
+            return `${preservationNote}Today's journal (${todayStr}):\n${formatted}`;
+          }
+        } catch (journalErr: any) {
+          console.log(`[Tool] getTodayJournal: Journal not found, error: ${journalErr.message}`);
         }
 
         // No journal found for today
         if (createIfNotExists) {
-          // Try to create today's journal
+          // Try to create today's journal by navigating to it
           try {
-            // Navigate to today's journal page - this should create it if it doesn't exist
             const journalPageName = todayStr;
             const pageResult = await getPageByName(journalPageName, true);
             if (pageResult && pageResult.id) {

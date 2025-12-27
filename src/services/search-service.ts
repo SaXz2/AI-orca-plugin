@@ -109,8 +109,18 @@ function transformToSearchResults(
 }
 
 /**
+ * Normalize tag name by removing # prefix and trimming whitespace
+ */
+function normalizeTagForSearch(tag: string): string {
+  const trimmed = tag.trim();
+  // Remove leading # if present
+  if (trimmed.startsWith("#")) return trimmed.slice(1);
+  return trimmed;
+}
+
+/**
  * Search blocks by tag name
- * @param tagName - The tag name to search for
+ * @param tagName - The tag name to search for (with or without # prefix)
  * @param maxResults - Maximum number of results to return (default: 50)
  * @returns Array of search results
  */
@@ -126,7 +136,11 @@ export async function searchBlocksByTag(
       return [];
     }
 
-    const result = await orca.invokeBackend("get-blocks-with-tags", [tagName]);
+    // Normalize tag name - remove # prefix if present
+    const normalizedTag = normalizeTagForSearch(tagName);
+    console.log("[searchBlocksByTag] Normalized tag:", normalizedTag);
+
+    const result = await orca.invokeBackend("get-blocks-with-tags", [normalizedTag]);
     const blocks = unwrapBlocks(result);
 
     if (!Array.isArray(blocks)) {
