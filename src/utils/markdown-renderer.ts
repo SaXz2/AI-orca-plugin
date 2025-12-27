@@ -4,6 +4,7 @@ export type MarkdownInlineNode =
   | { type: "italic"; children: MarkdownInlineNode[] }
   | { type: "code"; content: string }
   | { type: "link"; url: string; children: MarkdownInlineNode[] }
+  | { type: "image"; src: string; alt: string }
   | { type: "break" };
 
 export type TableAlignment = "left" | "center" | "right" | null;
@@ -487,6 +488,26 @@ function parseInlineMarkdown(text: string, depth = 0, insideLink = false): Markd
         nodes.push({ type: "code", content: text.slice(i + 1, end) });
         i = end + 1;
         continue;
+      }
+    }
+
+    // Image: ![alt](url) - must check before link since it starts with !
+    if (ch === "!" && text[i + 1] === "[") {
+      const closeBracket = text.indexOf("]", i + 2);
+      if (closeBracket !== -1 && text[closeBracket + 1] === "(") {
+        const closeParen = text.indexOf(")", closeBracket + 2);
+        if (closeParen !== -1) {
+          const alt = text.slice(i + 2, closeBracket);
+          const src = text.slice(closeBracket + 2, closeParen);
+          flushBuffer();
+          nodes.push({
+            type: "image",
+            src,
+            alt,
+          });
+          i = closeParen + 1;
+          continue;
+        }
       }
     }
 

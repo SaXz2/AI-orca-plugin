@@ -13,6 +13,8 @@ import {
   blockLinkArrowStyle,
   boldStyle,
   paragraphStyle,
+  imageStyle,
+  imageContainerStyle,
 } from "../styles/ai-chat-styles";
 
 const React = window.React as any;
@@ -499,6 +501,42 @@ function renderInlineNode(node: MarkdownInlineNode, key: number): any {
           style: inlineCodeStyle,
         },
         node.content,
+      );
+
+    case "image":
+      // Convert relative path to absolute path
+      // Relative paths like "./image.avif" are stored relative to the repo's assets folder
+      let imageSrc = node.src;
+      let imageFilePath = node.src; // Keep original for shell-open
+      if (node.src.startsWith("./") || node.src.startsWith("../")) {
+        const relativePath = node.src.replace(/^\.\//, "");
+        // Build absolute path using repoDir + assets folder
+        const repoDir = orca.state.repoDir;
+        if (repoDir) {
+          // Use file:// protocol for img src
+          imageSrc = `file:///${repoDir.replace(/\\/g, "/")}/assets/${relativePath}`;
+          // Keep native path for shell-open
+          imageFilePath = `${repoDir}\\assets\\${relativePath}`;
+        }
+      }
+      
+      // Use native img tag for file:// protocol support
+      return createElement(
+        "span",
+        { key, style: imageContainerStyle },
+        createElement("img", {
+          src: imageSrc,
+          alt: node.alt || "image",
+          style: imageStyle,
+          onClick: () => {
+            // Use Orca's shell-open to open image with system default viewer
+            orca.invokeBackend("shell-open", imageFilePath);
+          },
+          onError: (e: any) => {
+            console.error("[MarkdownMessage] Image load failed:", imageSrc);
+            e.target.style.display = "none";
+          },
+        })
       );
 
     case "link":

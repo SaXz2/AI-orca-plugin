@@ -656,8 +656,9 @@ export async function searchBlocksByReference(
     const targetBlock = await orca.invokeBackend("get-block-by-alias", aliasName);
 
     if (!targetBlock) {
-      console.warn(`[searchBlocksByReference] Page "${aliasName}" not found`);
-      throw new Error(`Page "${aliasName}" not found`);
+      // Page not found - return empty array instead of throwing
+      console.log(`[searchBlocksByReference] Page "${aliasName}" not found, returning empty results`);
+      return [];
     }
 
     const blockId = targetBlock.id;

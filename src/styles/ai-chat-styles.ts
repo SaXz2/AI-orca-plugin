@@ -258,6 +258,22 @@ export const paragraphStyle: React.CSSProperties = {
   userSelect: "text", // Allow selection/copy of Markdown content
 };
 
+// Image styles for inline images in markdown
+export const imageContainerStyle: React.CSSProperties = {
+  display: "block",
+  margin: "8px 0",
+};
+
+export const imageStyle: React.CSSProperties = {
+  maxWidth: "100%",
+  maxHeight: "400px",
+  borderRadius: "8px",
+  cursor: "pointer",
+  objectFit: "contain",
+  boxShadow: "0 2px 8px rgba(0, 0, 0, 0.1)",
+  transition: "transform 0.2s ease, box-shadow 0.2s ease",
+};
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Message Item Action Bar & Tool Styles
 // ─────────────────────────────────────────────────────────────────────────────
