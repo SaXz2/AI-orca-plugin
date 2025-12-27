@@ -12,8 +12,6 @@ import {
   blockLinkTextStyle,
   blockLinkArrowStyle,
   boldStyle,
-  listStyle,
-  listItemStyle,
   paragraphStyle,
 } from "../styles/ai-chat-styles";
 
@@ -330,18 +328,19 @@ function renderBlockNode(node: MarkdownNode, key: number): any {
 
     case "list": {
       const ListTag = (node.ordered ? "ol" : "ul") as any;
+      const listClass = node.ordered ? "md-list md-list-ordered" : "md-list md-list-unordered";
       return createElement(
         ListTag,
         {
           key,
-          style: listStyle,
+          className: listClass,
         },
         ...node.items.map((item, itemIndex) =>
           createElement(
             "li",
             {
               key: itemIndex,
-              style: listItemStyle,
+              className: "md-list-item",
             },
             ...item.map((child, i) => renderInlineNode(child, i)),
           ),

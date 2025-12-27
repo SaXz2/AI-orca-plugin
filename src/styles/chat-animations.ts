@@ -110,7 +110,15 @@ export const chatAnimations = `
 .md-table-header {
     display: flex;
     justify-content: flex-end;
-    margin-bottom: 4px;
+    position: absolute;
+    top: 0;
+    right: 0;
+    opacity: 0;
+    transition: opacity 0.2s;
+}
+
+.md-table-container:hover .md-table-header {
+    opacity: 1;
 }
 
 .md-table-copy-btn {
@@ -122,6 +130,7 @@ export const chatAnimations = `
     color: var(--orca-color-text-secondary, #666);
     cursor: pointer;
     border-radius: 4px;
+    background: var(--orca-color-bg, rgba(255, 255, 255, 0.9));
     transition: background 0.2s, color 0.2s;
 }
 
@@ -175,6 +184,34 @@ export const chatAnimations = `
     border: none;
     border-top: 1px solid var(--orca-color-border, rgba(128, 128, 128, 0.3));
     margin: 16px 0;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   List Styles
+   ─────────────────────────────────────────────────────────────────────────── */
+
+.md-list {
+    margin: 12px 0;
+    padding-left: 24px;
+    color: inherit;
+}
+
+.md-list-ordered {
+    list-style-type: decimal;
+}
+
+.md-list-unordered {
+    list-style-type: disc;
+}
+
+.md-list-item {
+    margin: 6px 0;
+    line-height: 1.6;
+    color: inherit;
+}
+
+.md-list-item::marker {
+    color: var(--orca-color-primary, #007bff);
 }
 `;
 
