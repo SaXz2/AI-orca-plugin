@@ -14,7 +14,8 @@ export type MarkdownNode =
   | { type: "list"; ordered: boolean; items: MarkdownInlineNode[][] }
   | { type: "quote"; children: MarkdownNode[] }
   | { type: "codeblock"; content: string; language?: string }
-  | { type: "table"; headers: MarkdownInlineNode[][]; alignments: TableAlignment[]; rows: MarkdownInlineNode[][][] };
+  | { type: "table"; headers: MarkdownInlineNode[][]; alignments: TableAlignment[]; rows: MarkdownInlineNode[][][] }
+  | { type: "hr" };
 
 function normalizeNewlines(text: string): string {
   return text.replace(/\r\n/g, "\n");
@@ -165,6 +166,14 @@ export function parseMarkdown(text: string): MarkdownNode[] {
     if (rawLine.trim() === "") {
       flushParagraph();
       flushList();
+      continue;
+    }
+
+    // Horizontal rule: ---, ***, ___
+    if (/^\s*([-*_])\s*\1\s*\1\s*$/.test(rawLine) || /^\s*[-*_]{3,}\s*$/.test(rawLine)) {
+      flushParagraph();
+      flushList();
+      nodes.push({ type: "hr" });
       continue;
     }
 

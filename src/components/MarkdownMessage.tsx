@@ -77,6 +77,108 @@ function CodeBlock({ language, content }: { language?: string; content: string }
   );
 }
 
+// Helper component for Table with Copy
+function TableBlock({ 
+  headers, 
+  alignments, 
+  rows,
+  renderInline 
+}: { 
+  headers: MarkdownInlineNode[][]; 
+  alignments: TableAlignment[];
+  rows: MarkdownInlineNode[][][];
+  renderInline: (node: MarkdownInlineNode, key: number) => any;
+}) {
+  const [copied, setCopied] = useState(false);
+
+  // Convert table to plain text for copying
+  const getTableText = (): string => {
+    const getTextFromNodes = (nodes: MarkdownInlineNode[]): string => {
+      return nodes.map(n => {
+        if (n.type === "text") return n.content;
+        if (n.type === "code") return n.content;
+        if (n.type === "bold" || n.type === "italic" || n.type === "link") {
+          return getTextFromNodes(n.children);
+        }
+        return "";
+      }).join("");
+    };
+
+    const headerRow = headers.map(h => getTextFromNodes(h)).join("\t");
+    const dataRows = rows.map(row => row.map(cell => getTextFromNodes(cell)).join("\t")).join("\n");
+    return headerRow + "\n" + dataRows;
+  };
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(getTableText());
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error("Failed to copy table:", err);
+    }
+  };
+
+  const getAlignClass = (align: TableAlignment): string => {
+    if (align === "center") return "align-center";
+    if (align === "right") return "align-right";
+    return "align-left";
+  };
+
+  return createElement(
+    "div",
+    { className: "md-table-container" },
+    // Copy button
+    createElement(
+      "div",
+      { className: "md-table-header" },
+      createElement(
+        "div",
+        { className: "md-table-copy-btn", onClick: handleCopy },
+        createElement("i", { className: copied ? "ti ti-check" : "ti ti-copy" }),
+        copied ? "Copied!" : "Copy"
+      )
+    ),
+    // Table
+    createElement(
+      "table",
+      { className: "md-table" },
+      createElement(
+        "thead",
+        null,
+        createElement(
+          "tr",
+          null,
+          ...headers.map((headerCells, colIndex) =>
+            createElement(
+              "th",
+              { key: colIndex, className: getAlignClass(alignments[colIndex]) },
+              ...headerCells.map((child, i) => renderInline(child, i))
+            )
+          )
+        )
+      ),
+      createElement(
+        "tbody",
+        null,
+        ...rows.map((row, rowIndex) =>
+          createElement(
+            "tr",
+            { key: rowIndex },
+            ...row.map((cellNodes, colIndex) =>
+              createElement(
+                "td",
+                { key: colIndex, className: getAlignClass(alignments[colIndex]) },
+                ...cellNodes.map((child, i) => renderInline(child, i))
+              )
+            )
+          )
+        )
+      )
+    )
+  );
+}
+
 function renderInlineNode(node: MarkdownInlineNode, key: number): any {
   switch (node.type) {
     case "text":
@@ -265,56 +367,17 @@ function renderBlockNode(node: MarkdownNode, key: number): any {
       });
 
     case "table": {
-      // Helper to get alignment class
-      const getAlignClass = (align: string | null): string => {
-        if (align === "center") return "align-center";
-        if (align === "right") return "align-right";
-        return "align-left";
-      };
-
-      return createElement(
-        "div",
-        { key, className: "md-table-container" },
-        createElement(
-          "table",
-          { className: "md-table" },
-          // Header
-          createElement(
-            "thead",
-            null,
-            createElement(
-              "tr",
-              null,
-              ...node.headers.map((headerCells, colIndex) =>
-                createElement(
-                  "th",
-                  { key: colIndex, className: getAlignClass(node.alignments[colIndex]) },
-                  ...headerCells.map((child, i) => renderInlineNode(child, i))
-                )
-              )
-            )
-          ),
-          // Body
-          createElement(
-            "tbody",
-            null,
-            ...node.rows.map((row, rowIndex) =>
-              createElement(
-                "tr",
-                { key: rowIndex },
-                ...row.map((cellNodes, colIndex) =>
-                  createElement(
-                    "td",
-                    { key: colIndex, className: getAlignClass(node.alignments[colIndex]) },
-                    ...cellNodes.map((child, i) => renderInlineNode(child, i))
-                  )
-                )
-              )
-            )
-          )
-        )
-      );
+      return createElement(TableBlock, {
+        key,
+        headers: node.headers,
+        alignments: node.alignments,
+        rows: node.rows,
+        renderInline: renderInlineNode,
+      });
     }
+
+    case "hr":
+      return createElement("hr", { key, className: "md-hr" });
 
     default:
       return null;

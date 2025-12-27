@@ -104,6 +104,30 @@ export const chatAnimations = `
 .md-table-container {
     overflow-x: auto;
     margin: 12px 0;
+    position: relative;
+}
+
+.md-table-header {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: 4px;
+}
+
+.md-table-copy-btn {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 8px;
+    font-size: 12px;
+    color: var(--orca-color-text-secondary, #666);
+    cursor: pointer;
+    border-radius: 4px;
+    transition: background 0.2s, color 0.2s;
+}
+
+.md-table-copy-btn:hover {
+    background: var(--orca-color-bg-hover, rgba(128, 128, 128, 0.1));
+    color: var(--orca-color-text, inherit);
 }
 
 .md-table {
@@ -141,6 +165,16 @@ export const chatAnimations = `
 
 .md-table .align-right {
     text-align: right;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Horizontal Rule
+   ─────────────────────────────────────────────────────────────────────────── */
+
+.md-hr {
+    border: none;
+    border-top: 1px solid var(--orca-color-border, rgba(128, 128, 128, 0.3));
+    margin: 16px 0;
 }
 `;
 
