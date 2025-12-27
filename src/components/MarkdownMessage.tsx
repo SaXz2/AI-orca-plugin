@@ -87,31 +87,49 @@ function TableBlock({
   rows: MarkdownInlineNode[][][];
   renderInline: (node: MarkdownInlineNode, key: number) => any;
 }) {
-  const [copied, setCopied] = useState(false);
+  const [copyFormat, setCopyFormat] = useState(null as "md" | "logseq" | null);
 
-  // Convert table to plain text for copying
-  const getTableText = (): string => {
-    const getTextFromNodes = (nodes: MarkdownInlineNode[]): string => {
-      return nodes.map(n => {
-        if (n.type === "text") return n.content;
-        if (n.type === "code") return n.content;
-        if (n.type === "bold" || n.type === "italic" || n.type === "link") {
-          return getTextFromNodes(n.children);
-        }
-        return "";
-      }).join("");
-    };
-
-    const headerRow = headers.map(h => getTextFromNodes(h)).join("\t");
-    const dataRows = rows.map(row => row.map(cell => getTextFromNodes(cell)).join("\t")).join("\n");
-    return headerRow + "\n" + dataRows;
+  const getTextFromNodes = (nodes: MarkdownInlineNode[]): string => {
+    return nodes.map(n => {
+      if (n.type === "text") return n.content;
+      if (n.type === "code") return `\`${n.content}\``;
+      if (n.type === "bold") return `**${getTextFromNodes(n.children)}**`;
+      if (n.type === "italic") return `*${getTextFromNodes(n.children)}*`;
+      if (n.type === "link") return getTextFromNodes(n.children);
+      return "";
+    }).join("");
   };
 
-  const handleCopy = async () => {
+  // Markdown table format
+  const getMarkdownTable = (): string => {
+    const headerRow = "| " + headers.map(h => getTextFromNodes(h)).join(" | ") + " |";
+    const separatorRow = "| " + alignments.map(a => {
+      if (a === "center") return ":---:";
+      if (a === "right") return "---:";
+      return "---";
+    }).join(" | ") + " |";
+    const dataRows = rows.map(row => 
+      "| " + row.map(cell => getTextFromNodes(cell)).join(" | ") + " |"
+    ).join("\n");
+    return headerRow + "\n" + separatorRow + "\n" + dataRows;
+  };
+
+  // Logseq outline format
+  const getLogseqOutline = (): string => {
+    const headerTexts = headers.map(h => getTextFromNodes(h));
+    return rows.map(row => {
+      const cells = row.map(cell => getTextFromNodes(cell));
+      const pairs = headerTexts.map((header, i) => `${header}:: ${cells[i] || ""}`);
+      return "- " + pairs.join("\n  ");
+    }).join("\n");
+  };
+
+  const handleCopy = async (format: "md" | "logseq") => {
     try {
-      await navigator.clipboard.writeText(getTableText());
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      const text = format === "md" ? getMarkdownTable() : getLogseqOutline();
+      await navigator.clipboard.writeText(text);
+      setCopyFormat(format);
+      setTimeout(() => setCopyFormat(null), 2000);
     } catch (err) {
       console.error("Failed to copy table:", err);
     }
@@ -126,15 +144,29 @@ function TableBlock({
   return createElement(
     "div",
     { className: "md-table-container" },
-    // Copy button
+    // Copy buttons
     createElement(
       "div",
       { className: "md-table-header" },
       createElement(
         "div",
-        { className: "md-table-copy-btn", onClick: handleCopy },
-        createElement("i", { className: copied ? "ti ti-check" : "ti ti-copy" }),
-        copied ? "Copied!" : "Copy"
+        { 
+          className: `md-table-copy-btn ${copyFormat === "md" ? "copied" : ""}`,
+          onClick: () => handleCopy("md"),
+          title: "复制为 Markdown 表格"
+        },
+        createElement("i", { className: copyFormat === "md" ? "ti ti-check" : "ti ti-table" }),
+        copyFormat === "md" ? "Copied!" : "MD"
+      ),
+      createElement(
+        "div",
+        { 
+          className: `md-table-copy-btn ${copyFormat === "logseq" ? "copied" : ""}`,
+          onClick: () => handleCopy("logseq"),
+          title: "复制为 Logseq 大纲格式"
+        },
+        createElement("i", { className: copyFormat === "logseq" ? "ti ti-check" : "ti ti-list" }),
+        copyFormat === "logseq" ? "Copied!" : "Logseq"
       )
     ),
     // Table
@@ -356,8 +388,27 @@ function renderInlineNode(node: MarkdownInlineNode, key: number): any {
             console.error("[MarkdownMessage] Navigation failed:", error);
           }
         };
+
+        // Check if link text is just a block ID reference (e.g., "块 ID: 123", "Block 123", "blockid:123", or pure number)
+        const linkText = node.children.map(c => c.type === "text" ? c.content : "").join("");
+        const isBlockIdOnly = /^(块\s*ID\s*[:：]?\s*\d+|block\s*#?\d+|Block\s*#?\d+|笔记\s*#?\d+|blockid[:：]?\d+|\d+)$/i.test(linkText.trim());
+
+        // Render as small dot if it's just a block ID reference
+        if (isBlockIdOnly) {
+          return createElement(
+            orca.components.BlockPreviewPopup,
+            { key, blockId, delay: 300 },
+            createElement(
+              "span",
+              {
+                className: "md-block-dot",
+                onClick: handleBlockNavigation,
+              }
+            )
+          );
+        }
         
-        // Wrap with BlockPreviewPopup for hover preview
+        // Wrap with BlockPreviewPopup for hover preview (full link style)
         return createElement(
           orca.components.BlockPreviewPopup,
           { key, blockId, delay: 300 },

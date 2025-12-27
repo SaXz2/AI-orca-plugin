@@ -204,6 +204,10 @@ export const chatAnimations = `
     list-style-type: disc;
 }
 
+.md-list-unordered .md-list-item::marker {
+    font-size: 1.3em;
+}
+
 .md-list-item {
     margin: 6px 0;
     line-height: 1.6;
@@ -211,7 +215,7 @@ export const chatAnimations = `
 }
 
 .md-list-item::marker {
-    color: var(--orca-color-primary, #007bff);
+    color: var(--orca-color-primary-5, var(--orca-color-primary, #007bff));
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -384,6 +388,24 @@ export const chatAnimations = `
 .md-task-link-dot:hover {
     transform: scale(1.3);
     box-shadow: 0 0 8px var(--orca-color-primary, #007bff);
+}
+
+/* Block reference dot (inline) */
+.md-block-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--orca-color-primary-5, var(--orca-color-primary, #007bff));
+    cursor: pointer;
+    vertical-align: super;
+    margin: 0 2px;
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.md-block-dot:hover {
+    transform: scale(1.4);
+    box-shadow: 0 0 8px var(--orca-color-primary-5, var(--orca-color-primary, #007bff));
 }
 
 .md-task-footer {

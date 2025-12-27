@@ -415,7 +415,7 @@ export function parseMarkdown(text: string): MarkdownNode[] {
   return nodes;
 }
 
-function parseInlineMarkdown(text: string, depth = 0): MarkdownInlineNode[] {
+function parseInlineMarkdown(text: string, depth = 0, insideLink = false): MarkdownInlineNode[] {
   if (!text) return [];
   const maxDepth = 10;
 
@@ -462,8 +462,8 @@ function parseInlineMarkdown(text: string, depth = 0): MarkdownInlineNode[] {
       }
     }
 
-    // Link: [label](url)
-    if (ch === "[") {
+    // Link: [label](url) - but not if we're already inside a link
+    if (ch === "[" && !insideLink) {
       const closeBracket = text.indexOf("]", i + 1);
       if (closeBracket !== -1 && text[closeBracket + 1] === "(") {
         const closeParen = text.indexOf(")", closeBracket + 2);
@@ -474,7 +474,7 @@ function parseInlineMarkdown(text: string, depth = 0): MarkdownInlineNode[] {
           nodes.push({
             type: "link",
             url,
-            children: depth < maxDepth ? parseInlineMarkdown(label, depth + 1) : [{ type: "text", content: label }],
+            children: depth < maxDepth ? parseInlineMarkdown(label, depth + 1, true) : [{ type: "text", content: label }],
           });
           i = closeParen + 1;
           continue;
@@ -490,7 +490,7 @@ function parseInlineMarkdown(text: string, depth = 0): MarkdownInlineNode[] {
         flushBuffer();
         nodes.push({
           type: "bold",
-          children: depth < maxDepth ? parseInlineMarkdown(inner, depth + 1) : [{ type: "text", content: inner }],
+          children: depth < maxDepth ? parseInlineMarkdown(inner, depth + 1, insideLink) : [{ type: "text", content: inner }],
         });
         i = end + 2;
         continue;
@@ -517,7 +517,7 @@ function parseInlineMarkdown(text: string, depth = 0): MarkdownInlineNode[] {
           flushBuffer();
           nodes.push({
             type: "italic",
-            children: depth < maxDepth ? parseInlineMarkdown(inner, depth + 1) : [{ type: "text", content: inner }],
+            children: depth < maxDepth ? parseInlineMarkdown(inner, depth + 1, insideLink) : [{ type: "text", content: inner }],
           });
           i = end + 1;
           continue;
@@ -525,37 +525,39 @@ function parseInlineMarkdown(text: string, depth = 0): MarkdownInlineNode[] {
       }
     }
 
-    // Block ID reference: "blockid:123" format
+    // Block ID reference: "blockid:123" format (only outside of links)
     // This is the preferred format for AI to return block references
-    const blockIdMatch = text.slice(i).match(/^blockid:(\d+)/i);
-    if (blockIdMatch) {
-      const blockId = parseInt(blockIdMatch[1], 10);
-      if (blockId > 0) {
-        flushBuffer();
-        nodes.push({
-          type: "link",
-          url: `orca-block:${blockId}`,
-          children: [{ type: "text", content: `块 ID: ${blockId}` }],
-        });
-        i += blockIdMatch[0].length;
-        continue;
+    if (!insideLink) {
+      const blockIdMatch = text.slice(i).match(/^blockid:(\d+)/i);
+      if (blockIdMatch) {
+        const blockId = parseInt(blockIdMatch[1], 10);
+        if (blockId > 0) {
+          flushBuffer();
+          nodes.push({
+            type: "link",
+            url: `orca-block:${blockId}`,
+            children: [{ type: "text", content: `块 ID: ${blockId}` }],
+          });
+          i += blockIdMatch[0].length;
+          continue;
+        }
       }
-    }
 
-    // Block reference: "block #123", "Block 123", "块 #123", "笔记 #123", "(block #123)"
-    // Convert to clickable orca-block links at AST level (safe from code block pollution)
-    const blockRefMatch = text.slice(i).match(/^(?:\(?\s*)(?:block|Block|块|笔记)\s*#?(\d+)(?:\s*\)?)/);
-    if (blockRefMatch) {
-      const blockId = parseInt(blockRefMatch[1], 10);
-      if (blockId > 0) {
-        flushBuffer();
-        nodes.push({
-          type: "link",
-          url: `orca-block:${blockId}`,
-          children: [{ type: "text", content: blockRefMatch[0].trim() }],
-        });
-        i += blockRefMatch[0].length;
-        continue;
+      // Block reference: "block #123", "Block 123", "块 #123", "笔记 #123", "(block #123)"
+      // Convert to clickable orca-block links at AST level (safe from code block pollution)
+      const blockRefMatch = text.slice(i).match(/^(?:\(?\s*)(?:block|Block|块|笔记)\s*#?(\d+)(?:\s*\)?)/);
+      if (blockRefMatch) {
+        const blockId = parseInt(blockRefMatch[1], 10);
+        if (blockId > 0) {
+          flushBuffer();
+          nodes.push({
+            type: "link",
+            url: `orca-block:${blockId}`,
+            children: [{ type: "text", content: blockRefMatch[0].trim() }],
+          });
+          i += blockRefMatch[0].length;
+          continue;
+        }
       }
     }
 
