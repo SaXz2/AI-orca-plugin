@@ -488,18 +488,25 @@ function renderInlineNode(node: MarkdownInlineNode, key: number): any {
         };
 
         // Check if link text is a "meaningless reference" that should be rendered as a dot
-        // Rules:
-        // 1. Pure numbers (e.g., "123", "14817")
-        // 2. Contains block/ID keywords (e.g., "Block 123", "块 ID: 456", "blockid:789")
-        // 3. Contains action words (e.g., "查看详情", "点击跳转", "查看")
+        // Rules (strict):
+        // 1. Pure numbers only (e.g., "123", "14817")
+        // 2. blockid:xxx format (e.g., "blockid:14772")
+        // 3. 块 ID: xxx format (e.g., "块 ID: 14184")
+        // 4. Exact match action words only (e.g., "查看详情", "点击")
+        // Real titles (even short ones like "日记", "想法") should show text
         const linkText = node.children.map(c => c.type === "text" ? c.content : "").join("").trim();
         const isBlockIdOnly = 
-          /^\d+$/.test(linkText) || // Pure numbers
-          /block|块|ID|笔记|blockid/i.test(linkText) || // Block/ID keywords
-          /^(查看|详情|点击|跳转|打开|前往|查看详情|点击查看|查看更多)$/i.test(linkText); // Action words
+          /^\d+$/.test(linkText) || // Pure numbers only
+          /^blockid[:：]?\d+$/i.test(linkText) || // blockid:xxx format
+          /^块\s*ID\s*[:：]?\s*\d+$/i.test(linkText) || // 块 ID: xxx format
+          /^(查看|详情|点击|跳转|打开|前往|查看详情|点击查看|查看更多|View|Click|Open)$/i.test(linkText); // Exact match action words
 
         // Render as small dot if it's just a block ID reference
         if (isBlockIdOnly) {
+          // Use blockId to determine color for visual distinction
+          const dotColors = ["#007bff", "#28a745", "#fd7e14", "#6f42c1", "#e83e8c"];
+          const dotColor = dotColors[blockId % dotColors.length];
+          
           return createElement(
             orca.components.BlockPreviewPopup,
             { key, blockId, delay: 300 },
@@ -507,6 +514,7 @@ function renderInlineNode(node: MarkdownInlineNode, key: number): any {
               "span",
               {
                 className: "md-block-dot",
+                style: { background: dotColor, color: dotColor },
                 onClick: handleBlockNavigation,
               }
             )

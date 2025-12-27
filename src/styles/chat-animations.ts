@@ -534,7 +534,6 @@ export const chatAnimations = `
     width: 8px;
     height: 8px;
     border-radius: 50%;
-    background: var(--orca-color-primary-5, var(--orca-color-primary, #007bff));
     cursor: pointer;
     vertical-align: super;
     margin: 0 2px;
@@ -543,7 +542,7 @@ export const chatAnimations = `
 
 .md-block-dot:hover {
     transform: scale(1.4);
-    box-shadow: 0 0 8px var(--orca-color-primary-5, var(--orca-color-primary, #007bff));
+    box-shadow: 0 0 8px currentColor;
 }
 
 .md-task-footer {
