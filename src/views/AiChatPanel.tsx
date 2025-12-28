@@ -30,8 +30,12 @@ import {
   deleteSession,
   clearAllSessions,
   createNewSession,
+  toggleSessionPinned,
+  renameSession,
+  autoCacheSession,
   type SavedSession,
   type Message,
+  type ImageRef,
 } from "../services/session-service";
 import { sessionStore, updateSessionStore, markSessionSaved, clearSessionStore } from "../store/session-store";
 import { TOOLS, executeTool } from "../services/ai-tools";
@@ -229,6 +233,52 @@ export default function AiChatPanel({ panelId }: PanelProps) {
     handleNewSession();
   }, [handleNewSession]);
 
+  // Toggle session pinned status
+  const handleTogglePin = useCallback(async (sessionId: string) => {
+    await toggleSessionPinned(sessionId);
+    const data = await loadSessions();
+    setSessions(data.sessions);
+  }, []);
+
+  // Rename session
+  const handleRenameSession = useCallback(async (sessionId: string, newTitle: string) => {
+    await renameSession(sessionId, newTitle);
+    const data = await loadSessions();
+    setSessions(data.sessions);
+    // Update current session title if it's the one being renamed
+    if (currentSession.id === sessionId) {
+      setCurrentSession((prev) => ({ ...prev, title: newTitle }));
+    }
+  }, [currentSession.id]);
+
+  // Auto-cache session when messages change (debounced)
+  const autoCacheTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    const hasRealMessages = messages.some((m) => !m.localOnly);
+    if (!hasRealMessages || !sessionsLoaded) return;
+
+    // Debounce auto-cache to avoid too frequent saves
+    if (autoCacheTimeoutRef.current) {
+      clearTimeout(autoCacheTimeoutRef.current);
+    }
+    autoCacheTimeoutRef.current = setTimeout(async () => {
+      const sessionToCache: SavedSession = {
+        ...currentSession,
+        messages,
+        contexts: [...contextStore.selected],
+      };
+      await autoCacheSession(sessionToCache);
+      const data = await loadSessions();
+      setSessions(data.sessions);
+    }, 2000); // 2 second debounce
+
+    return () => {
+      if (autoCacheTimeoutRef.current) {
+        clearTimeout(autoCacheTimeoutRef.current);
+      }
+    };
+  }, [messages, currentSession, sessionsLoaded]);
+
   // Sync state to session store for auto-save on close
   useEffect(() => {
     const hasRealMessages = messages.some((m) => !m.localOnly);
@@ -257,8 +307,8 @@ export default function AiChatPanel({ panelId }: PanelProps) {
   // Chat Send Logic
   // ─────────────────────────────────────────────────────────────────────────
 
-	  async function handleSend(content: string, historyOverride?: Message[]) {
-	    if (!content || sending) return;
+	  async function handleSend(content: string, images?: ImageRef[], historyOverride?: Message[]) {
+	    if ((!content && (!images || images.length === 0)) || sending) return;
 
 	    const pluginName = getAiChatPluginName();
 	    const settings = getAiChatSettings(pluginName);
@@ -393,9 +443,21 @@ export default function AiChatPanel({ panelId }: PanelProps) {
     setSending(true);
 
     // 显示给用户的消息保留原始内容
-    const userMsg: Message = { id: nowId(), role: "user", content, createdAt: Date.now() };
+    const userMsg: Message = { 
+      id: nowId(), 
+      role: "user", 
+      content, 
+      createdAt: Date.now(),
+      images: images && images.length > 0 ? images : undefined,
+    };
     // 发送给 API 的消息使用处理后的内容（去掉指令）
-    const userMsgForApi: Message = { id: userMsg.id, role: "user", content: processedContent, createdAt: userMsg.createdAt };
+    const userMsgForApi: Message = { 
+      id: userMsg.id, 
+      role: "user", 
+      content: processedContent, 
+      createdAt: userMsg.createdAt,
+      images: userMsg.images,
+    };
 
     // Use override if provided (for regeneration), otherwise append to current state
     if (historyOverride) {
@@ -439,13 +501,13 @@ export default function AiChatPanel({ panelId }: PanelProps) {
       // Uses getFullMemoryText which combines portrait (higher priority) + unextracted memories
       const memoryText = memoryStore.getFullMemoryText();
 
-	      const { standard: apiMessages, fallback: apiMessagesFallback } = buildConversationMessages({
-	        messages: conversation,
-	        systemPrompt,
-	        contextText,
-	        customMemory: memoryText,
-	        chatMode: currentChatMode,
-	      });
+      const { standard: apiMessages, fallback: apiMessagesFallback } = await buildConversationMessages({
+        messages: conversation,
+        systemPrompt,
+        contextText,
+        customMemory: memoryText,
+        chatMode: currentChatMode,
+      });
 
       for await (const chunk of streamChatWithRetry(
         {
@@ -573,13 +635,13 @@ export default function AiChatPanel({ panelId }: PanelProps) {
         queueMicrotask(scrollToBottom);
 
         // Build messages for next response including all prior tool results
-	        const { standard, fallback } = buildConversationMessages({
-	          messages: conversation,
-	          systemPrompt,
-	          contextText,
-	          customMemory: memoryText,
-	          chatMode: currentChatMode,
-	        });
+        const { standard, fallback } = await buildConversationMessages({
+          messages: conversation,
+          systemPrompt,
+          contextText,
+          customMemory: memoryText,
+          chatMode: currentChatMode,
+        });
 
         // Create assistant message for next response
         const nextAssistantId = nowId();
@@ -701,10 +763,11 @@ export default function AiChatPanel({ panelId }: PanelProps) {
     }
 
     if (lastUserIdx !== -1) {
-        const content = messages[lastUserIdx].content || "";
+        const lastUserMsg = messages[lastUserIdx];
+        const content = lastUserMsg.content || "";
         const historyBeforeUser = messages.slice(0, lastUserIdx);
         // Resend using the history BEFORE the last user message, and re-using the last user content.
-        handleSend(content, historyBeforeUser);
+        handleSend(content, lastUserMsg.images, historyBeforeUser);
     }
   }, [messages, sending]);
 
@@ -839,6 +902,8 @@ export default function AiChatPanel({ panelId }: PanelProps) {
         onDeleteSession: handleDeleteSession,
         onClearAll: handleClearAllSessions,
         onNewSession: handleNewSession,
+        onTogglePin: handleTogglePin,
+        onRename: handleRenameSession,
       }),
       // More Menu (Save, Settings, Clear)
       createElement(HeaderMenu, {
@@ -867,7 +932,7 @@ export default function AiChatPanel({ panelId }: PanelProps) {
     }),
     // Chat Input
     createElement(ChatInput, {
-      onSend: (text: string) => handleSend(text),
+      onSend: (text: string, images?: ImageRef[]) => handleSend(text, images),
       onStop: stop,
       disabled: sending,
       currentPageId: rootBlockId,

@@ -526,10 +526,10 @@ export const toolStatusRetryButtonStyle: React.CSSProperties = {
 // Message Time Styles
 // ─────────────────────────────────────────────────────────────────────────────
 
-export const messageTimeStyle = (): React.CSSProperties => ({
+export const messageTimeStyle = (role: string): React.CSSProperties => ({
   fontSize: "11px",
   color: "var(--orca-color-text-3)",
   marginTop: "6px",
-  textAlign: "right",
+  textAlign: role === "user" ? "right" : "left",
   userSelect: "none",
 });

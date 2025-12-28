@@ -2,11 +2,13 @@
  * Message Builder Service
  *
  * Builds OpenAI-compatible message arrays with standard and fallback formats.
+ * Supports multimodal messages with images.
  */
 
 import type { OpenAIChatMessage } from "./openai-client";
 import type { Message } from "./session-service";
 import type { ChatMode } from "../store/chat-mode-store";
+import { buildImageContent } from "./image-service";
 
 export interface MessageBuildParams {
   messages: Message[];
@@ -45,7 +47,7 @@ const ASK_MODE_INSTRUCTION = `
 - 专注于提供有帮助的、信息性的回答`;
 
 /**
- * Convert internal Message to OpenAI API format
+ * Convert internal Message to OpenAI API format (sync, text only)
  */
 function messageToApi(m: Message): OpenAIChatMessage {
   const msg: OpenAIChatMessage = {
@@ -58,6 +60,39 @@ function messageToApi(m: Message): OpenAIChatMessage {
     msg.name = m.name;
   }
   return msg;
+}
+
+/**
+ * Convert internal Message to OpenAI API format with image support (async)
+ */
+async function messageToApiWithImages(m: Message): Promise<OpenAIChatMessage> {
+  // Handle messages with images (multimodal)
+  if (m.images && m.images.length > 0 && m.role === "user") {
+    const contentParts: any[] = [];
+    
+    // Add text content if present
+    if (m.content) {
+      contentParts.push({ type: "text", text: m.content });
+    }
+    
+    // Add image content
+    for (const img of m.images) {
+      const imageContent = await buildImageContent(img);
+      if (imageContent) {
+        contentParts.push(imageContent);
+      }
+    }
+    
+    if (contentParts.length > 0) {
+      return {
+        role: "user",
+        content: contentParts as any,
+      };
+    }
+  }
+
+  // Standard text message
+  return messageToApi(m);
 }
 
 /**
@@ -85,26 +120,31 @@ function buildSystemContent(
 /**
  * Build chat messages from full conversation history.
  *
- * Standard format: Preserves OpenAI tool-calling roles/fields.
+ * Standard format: Preserves OpenAI tool-calling roles/fields with image support.
  * Fallback format: Strips tool_calls and converts tool messages into user messages.
  */
-export function buildConversationMessages(params: ConversationBuildParams): {
+export async function buildConversationMessages(params: ConversationBuildParams): Promise<{
   standard: OpenAIChatMessage[];
   fallback: OpenAIChatMessage[];
-} {
+}> {
   const { messages, systemPrompt, contextText, customMemory, chatMode } = params;
 
   const systemContent = buildSystemContent(systemPrompt, contextText, customMemory, chatMode);
-  const history = messages.filter((m) => !m.localOnly).map(messageToApi);
+  const filteredMessages = messages.filter((m) => !m.localOnly);
+  
+  // Build standard format with async image conversion
+  const history = await Promise.all(filteredMessages.map(messageToApiWithImages));
 
   const standard: OpenAIChatMessage[] = [
     ...(systemContent ? [{ role: "system" as const, content: systemContent }] : []),
     ...history,
   ];
 
+  // Build fallback format (sync, no images)
+  const fallbackHistory = filteredMessages.map(messageToApi);
   const fallback: OpenAIChatMessage[] = [
     ...(systemContent ? [{ role: "system" as const, content: systemContent }] : []),
-    ...history.flatMap((m) => {
+    ...fallbackHistory.flatMap((m) => {
       if (m.role === "tool") {
         const toolName = m.name || "tool";
         return [

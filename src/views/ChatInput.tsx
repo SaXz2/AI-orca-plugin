@@ -1,11 +1,13 @@
 /**
  * ChatInput - 整合输入区域组件
- * 包含: Context Chips + @ 触发按钮 + 输入框 + 发送按钮 + 模型选择器
+ * 包含: Context Chips + @ 触发按钮 + 输入框 + 发送按钮 + 模型选择器 + 图片上传
  */
 
 import type { DbId } from "../orca.d.ts";
 import type { AiModelOption } from "../settings/ai-chat-settings";
+import type { ImageRef } from "../services/session-service";
 import { contextStore } from "../store/context-store";
+import { createImageRefFromFile, getImageDisplayUrl, ocrImage } from "../services/image-service";
 import ContextChips from "./ContextChips";
 import ContextPicker from "./ContextPicker";
 import { ModelSelectorButton, InjectionModeSelector, ModeSelectorButton } from "./chat-input";
@@ -42,7 +44,7 @@ const { useSnapshot } = (window as any).Valtio as {
 const { Button, CompositionTextArea } = orca.components;
 
 type Props = {
-  onSend: (message: string) => void;
+  onSend: (message: string, images?: ImageRef[]) => void;
   onStop?: () => void;
   disabled?: boolean;
   currentPageId: DbId | null;
@@ -92,8 +94,11 @@ export default function ChatInput({
   const [isFocused, setIsFocused] = useState(false);
   const [slashMenuOpen, setSlashMenuOpen] = useState(false);
   const [slashMenuIndex, setSlashMenuIndex] = useState(0);
+  const [pendingImages, setPendingImages] = useState<ImageRef[]>([]);
+  const [isUploading, setIsUploading] = useState(false);
   const addContextBtnRef = useRef<HTMLElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const contextSnap = useSnapshot(contextStore);
 
   // 检测是否显示斜杠命令菜单
@@ -117,15 +122,16 @@ export default function ChatInput({
     loadFromStorage();
   }, []);
 
-  const canSend = text.trim().length > 0 && !disabled;
+  const canSend = (text.trim().length > 0 || pendingImages.length > 0) && !disabled;
 
   const handleSend = useCallback(() => {
     const val = textareaRef.current?.value || text;
     const trimmed = val.trim();
-    if (!trimmed || disabled) return;
+    if ((!trimmed && pendingImages.length === 0) || disabled) return;
 
-    onSend(trimmed);
+    onSend(trimmed, pendingImages.length > 0 ? pendingImages : undefined);
     setText("");
+    setPendingImages([]);
     if (textareaRef.current) {
       textareaRef.current.value = "";
     }
@@ -188,6 +194,82 @@ export default function ChatInput({
     setTimeout(() => {
       textareaRef.current?.focus();
     }, 0);
+  }, []);
+
+  // 处理图片文件选择
+  const handleImageSelect = useCallback(async (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    
+    setIsUploading(true);
+    const newImages: ImageRef[] = [];
+    
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      if (file.type.startsWith("image/")) {
+        const imageRef = await createImageRefFromFile(file);
+        if (imageRef) {
+          newImages.push(imageRef);
+        }
+      }
+    }
+    
+    if (newImages.length > 0) {
+      setPendingImages(prev => [...prev, ...newImages]);
+    }
+    setIsUploading(false);
+  }, []);
+
+  // 点击图片按钮
+  const handleImageButtonClick = useCallback(() => {
+    fileInputRef.current?.click();
+  }, []);
+
+  // 移除待发送的图片
+  const handleRemoveImage = useCallback((index: number) => {
+    setPendingImages(prev => prev.filter((_, i) => i !== index));
+  }, []);
+
+  // 处理粘贴事件
+  const handlePaste = useCallback(async (e: ClipboardEvent) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+
+    const imageFiles: File[] = [];
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      if (item.type.startsWith("image/")) {
+        const file = item.getAsFile();
+        if (file) imageFiles.push(file);
+      }
+    }
+
+    if (imageFiles.length > 0) {
+      e.preventDefault();
+      setIsUploading(true);
+      for (const file of imageFiles) {
+        const imageRef = await createImageRefFromFile(file);
+        if (imageRef) {
+          setPendingImages(prev => [...prev, imageRef]);
+        }
+      }
+      setIsUploading(false);
+    }
+  }, []);
+
+  // 处理拖拽
+  const handleDrop = useCallback(async (e: DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    
+    const files = e.dataTransfer?.files;
+    if (files) {
+      await handleImageSelect(files);
+    }
+  }, [handleImageSelect]);
+
+  const handleDragOver = useCallback((e: DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
   }, []);
 
   return createElement(
@@ -266,15 +348,99 @@ export default function ChatInput({
         )
       ),
 
+      // 图片预览区域
+      pendingImages.length > 0 && createElement(
+        "div",
+        {
+          style: {
+            display: "flex",
+            flexWrap: "wrap",
+            gap: "8px",
+            marginBottom: "8px",
+          },
+        },
+        ...pendingImages.map((img, index) =>
+          createElement(
+            "div",
+            {
+              key: `${img.path}-${index}`,
+              style: {
+                position: "relative",
+                width: "60px",
+                height: "60px",
+                borderRadius: "8px",
+                overflow: "hidden",
+                border: "1px solid var(--orca-color-border)",
+              },
+            },
+            createElement("img", {
+              src: getImageDisplayUrl(img),
+              alt: img.name,
+              style: {
+                width: "100%",
+                height: "100%",
+                objectFit: "cover",
+              },
+              onError: (e: any) => {
+                e.target.style.display = "none";
+              },
+            }),
+            createElement(
+              "button",
+              {
+                onClick: () => handleRemoveImage(index),
+                style: {
+                  position: "absolute",
+                  top: "2px",
+                  right: "2px",
+                  width: "18px",
+                  height: "18px",
+                  borderRadius: "50%",
+                  background: "rgba(0,0,0,0.6)",
+                  color: "#fff",
+                  border: "none",
+                  cursor: "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontSize: "10px",
+                },
+                title: "移除图片",
+              },
+              createElement("i", { className: "ti ti-x" })
+            )
+          )
+        ),
+        isUploading && createElement(
+          "div",
+          {
+            style: {
+              width: "60px",
+              height: "60px",
+              borderRadius: "8px",
+              border: "1px dashed var(--orca-color-border)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              color: "var(--orca-color-text-3)",
+            },
+          },
+          createElement("i", { className: "ti ti-loader", style: { animation: "spin 1s linear infinite" } })
+        )
+      ),
+
       // Row 1: TextArea
       createElement(CompositionTextArea as any, {
         ref: textareaRef as any,
-        placeholder: "Ask AI...",
+        placeholder: pendingImages.length > 0 ? "描述图片或直接发送..." : "Ask AI...",
         value: text,
         onChange: (e: any) => setText(e.target.value),
         onKeyDown: handleKeyDown,
         onFocus: () => setIsFocused(true),
         onBlur: () => setIsFocused(false),
+        onPaste: handlePaste,
+        onDrop: handleDrop,
+        onDragOver: handleDragOver,
         disabled,
         style: { ...textareaStyle, width: "100%", background: "transparent", border: "none", padding: 0, minHeight: "24px" },
       }),
@@ -284,7 +450,7 @@ export default function ChatInput({
         "div",
         { style: { display: "flex", justifyContent: "space-between", alignItems: "center" } },
         
-        // Left Tools: @ Button + Model Selector + Injection Mode Selector
+        // Left Tools: @ Button + Image Button + Model Selector + Injection Mode Selector
         createElement(
           "div",
           { style: { display: "flex", gap: 8, alignItems: "center" } },
@@ -303,6 +469,30 @@ export default function ChatInput({
                 style: { padding: "4px" },
               },
               createElement("i", { className: "ti ti-at" })
+            )
+          ),
+          // 图片上传按钮
+          createElement(
+            "div",
+            { style: { display: "flex", alignItems: "center" } },
+            createElement("input", {
+              ref: fileInputRef as any,
+              type: "file",
+              accept: "image/*",
+              multiple: true,
+              style: { display: "none" },
+              onChange: (e: any) => handleImageSelect(e.target.files),
+            }),
+            createElement(
+              Button,
+              {
+                variant: "plain",
+                onClick: handleImageButtonClick,
+                title: "添加图片",
+                style: { padding: "4px" },
+                disabled: isUploading,
+              },
+              createElement("i", { className: isUploading ? "ti ti-loader" : "ti ti-photo" })
             )
           ),
           createElement(ModelSelectorButton, {

@@ -13,6 +13,7 @@ import MarkdownMessage from "../components/MarkdownMessage";
 import ToolStatusIndicator from "../components/ToolStatusIndicator";
 import ExtractMemoryButton from "./ExtractMemoryButton";
 import type { ExtractedMemory } from "../services/memory-extraction";
+import { getImageDisplayUrl } from "../services/image-service";
 import {
   messageRowStyle,
   messageBubbleStyle,
@@ -155,6 +156,52 @@ export default function MessageItem({
       {
         style: messageBubbleStyle(message.role),
       },
+      // 图片显示（如果有）
+      message.images &&
+        message.images.length > 0 &&
+        createElement(
+          "div",
+          {
+            style: {
+              display: "flex",
+              flexWrap: "wrap",
+              gap: "8px",
+              marginBottom: message.content ? "8px" : "0",
+            },
+          },
+          ...message.images.map((img, index) =>
+            createElement(
+              "div",
+              {
+                key: `${img.path}-${index}`,
+                style: {
+                  borderRadius: "8px",
+                  overflow: "hidden",
+                  maxWidth: "200px",
+                  cursor: "pointer",
+                },
+                onClick: () => {
+                  // 点击在系统中打开图片
+                  orca.invokeBackend("shell-open", img.path);
+                },
+                title: img.name,
+              },
+              createElement("img", {
+                src: getImageDisplayUrl(img),
+                alt: img.name,
+                style: {
+                  maxWidth: "100%",
+                  maxHeight: "200px",
+                  objectFit: "contain",
+                  display: "block",
+                },
+                onError: (e: any) => {
+                  e.target.style.display = "none";
+                },
+              })
+            )
+          )
+        ),
       // Content
       createElement(MarkdownMessage, { content: message.content || "", role: message.role }),
 
@@ -185,7 +232,7 @@ export default function MessageItem({
       message.createdAt &&
         createElement(
           "div",
-          { style: messageTimeStyle() },
+          { style: messageTimeStyle(message.role) },
           formatMessageTime(message.createdAt)
         ),
 

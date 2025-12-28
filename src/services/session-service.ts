@@ -3,6 +3,15 @@ import { getAiChatSettings } from "../settings/ai-chat-settings";
 import type { ContextRef } from "../store/context-store";
 
 /**
+ * Image reference for messages (stores path, not base64)
+ */
+export type ImageRef = {
+  path: string; // 本地文件路径
+  name: string; // 文件名
+  mimeType: string; // image/png, image/jpeg 等
+};
+
+/**
  * Message type (same as AiChatPanel)
  */
 export type Message = {
@@ -11,6 +20,7 @@ export type Message = {
   content: string;
   createdAt: number;
   localOnly?: boolean;
+  images?: ImageRef[]; // 图片引用（存路径）
   tool_calls?: Array<{
     id: string;
     type: "function";
@@ -34,6 +44,7 @@ export type SavedSession = {
   contexts: ContextRef[];
   createdAt: number;
   updatedAt: number;
+  pinned?: boolean; // 置顶标记
 };
 
 /**
@@ -157,8 +168,12 @@ export async function saveSession(session: SavedSession): Promise<void> {
     data.sessions.push(sessionToSave);
   }
 
-  // Sort by updatedAt descending (newest first)
-  data.sessions.sort((a, b) => b.updatedAt - a.updatedAt);
+  // Sort: pinned first, then by updatedAt descending
+  data.sessions.sort((a, b) => {
+    if (a.pinned && !b.pinned) return -1;
+    if (!a.pinned && b.pinned) return 1;
+    return b.updatedAt - a.updatedAt;
+  });
 
   // Trim to max sessions
   if (data.sessions.length > maxSessions) {
@@ -255,4 +270,91 @@ export function formatSessionTime(timestamp: number): string {
 
   // Older
   return `${date.getMonth() + 1}月${date.getDate()}日`;
+}
+
+/**
+ * Toggle session pinned status
+ */
+export async function toggleSessionPinned(sessionId: string): Promise<boolean> {
+  const data = await loadSessions();
+  const session = data.sessions.find((s) => s.id === sessionId);
+  if (!session) return false;
+
+  session.pinned = !session.pinned;
+
+  // Re-sort: pinned first, then by updatedAt
+  data.sessions.sort((a, b) => {
+    if (a.pinned && !b.pinned) return -1;
+    if (!a.pinned && b.pinned) return 1;
+    return b.updatedAt - a.updatedAt;
+  });
+
+  await saveSessions(data);
+  console.log("[session-service] Session pinned toggled:", sessionId, session.pinned);
+  return session.pinned;
+}
+
+/**
+ * Rename a session
+ */
+export async function renameSession(sessionId: string, newTitle: string): Promise<void> {
+  const data = await loadSessions();
+  const session = data.sessions.find((s) => s.id === sessionId);
+  if (!session) return;
+
+  session.title = newTitle.trim() || generateSessionTitle(session.messages);
+  await saveSessions(data);
+  console.log("[session-service] Session renamed:", sessionId, session.title);
+}
+
+/**
+ * Auto-cache current session (called on message changes)
+ * This saves without requiring manual action
+ */
+export async function autoCacheSession(session: SavedSession): Promise<void> {
+  const data = await loadSessions();
+  const pluginName = getAiChatPluginName();
+  const settings = getAiChatSettings(pluginName);
+  const maxSessions = settings.maxSavedSessions || 10;
+
+  // Filter out localOnly messages
+  const filteredMessages = session.messages.filter((m) => !m.localOnly);
+
+  // Always cache, even if empty (to preserve session state)
+  const sessionToSave: SavedSession = {
+    ...session,
+    messages: filteredMessages,
+    title: session.title || generateSessionTitle(filteredMessages),
+    updatedAt: Date.now(),
+  };
+
+  // Find existing or add new
+  const existingIndex = data.sessions.findIndex((s) => s.id === session.id);
+  if (existingIndex >= 0) {
+    // Preserve pinned status
+    sessionToSave.pinned = data.sessions[existingIndex].pinned;
+    data.sessions[existingIndex] = sessionToSave;
+  } else {
+    data.sessions.push(sessionToSave);
+  }
+
+  // Sort: pinned first, then by updatedAt
+  data.sessions.sort((a, b) => {
+    if (a.pinned && !b.pinned) return -1;
+    if (!a.pinned && b.pinned) return 1;
+    return b.updatedAt - a.updatedAt;
+  });
+
+  // Trim to max (but don't remove pinned sessions)
+  const pinnedSessions = data.sessions.filter((s) => s.pinned);
+  const unpinnedSessions = data.sessions.filter((s) => !s.pinned);
+  if (unpinnedSessions.length > maxSessions - pinnedSessions.length) {
+    data.sessions = [
+      ...pinnedSessions,
+      ...unpinnedSessions.slice(0, Math.max(1, maxSessions - pinnedSessions.length)),
+    ];
+  }
+
+  data.activeSessionId = session.id;
+  await saveSessions(data);
 }
