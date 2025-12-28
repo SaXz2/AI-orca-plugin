@@ -1012,15 +1012,25 @@ export default function MarkdownMessage({ content, role }: Props) {
   const cleanedContent = useMemo(() => {
     let text = content;
     
-    // 清理引用标注：【引用】、[引用]、（引用）、(引用)
+    // 清理中文方括号引用标注：【引用】
     text = text.replace(/【([^】]+)】/g, '$1');
-    text = text.replace(/\[([^\]]+)\]/g, (match, p1) => {
-      // 保留 Markdown 链接语法 [text](url) 和图片 ![alt](url)
-      if (match.match(/\[([^\]]+)\]\([^)]+\)/)) return match;
+    
+    // 清理英文方括号，但保留 Markdown 语法
+    // 使用更精确的方式：先标记需要保留的，再清理其他的
+    // 保留：[text](url) 链接、![alt](url) 图片、[ ] 和 [x] 任务列表
+    text = text.replace(/\[([^\]]*)\]/g, (match, p1, offset) => {
+      // 检查后面是否跟着 (url) - 这是链接或图片语法
+      const afterMatch = text.slice(offset + match.length);
+      if (afterMatch.startsWith('(')) return match;
+      // 检查前面是否是 ! - 这是图片语法的一部分
+      if (offset > 0 && text[offset - 1] === '!') return match;
       // 保留任务列表 [ ] 和 [x]
       if (p1.trim() === '' || p1.trim().toLowerCase() === 'x') return match;
+      // 其他情况：去掉括号，保留内容
       return p1;
     });
+    
+    // 清理中文圆括号引用标注：（引用）
     text = text.replace(/（([^）]+)）/g, '$1');
     
     return text;
