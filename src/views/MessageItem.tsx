@@ -53,6 +53,7 @@ interface MessageItemProps {
   isStreaming?: boolean;
   onRegenerate?: () => void;
   onDelete?: () => void;
+  onRollback?: () => void; // 回档到此消息（删除此消息及之后的所有消息）
   // Tool result mapping: toolCallId -> result content
   toolResults?: Map<string, { content: string; name: string }>;
   // Conversation context for memory extraction (all messages up to this point)
@@ -112,6 +113,7 @@ export default function MessageItem({
   isStreaming,
   onRegenerate,
   onDelete,
+  onRollback,
   toolResults,
   conversationContext,
   onExtractMemory,
@@ -340,6 +342,18 @@ export default function MessageItem({
               title: "删除此消息",
             },
             createElement("i", { className: "ti ti-trash" })
+          ),
+        // Rollback Button (回档到此消息之前)
+        onRollback &&
+          !isStreaming &&
+          createElement(
+            "button",
+            {
+              style: actionButtonStyle,
+              onClick: onRollback,
+              title: "回档到此处（删除此消息及之后的所有消息）",
+            },
+            createElement("i", { className: "ti ti-arrow-back-up" })
           ),
         // Extract Memory Button (Only for AI messages with content)
         isAssistant &&

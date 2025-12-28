@@ -764,6 +764,15 @@ export default function AiChatPanel({ panelId }: PanelProps) {
     setMessages((prev) => prev.filter((m) => m.id !== messageId));
   }, []);
 
+  // 回档到指定消息（删除该消息及之后的所有消息）
+  const handleRollbackToMessage = useCallback((messageId: string) => {
+    setMessages((prev) => {
+      const index = prev.findIndex((m) => m.id === messageId);
+      if (index <= 0) return prev; // 不能回档到第一条消息之前
+      return prev.slice(0, index);
+    });
+  }, []);
+
   // ─────────────────────────────────────────────────────────────────────────
   // Derived State
   // ─────────────────────────────────────────────────────────────────────────
@@ -834,6 +843,7 @@ export default function AiChatPanel({ panelId }: PanelProps) {
         isStreaming: streamingMessageId === m.id,
         onRegenerate: isLastAi ? handleRegenerate : undefined,
         onDelete: () => handleDeleteMessage(m.id),
+        onRollback: i > 0 ? () => handleRollbackToMessage(m.id) : undefined,
       });
     });
 

@@ -12,6 +12,7 @@
 
 import type { FileRef } from "./session-service";
 import { buildVideoContentForApi, isVideoFile, generateVideoThumbnail } from "./video-service";
+import { parseDocument } from "./document-parser";
 
 /**
  * 文件类型分类
@@ -286,6 +287,29 @@ async function readTextFromPath(filePath: string): Promise<string | null> {
 }
 
 /**
+ * 从文件路径读取二进制内容
+ */
+async function readBinaryFromPath(filePath: string): Promise<ArrayBuffer | null> {
+  try {
+    let fullPath = filePath;
+    if (filePath.startsWith("./") || filePath.startsWith("../")) {
+      const repoDir = orca.state.repoDir;
+      if (repoDir) {
+        const relativePath = filePath.replace(/^\.\//, "");
+        fullPath = `${repoDir}/assets/${relativePath}`;
+      }
+    }
+
+    const response = await fetch(`file:///${fullPath.replace(/\\/g, "/")}`);
+    if (!response.ok) return null;
+    return await response.arrayBuffer();
+  } catch (error) {
+    console.error("[file-service] Failed to read binary from path:", error);
+    return null;
+  }
+}
+
+/**
  * 提取文件的文本内容（用于发送给 AI）
  */
 export async function extractFileContent(fileRef: FileRef): Promise<string | null> {
@@ -301,28 +325,29 @@ export async function extractFileContent(fileRef: FileRef): Promise<string | nul
     }
 
     // 文本类文件直接读取
-    if (["text", "markdown", "code", "csv", "json"].some(
-      type => FILE_TYPE_CONFIGS[type] === config
-    )) {
+    if (
+      ["text", "markdown", "code", "csv", "json"].some((type) => FILE_TYPE_CONFIGS[type] === config)
+    ) {
       const content = await readTextFromPath(fileRef.path);
       if (content) {
         return `[文件: ${fileRef.name}]\n\`\`\`\n${content}\n\`\`\``;
       }
     }
 
-    // PDF、Word、Excel 需要特殊处理
-    // 这里先返回占位符，实际需要后端支持
-    if (config.category === "document" && config !== FILE_TYPE_CONFIGS.text && config !== FILE_TYPE_CONFIGS.markdown) {
-      // 尝试使用 Orca 后端提取
-      try {
-        const result = await orca.invokeBackend("extract-text", fileRef.path);
+    // PDF、Word、Excel 使用前端解析器
+    if (
+      config === FILE_TYPE_CONFIGS.pdf ||
+      config === FILE_TYPE_CONFIGS.word ||
+      config === FILE_TYPE_CONFIGS.excel
+    ) {
+      const arrayBuffer = await readBinaryFromPath(fileRef.path);
+      if (arrayBuffer) {
+        const result = await parseDocument(arrayBuffer, fileRef.name, fileRef.mimeType);
         if (result) {
-          return `[文件: ${fileRef.name}]\n${result}`;
+          return result;
         }
-      } catch {
-        // 后端不支持，返回提示
-        return `[文件: ${fileRef.name}] (无法提取内容，请确保安装了相关解析器)`;
       }
+      return `[文件: ${fileRef.name}] (无法读取文件内容)`;
     }
 
     return null;

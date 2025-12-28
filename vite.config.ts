@@ -21,7 +21,11 @@ export default defineConfig(({ command }) => {
       rollupOptions: {
         external: ["react", "react-dom", "valtio"],
         output: {
-          inlineDynamicImports: true,
+          // 分离文档解析库到单独的 chunk
+          manualChunks: {
+            "document-parsers": ["xlsx", "mammoth", "unpdf"],
+          },
+          chunkFileNames: "[name].js",
         },
       },
     },
