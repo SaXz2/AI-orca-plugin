@@ -58,17 +58,17 @@ const tocFabHoverStyle: React.CSSProperties = {
   boxShadow: "0 6px 16px rgba(0, 0, 0, 0.15)",
 };
 
-// 目录面板 - 磨砂玻璃效果
+// 目录面板 - 磨砂玻璃效果（暗色模式适配）
 const tocPanelStyle: React.CSSProperties = {
   position: "absolute",
   top: "60px",
   right: "-300px",
   width: "280px",
   maxHeight: "calc(100% - 140px)",
-  background: "rgba(var(--orca-color-bg-1-rgb, 255, 255, 255), 0.95)",
+  background: "var(--orca-color-bg-1)",
   backdropFilter: "blur(10px)",
   borderRadius: "16px",
-  boxShadow: "0 0 20px rgba(0, 0, 0, 0.08)",
+  boxShadow: "0 0 20px rgba(0, 0, 0, 0.15)",
   zIndex: 101,
   padding: "0",
   overflow: "hidden",
@@ -121,10 +121,10 @@ const tocListStyle: React.CSSProperties = {
   padding: "8px 10px",
 };
 
-// 用户消息锚点 - 主锚点样式
+// 用户消息锚点 - 主锚点样式（暗色模式适配）
 const tocUserItemStyle: React.CSSProperties = {
   fontWeight: 500,
-  background: "var(--orca-color-bg-2)",
+  background: "var(--orca-color-bg-3)",
   color: "var(--orca-color-text-1)",
   marginTop: "12px",
   marginBottom: "4px",
@@ -375,11 +375,13 @@ export default function ChatNavigation({ messages, listRef, visible = true }: Ch
                     style: tocUserItemStyle,
                     onClick: () => scrollToMessage(item.index),
                     onMouseEnter: (e: any) => {
-                      e.currentTarget.style.background = "var(--orca-color-bg-3)";
+                      e.currentTarget.style.background = "var(--orca-color-primary)";
+                      e.currentTarget.style.color = "#fff";
                       e.currentTarget.style.borderColor = "var(--orca-color-primary)";
                     },
                     onMouseLeave: (e: any) => {
-                      e.currentTarget.style.background = "var(--orca-color-bg-2)";
+                      e.currentTarget.style.background = "var(--orca-color-bg-3)";
+                      e.currentTarget.style.color = "var(--orca-color-text-1)";
                       e.currentTarget.style.borderColor = "var(--orca-color-border)";
                     },
                   },
