@@ -120,9 +120,10 @@ function safeDeltaFromEvent(obj: any): StreamChunk {
   }
 
   // Check for reasoning content (DeepSeek/Claude thinking)
-  // DeepSeek uses reasoning_content, some models use thinking
-  const reasoning = delta?.reasoning_content || delta?.thinking;
+  // DeepSeek uses reasoning_content, some models use thinking or reasoning
+  const reasoning = delta?.reasoning_content || delta?.thinking || delta?.reasoning;
   if (typeof reasoning === "string" && reasoning) {
+    console.log("[safeDeltaFromEvent] Detected reasoning:", reasoning.substring(0, 100));
     return {
       type: "reasoning",
       reasoning,
