@@ -210,6 +210,7 @@ function ReasoningBlock({ reasoning, isStreaming }: { reasoning: string; isStrea
 
 interface MessageItemProps {
   message: Message;
+  messageIndex?: number; // 消息在列表中的索引，用于目录导航
   isLastAiMessage?: boolean;
   isStreaming?: boolean;
   onRegenerate?: () => void;
@@ -393,6 +394,7 @@ function ToolResultItem({ message }: { message: Message }) {
 
 export default function MessageItem({
   message,
+  messageIndex,
   isLastAiMessage,
   isStreaming,
   onRegenerate,
@@ -439,6 +441,8 @@ export default function MessageItem({
     "div",
     {
       style: messageRowStyle(message.role),
+      "data-message-index": messageIndex,
+      "data-message-id": message.id,
       onMouseEnter: () => setIsHovered(true),
       onMouseLeave: () => setIsHovered(false),
     },

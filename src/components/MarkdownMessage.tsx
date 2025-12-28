@@ -875,10 +875,23 @@ function renderBlockNode(node: MarkdownNode, key: number): any {
   switch (node.type) {
     case "heading": {
       const HeadingTag = `h${node.level}` as any;
+      // 生成标题的文本内容用于创建 ID
+      const headingText = node.children
+        .map((c) => (c.type === "text" ? c.content : ""))
+        .join("")
+        .trim();
+      // 创建 slug ID：移除特殊字符，空格转为连字符
+      const headingId = `heading-${headingText
+        .toLowerCase()
+        .replace(/[^\w\u4e00-\u9fa5\s-]/g, "")
+        .replace(/\s+/g, "-")
+        .substring(0, 50)}`;
       return createElement(
         HeadingTag,
         {
           key,
+          id: headingId,
+          "data-heading-text": headingText,
           style: headingStyle(node.level),
         },
         ...node.children.map((child, i) => renderInlineNode(child, i)),

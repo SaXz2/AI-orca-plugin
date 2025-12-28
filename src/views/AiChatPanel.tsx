@@ -1033,6 +1033,7 @@ export default function AiChatPanel({ panelId }: PanelProps) {
         createElement(MessageItem, {
           key: m.id,
           message: m,
+          messageIndex: i,
           isLastAiMessage: isLastAi,
           isStreaming: streamingMessageId === m.id,
           onRegenerate: isLastAi ? handleRegenerate : undefined,

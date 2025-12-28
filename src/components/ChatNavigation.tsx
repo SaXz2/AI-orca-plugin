@@ -230,6 +230,7 @@ export default function ChatNavigation({ messages, listRef, visible = true }: Ch
       content: string;
       level?: number;
       messageId: string;
+      headingId?: string; // 标题的 DOM ID，用于精确跳转
     }> = [];
     
     let userCount = 0;
@@ -248,12 +249,19 @@ export default function ChatNavigation({ messages, listRef, visible = true }: Ch
         // 提取 AI 回复中的标题
         const headings = extractHeadings(msg.content);
         headings.forEach((h) => {
+          // 生成与 MarkdownMessage 中相同的 headingId
+          const headingId = `heading-${h.text
+            .toLowerCase()
+            .replace(/[^\w\u4e00-\u9fa5\s-]/g, "")
+            .replace(/\s+/g, "-")
+            .substring(0, 50)}`;
           items.push({
             type: "heading",
             index,
             content: h.text,
             level: h.level,
             messageId: msg.id,
+            headingId,
           });
         });
       }
@@ -282,10 +290,24 @@ export default function ChatNavigation({ messages, listRef, visible = true }: Ch
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [isOpen]);
 
-  // 丝滑滚动到指定消息
-  const scrollToMessage = useCallback((index: number) => {
+  // 丝滑滚动到指定消息或标题
+  const scrollToMessage = useCallback((index: number, headingId?: string) => {
     if (!listRef.current) return;
     
+    // 如果有 headingId，尝试直接跳转到标题元素
+    if (headingId) {
+      const headingElement = listRef.current.querySelector(`#${CSS.escape(headingId)}`);
+      if (headingElement) {
+        headingElement.scrollIntoView({ behavior: "smooth", block: "center" });
+        // 高亮效果
+        headingElement.classList.add("chat-nav-highlight");
+        setTimeout(() => headingElement.classList.remove("chat-nav-highlight"), 1500);
+        setIsOpen(false);
+        return;
+      }
+    }
+    
+    // 回退到消息级别的跳转
     const messageElements = listRef.current.querySelectorAll("[data-message-index]");
     const targetElement = Array.from(messageElements).find(
       (el) => el.getAttribute("data-message-index") === String(index)
@@ -394,7 +416,7 @@ export default function ChatNavigation({ messages, listRef, visible = true }: Ch
                   {
                     key: `heading-${item.messageId}-${i}`,
                     style: tocHeadingItemStyle(item.level || 1),
-                    onClick: () => scrollToMessage(item.index),
+                    onClick: () => scrollToMessage(item.index, item.headingId),
                     onMouseEnter: (e: any) => {
                       e.currentTarget.style.background = "var(--orca-color-bg-3)";
                     },
