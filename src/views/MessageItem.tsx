@@ -253,24 +253,25 @@ function CollapsibleToolCalls({
           display: "flex",
           alignItems: "center",
           gap: "6px",
-          padding: "4px 8px",
-          marginBottom: "4px",
-          borderRadius: "4px",
+          padding: "6px 10px",
+          marginBottom: "8px",
+          borderRadius: "6px",
+          background: "var(--orca-color-bg-2)",
+          border: "1px solid var(--orca-color-border)",
           cursor: "pointer",
-          fontSize: "11px",
-          color: "var(--orca-color-text-3)",
+          fontSize: "12px",
+          color: "var(--orca-color-text-2)",
         },
       },
       createElement("i", {
         className: "ti ti-tools",
-        style: { fontSize: "12px" },
+        style: { fontSize: "14px", color: "var(--orca-color-primary)" },
       }),
       `${completedCount} 个工具调用`,
       createElement("i", {
         className: "ti ti-chevron-up",
         style: { fontSize: "12px", marginLeft: "auto" },
-      }),
-      "折叠"
+      })
     );
 
   // 工具调用列表
@@ -288,16 +289,10 @@ function CollapsibleToolCalls({
     {
       style: {
         marginTop: "12px",
-        overflow: "hidden",
       },
     },
     isExpanded
-      ? createElement(
-          "div",
-          null,
-          expandedHeader,
-          ...toolList
-        )
+      ? createElement("div", null, expandedHeader, ...toolList)
       : collapsedHeader
   );
 }
