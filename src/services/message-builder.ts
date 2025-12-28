@@ -194,12 +194,14 @@ export async function buildConversationMessages(params: ConversationBuildParams)
 
 /**
  * Build chat messages for initial API call (before tool execution)
+ * Now async to support file content extraction
  */
-export function buildChatMessages(params: MessageBuildParams): OpenAIChatMessage[] {
+export async function buildChatMessages(params: MessageBuildParams): Promise<OpenAIChatMessage[]> {
   const { messages, userContent, systemPrompt, contextText, customMemory, chatMode } = params;
 
   const systemContent = buildSystemContent(systemPrompt, contextText, customMemory, chatMode);
-  const history = messages.filter((m) => !m.localOnly).map(messageToApi);
+  const filteredMessages = messages.filter((m) => !m.localOnly);
+  const history = await Promise.all(filteredMessages.map(messageToApiWithImages));
 
   return [
     ...(systemContent ? [{ role: "system" as const, content: systemContent }] : []),
@@ -213,11 +215,12 @@ export function buildChatMessages(params: MessageBuildParams): OpenAIChatMessage
  *
  * Standard format: Uses OpenAI's tool/assistant message structure
  * Fallback format: Converts tool results to user messages for incompatible APIs
+ * Now async to support file content extraction
  */
-export function buildMessagesWithToolResults(params: ToolResultParams): {
+export async function buildMessagesWithToolResults(params: ToolResultParams): Promise<{
   standard: OpenAIChatMessage[];
   fallback: OpenAIChatMessage[];
-} {
+}> {
   const {
     messages,
     userContent,
@@ -231,7 +234,8 @@ export function buildMessagesWithToolResults(params: ToolResultParams): {
   } = params;
 
   const systemContent = buildSystemContent(systemPrompt, contextText, customMemory, chatMode);
-  const history = messages.filter((m) => !m.localOnly).map(messageToApi);
+  const filteredMessages = messages.filter((m) => !m.localOnly);
+  const history = await Promise.all(filteredMessages.map(messageToApiWithImages));
 
   // Standard OpenAI format with tool role
   const standard: OpenAIChatMessage[] = [
@@ -252,9 +256,10 @@ export function buildMessagesWithToolResults(params: ToolResultParams): {
   ];
 
   // Fallback format - convert tool results to user message
+  const historySync = filteredMessages.map(messageToApi);
   const fallback: OpenAIChatMessage[] = [
     ...(systemContent ? [{ role: "system" as const, content: systemContent }] : []),
-    ...history.map((m) => {
+    ...historySync.map((m) => {
       // Strip tool_calls from fallback format
       const { tool_calls, ...rest } = m;
       return rest as OpenAIChatMessage;
