@@ -193,6 +193,7 @@ type Props = {
   onClearAll: () => void;
   onNewSession: () => void;
   onTogglePin?: (sessionId: string) => void;
+  onToggleFavorite?: (sessionId: string) => void;
   onRename?: (sessionId: string, newTitle: string) => void;
 };
 
@@ -208,12 +209,14 @@ export default function ChatHistoryMenu({
   onClearAll,
   onNewSession,
   onTogglePin,
+  onToggleFavorite,
   onRename,
 }: Props) {
   const [isOpen, setIsOpen] = useState(false);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const [hoveredId, setHoveredId] = useState<string | null>(null);
+  const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const renameInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -256,6 +259,11 @@ export default function ChatHistoryMenu({
     onTogglePin?.(sessionId);
   }, [onTogglePin]);
 
+  const handleToggleFavorite = useCallback((e: React.MouseEvent, sessionId: string) => {
+    e.stopPropagation();
+    onToggleFavorite?.(sessionId);
+  }, [onToggleFavorite]);
+
   const handleStartRename = useCallback((e: React.MouseEvent, session: SavedSession) => {
     e.stopPropagation();
     setRenamingId(session.id);
@@ -290,9 +298,14 @@ export default function ChatHistoryMenu({
     setIsOpen(false);
   }, [onNewSession]);
 
-  // 分组：置顶 + 普通
-  const pinnedSessions = sessions.filter((s) => s.pinned);
-  const normalSessions = sessions.filter((s) => !s.pinned);
+  // 分组：收藏 + 置顶 + 普通
+  const filteredSessions = showFavoritesOnly 
+    ? sessions.filter((s) => s.favorited)
+    : sessions;
+  
+  const favoritedSessions = filteredSessions.filter((s) => s.favorited && !s.pinned);
+  const pinnedSessions = filteredSessions.filter((s) => s.pinned);
+  const normalSessions = filteredSessions.filter((s) => !s.pinned && !s.favorited);
 
   return createElement(
     "div",
@@ -326,24 +339,48 @@ export default function ChatHistoryMenu({
             "历史对话"
           ),
           createElement(
-            "button",
-            {
-              onClick: handleNewSession,
-              title: "新建对话",
-              style: newButtonStyle,
-              onMouseOver: (e: any) => (e.currentTarget.style.opacity = "0.85"),
-              onMouseOut: (e: any) => (e.currentTarget.style.opacity = "1"),
-            },
-            createElement("i", { className: "ti ti-plus", style: { fontSize: 12 } }),
-            "新建"
+            "div",
+            { style: { display: "flex", gap: 4 } },
+            // 收藏筛选按钮
+            createElement(
+              "button",
+              {
+                onClick: () => setShowFavoritesOnly(!showFavoritesOnly),
+                title: showFavoritesOnly ? "显示全部对话" : "只看收藏",
+                style: {
+                  ...newButtonStyle,
+                  background: showFavoritesOnly ? "#fbbf24" : "var(--orca-color-bg-3)",
+                  color: showFavoritesOnly ? "#000" : "var(--orca-color-text-2)",
+                  fontWeight: showFavoritesOnly ? 600 : 400,
+                },
+                onMouseOver: (e: any) => (e.currentTarget.style.opacity = "0.85"),
+                onMouseOut: (e: any) => (e.currentTarget.style.opacity = "1"),
+              },
+              createElement("i", { 
+                className: showFavoritesOnly ? "ti ti-star-filled" : "ti ti-star", 
+                style: { fontSize: 12 } 
+              })
+            ),
+            createElement(
+              "button",
+              {
+                onClick: handleNewSession,
+                title: "新建对话",
+                style: newButtonStyle,
+                onMouseOver: (e: any) => (e.currentTarget.style.opacity = "0.85"),
+                onMouseOut: (e: any) => (e.currentTarget.style.opacity = "1"),
+              },
+              createElement("i", { className: "ti ti-plus", style: { fontSize: 12 } }),
+              "新建"
+            )
           )
         ),
         // Session List
         createElement(
           "div",
           { style: listStyle },
-          sessions.length === 0
-            ? createElement("div", { style: emptyStyle }, "暂无历史对话")
+          filteredSessions.length === 0
+            ? createElement("div", { style: emptyStyle }, showFavoritesOnly ? "暂无收藏对话" : "暂无历史对话")
             : createElement(
                 Fragment,
                 null,
@@ -368,12 +405,33 @@ export default function ChatHistoryMenu({
                       renderSessionItem(session, true)
                     )
                   ),
+                // Favorited sessions (非置顶的收藏)
+                !showFavoritesOnly && favoritedSessions.length > 0 &&
+                  createElement(
+                    "div",
+                    { style: { marginBottom: 8 } },
+                    createElement(
+                      "div",
+                      {
+                        style: {
+                          fontSize: 11,
+                          color: "var(--orca-color-text-3)",
+                          padding: "4px 8px",
+                          fontWeight: 500,
+                        },
+                      },
+                      "⭐ 收藏"
+                    ),
+                    ...favoritedSessions.map((session) =>
+                      renderSessionItem(session, false)
+                    )
+                  ),
                 // Normal sessions
                 normalSessions.length > 0 &&
                   createElement(
                     "div",
                     null,
-                    pinnedSessions.length > 0 &&
+                    (pinnedSessions.length > 0 || favoritedSessions.length > 0) &&
                       createElement(
                         "div",
                         {
@@ -519,6 +577,28 @@ export default function ChatHistoryMenu({
               createElement("i", {
                 className: isPinned ? "ti ti-pinned-off" : "ti ti-pin",
                 style: { fontSize: 14 },
+              })
+            ),
+          // Favorite/Unfavorite
+          onToggleFavorite &&
+            createElement(
+              "button",
+              {
+                style: { ...actionButtonStyle, opacity: isHovered || session.favorited ? 0.6 : 0 },
+                onClick: (e: any) => handleToggleFavorite(e, session.id),
+                title: session.favorited ? "取消收藏" : "收藏",
+                onMouseOver: (e: any) => {
+                  e.currentTarget.style.opacity = "1";
+                  e.currentTarget.style.color = session.favorited ? "#fbbf24" : "var(--orca-color-primary)";
+                },
+                onMouseOut: (e: any) => {
+                  e.currentTarget.style.opacity = session.favorited ? "0.6" : "0.6";
+                  e.currentTarget.style.color = session.favorited ? "#fbbf24" : "var(--orca-color-text-3)";
+                },
+              },
+              createElement("i", {
+                className: session.favorited ? "ti ti-star-filled" : "ti ti-star",
+                style: { fontSize: 14, color: session.favorited ? "#fbbf24" : undefined },
               })
             ),
           // Delete
