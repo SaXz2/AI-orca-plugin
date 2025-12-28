@@ -23,6 +23,38 @@ import {
   iconButtonStyle,
 } from "./card-styles";
 
+// ============================================================================
+// User Tab Styles
+// ============================================================================
+
+const userTabsContainerStyle: React.CSSProperties = {
+  display: "flex",
+  flexWrap: "wrap",
+  gap: "8px",
+  marginTop: "12px",
+};
+
+const userTabStyle: React.CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  gap: "4px",
+  padding: "6px 12px",
+  borderRadius: "6px",
+  border: "1px solid var(--orca-color-border)",
+  background: "var(--orca-color-bg-1)",
+  color: "var(--orca-color-text-2)",
+  fontSize: "13px",
+  cursor: "pointer",
+  transition: "all 0.15s ease",
+};
+
+const userTabActiveStyle: React.CSSProperties = {
+  ...userTabStyle,
+  borderColor: "var(--orca-color-primary, #007bff)",
+  color: "var(--orca-color-primary, #007bff)",
+  fontWeight: 500,
+};
+
 const React = window.React as unknown as {
   createElement: typeof window.React.createElement;
   useState: <T>(initial: T | (() => T)) => [T, (next: T | ((prev: T) => T)) => void];
@@ -245,6 +277,42 @@ export default function UserManagementCard({
     );
   };
 
+  // Render user tabs for quick switching
+  const renderUserTabs = () => {
+    if (users.length <= 1) return null;
+
+    return createElement(
+      "div",
+      { style: userTabsContainerStyle },
+      users.map((user) => {
+        const isActive = user.id === activeUserId;
+        return createElement(
+          "button",
+          {
+            key: user.id,
+            style: isActive ? userTabActiveStyle : userTabStyle,
+            onClick: () => !isActive && onUserChange(user.id),
+            title: user.isDefault ? `${user.name} (默认)` : user.name,
+            onMouseEnter: (e: any) => {
+              if (!isActive) {
+                e.currentTarget.style.background = "var(--orca-color-bg-3)";
+                e.currentTarget.style.borderColor = "var(--orca-color-primary, #007bff)";
+              }
+            },
+            onMouseLeave: (e: any) => {
+              if (!isActive) {
+                e.currentTarget.style.background = "var(--orca-color-bg-1)";
+                e.currentTarget.style.borderColor = "var(--orca-color-border)";
+              }
+            },
+          },
+          createElement("span", null, user.emoji),
+          createElement("span", null, user.name)
+        );
+      })
+    );
+  };
+
   const renderActionButtons = () => {
     if (isEditingUser) return null;
 
@@ -360,6 +428,7 @@ export default function UserManagementCard({
           )
         )
       ),
+      renderUserTabs(),
       renderAddUserForm()
     )
   );

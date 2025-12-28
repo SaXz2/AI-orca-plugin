@@ -57,6 +57,10 @@ interface UserPortraitCardProps {
   onRemoveInfoItemValue?: (categoryId: string, itemId: string, valueIndex: number) => void;
   onUpdateInfoItemValue?: (categoryId: string, itemId: string, valueIndex: number, newValue: string) => void;
   onReorderCategories?: (categoryIds: string[]) => void;
+  // Refresh AI impression
+  onRefreshAIImpression?: () => void;
+  // Track newly added tags for highlighting
+  newTagIds?: Set<string>;
 }
 
 // ============================================================================
@@ -84,6 +88,8 @@ export default function UserPortraitCard({
   onRemoveInfoItemValue,
   onUpdateInfoItemValue,
   onReorderCategories,
+  onRefreshAIImpression,
+  newTagIds,
 }: UserPortraitCardProps) {
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [hoveredTagId, setHoveredTagId] = useState<string | null>(null);
@@ -125,6 +131,14 @@ export default function UserPortraitCard({
     wordBreak: "break-word",
   };
 
+  // New tag style with highlight
+  const newTagStyle: React.CSSProperties = {
+    ...tagStyle,
+    background: "rgba(40, 167, 69, 0.15)",
+    border: "1px solid rgba(40, 167, 69, 0.4)",
+    color: "var(--orca-color-text-1)",
+  };
+
   const tagDeleteBtnStyle: React.CSSProperties = {
     position: "absolute",
     top: "-6px",
@@ -145,18 +159,32 @@ export default function UserPortraitCard({
 
   const renderTag = (tag: PortraitTag) => {
     const isHovered = hoveredTagId === tag.id;
+    const isNew = newTagIds?.has(tag.id);
 
     // Display mode only - AI tags are not editable
     return createElement(
       "div",
       {
         key: tag.id,
-        style: tagStyle,
+        style: isNew ? newTagStyle : tagStyle,
         onMouseEnter: () => setHoveredTagId(tag.id),
         onMouseLeave: () => setHoveredTagId(null),
+        title: isNew ? "新增印象" : undefined,
       },
       createElement("span", null, tag.emoji),
       createElement("span", null, tag.label),
+      isNew && createElement(
+        "span",
+        {
+          style: {
+            marginLeft: "4px",
+            fontSize: "10px",
+            color: "rgba(40, 167, 69, 0.9)",
+            fontWeight: 500,
+          },
+        },
+        "新"
+      ),
       isHovered &&
         createElement(
           "button",
@@ -196,13 +224,63 @@ export default function UserPortraitCard({
       cursor: "pointer",
     };
 
+    const refreshBtnStyle: React.CSSProperties = {
+      display: "inline-flex",
+      alignItems: "center",
+      gap: "4px",
+      padding: "4px 10px",
+      borderRadius: "4px",
+      background: "transparent",
+      border: "1px solid var(--orca-color-border)",
+      fontSize: "13px",
+      color: "var(--orca-color-text-2)",
+      cursor: isGenerating ? "not-allowed" : "pointer",
+      opacity: isGenerating ? 0.6 : 1,
+    };
+
+    const tagsHeaderStyle: React.CSSProperties = {
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "space-between",
+      marginBottom: "8px",
+    };
+
     return createElement(
       "div",
       null,
       createElement(
         "div",
-        { style: { fontSize: "12px", color: "var(--orca-color-text-2)", marginBottom: "8px" } },
-        "AI 印象"
+        { style: tagsHeaderStyle },
+        createElement(
+          "div",
+          { style: { fontSize: "12px", color: "var(--orca-color-text-2)" } },
+          "AI 印象"
+        ),
+        onRefreshAIImpression && createElement(
+          "button",
+          {
+            style: refreshBtnStyle,
+            onClick: isGenerating ? undefined : onRefreshAIImpression,
+            title: isGenerating ? "正在生成..." : "刷新 AI 印象",
+            onMouseEnter: (e: any) => {
+              if (!isGenerating) {
+                e.currentTarget.style.background = "var(--orca-color-bg-3)";
+                e.currentTarget.style.borderColor = "var(--orca-color-primary)";
+                e.currentTarget.style.color = "var(--orca-color-primary)";
+              }
+            },
+            onMouseLeave: (e: any) => {
+              e.currentTarget.style.background = "transparent";
+              e.currentTarget.style.borderColor = "var(--orca-color-border)";
+              e.currentTarget.style.color = "var(--orca-color-text-2)";
+            },
+          },
+          createElement("i", {
+            className: isGenerating ? "ti ti-loader" : "ti ti-refresh",
+            style: isGenerating ? { animation: "spin 1s linear infinite" } : undefined,
+          }),
+          isGenerating ? "生成中" : "刷新"
+        )
       ),
       createElement(
         "div",

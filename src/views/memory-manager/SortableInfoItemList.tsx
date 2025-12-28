@@ -14,10 +14,6 @@ const React = window.React as unknown as {
 };
 const { createElement, useState, useCallback, useRef, useEffect } = React;
 
-// ============================================================================
-// Types
-// ============================================================================
-
 interface SortableInfoItemListProps {
   category: PortraitCategory;
   onReorder: (itemIds: string[]) => void;
@@ -27,10 +23,6 @@ interface SortableInfoItemListProps {
   onRemoveValue: (itemId: string, valueIndex: number) => void;
   onUpdateValue?: (itemId: string, valueIndex: number, newValue: string) => void;
 }
-
-// ============================================================================
-// Styles
-// ============================================================================
 
 const itemContainerStyle: React.CSSProperties = {
   position: "relative",
@@ -62,6 +54,7 @@ const dragHandleStyle: React.CSSProperties = {
   display: "flex",
   alignItems: "center",
 };
+
 
 const itemDeleteBtnStyle: React.CSSProperties = {
   position: "absolute",
@@ -185,9 +178,6 @@ const floatingEditBtnStyle: React.CSSProperties = {
   cursor: "pointer",
 };
 
-// ============================================================================
-// SortableInfoItemList Component
-// ============================================================================
 
 export default function SortableInfoItemList({
   category,
@@ -204,20 +194,19 @@ export default function SortableInfoItemList({
   const [hoveredItemId, setHoveredItemId] = useState<string | null>(null);
   const [addingValueToId, setAddingValueToId] = useState<string | null>(null);
   const [newValue, setNewValue] = useState("");
-  // Editing state: { itemId, valueIndex } where valueIndex 0 = primary value, >0 = additional values
   const [editingValue, setEditingValue] = useState<{ itemId: string; valueIndex: number } | null>(null);
   const [editingText, setEditingText] = useState("");
-  // Label editing state
   const [editingLabelItemId, setEditingLabelItemId] = useState<string | null>(null);
   const [editingLabelText, setEditingLabelText] = useState("");
+  // Value chip drag state
+  const [draggedValueInfo, setDraggedValueInfo] = useState<{ itemId: string; valueIndex: number } | null>(null);
+  const [dropValueTarget, setDropValueTarget] = useState<{ itemId: string; valueIndex: number } | null>(null);
   const labelInputRef = useRef<HTMLInputElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
-  const editInputRef = useRef<HTMLInputElement | null>(null);
+  const editInputRef = useRef<HTMLTextAreaElement | null>(null);
 
   useEffect(() => {
-    if (addingValueToId && inputRef.current) {
-      inputRef.current.focus();
-    }
+    if (addingValueToId && inputRef.current) inputRef.current.focus();
   }, [addingValueToId]);
 
   useEffect(() => {
@@ -235,34 +224,30 @@ export default function SortableInfoItemList({
   }, [editingLabelItemId]);
 
   const handleDragStart = useCallback((e: React.DragEvent, itemId: string) => {
+    // If value is being dragged, don't start item drag
+    if (draggedValueInfo) {
+      e.preventDefault();
+      return;
+    }
     setDraggedId(itemId);
     e.dataTransfer.effectAllowed = "move";
     e.dataTransfer.setData("text/plain", itemId);
-  }, []);
+  }, [draggedValueInfo]);
 
   const handleDragEnd = useCallback(() => {
     if (draggedId && dropTargetId && dropPosition) {
       const items = category.items;
       const draggedIndex = items.findIndex(item => item.id === draggedId);
       let targetIndex = items.findIndex(item => item.id === dropTargetId);
-
       if (draggedIndex !== -1 && targetIndex !== -1 && draggedIndex !== targetIndex) {
-        // Adjust target index based on drop position
-        if (dropPosition === "after") {
-          targetIndex += 1;
-        }
-        // If dragging from before target, adjust
-        if (draggedIndex < targetIndex) {
-          targetIndex -= 1;
-        }
-
+        if (dropPosition === "after") targetIndex += 1;
+        if (draggedIndex < targetIndex) targetIndex -= 1;
         const newItems = [...items];
         const [removed] = newItems.splice(draggedIndex, 1);
         newItems.splice(targetIndex, 0, removed);
         onReorder(newItems.map(item => item.id));
       }
     }
-
     setDraggedId(null);
     setDropTargetId(null);
     setDropPosition(null);
@@ -272,30 +257,19 @@ export default function SortableInfoItemList({
     e.preventDefault();
     e.stopPropagation();
     e.dataTransfer.dropEffect = "move";
-
     if (itemId === draggedId) {
       setDropTargetId(null);
       setDropPosition(null);
       return;
     }
-
     const rect = e.currentTarget.getBoundingClientRect();
     const midY = rect.top + rect.height / 2;
     const position = e.clientY < midY ? "before" : "after";
-
     if (dropTargetId !== itemId || dropPosition !== position) {
       setDropTargetId(itemId);
       setDropPosition(position);
     }
   }, [draggedId, dropTargetId, dropPosition]);
-
-  const handleDragLeave = useCallback((e: React.DragEvent) => {
-    // Only clear if leaving the actual target, not entering a child
-    const relatedTarget = e.relatedTarget as HTMLElement;
-    if (!e.currentTarget.contains(relatedTarget)) {
-      // Don't clear immediately, let dragOver on another item set new target
-    }
-  }, []);
 
   const handleAddValue = useCallback((itemId: string) => {
     if (newValue.trim()) {
@@ -306,12 +280,8 @@ export default function SortableInfoItemList({
   }, [newValue, onAddValue]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent, itemId: string) => {
-    if (e.key === "Enter") {
-      handleAddValue(itemId);
-    } else if (e.key === "Escape") {
-      setNewValue("");
-      setAddingValueToId(null);
-    }
+    if (e.key === "Enter") handleAddValue(itemId);
+    else if (e.key === "Escape") { setNewValue(""); setAddingValueToId(null); }
   }, [handleAddValue]);
 
   const handleStartEditValue = useCallback((itemId: string, valueIndex: number, currentValue: string) => {
@@ -320,25 +290,13 @@ export default function SortableInfoItemList({
   }, []);
 
   const handleSaveEditValue = useCallback(() => {
-    if (editingValue && editingText.trim()) {
-      if (onUpdateValue) {
-        onUpdateValue(editingValue.itemId, editingValue.valueIndex, editingText.trim());
-      }
-      setEditingValue(null);
-      setEditingText("");
+    if (editingValue && editingText.trim() && onUpdateValue) {
+      onUpdateValue(editingValue.itemId, editingValue.valueIndex, editingText.trim());
     }
+    setEditingValue(null);
+    setEditingText("");
   }, [editingValue, editingText, onUpdateValue]);
 
-  const handleEditKeyDown = useCallback((e: React.KeyboardEvent) => {
-    if (e.key === "Enter") {
-      handleSaveEditValue();
-    } else if (e.key === "Escape") {
-      setEditingValue(null);
-      setEditingText("");
-    }
-  }, [handleSaveEditValue]);
-
-  // Label editing handlers
   const handleStartEditLabel = useCallback((itemId: string, currentLabel: string) => {
     setEditingLabelItemId(itemId);
     setEditingLabelText(currentLabel);
@@ -346,7 +304,6 @@ export default function SortableInfoItemList({
 
   const handleSaveEditLabel = useCallback((item: PortraitInfoItem) => {
     if (editingLabelItemId) {
-      // Call onEditItem with updated label but same value
       onEditItem(editingLabelItemId, editingLabelText.trim(), item.value);
       setEditingLabelItemId(null);
       setEditingLabelText("");
@@ -354,14 +311,81 @@ export default function SortableInfoItemList({
   }, [editingLabelItemId, editingLabelText, onEditItem]);
 
   const handleLabelKeyDown = useCallback((e: React.KeyboardEvent, item: PortraitInfoItem) => {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      handleSaveEditLabel(item);
-    } else if (e.key === "Escape") {
-      setEditingLabelItemId(null);
-      setEditingLabelText("");
-    }
+    if (e.key === "Enter") { e.preventDefault(); handleSaveEditLabel(item); }
+    else if (e.key === "Escape") { setEditingLabelItemId(null); setEditingLabelText(""); }
   }, [handleSaveEditLabel]);
+
+  // Value chip drag handlers
+  const handleValueDragStart = useCallback((e: React.DragEvent, itemId: string, valueIndex: number) => {
+    e.stopPropagation();
+    // Prevent parent item drag
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("application/value-drag", `${itemId}:${valueIndex}`);
+    setDraggedValueInfo({ itemId, valueIndex });
+  }, []);
+
+  const handleValueDragEnd = useCallback(() => {
+    if (draggedValueInfo && dropValueTarget && onUpdateValue) {
+      const { itemId: fromItemId, valueIndex: fromIndex } = draggedValueInfo;
+      const { itemId: toItemId, valueIndex: toIndex } = dropValueTarget;
+      
+      // Only handle reordering within the same item for now
+      if (fromItemId === toItemId && fromIndex !== toIndex) {
+        const item = category.items.find(i => i.id === fromItemId);
+        if (item) {
+          const allValues = [item.value, ...(item.values || [])];
+          const [movedValue] = allValues.splice(fromIndex, 1);
+          allValues.splice(toIndex, 0, movedValue);
+          
+          // Update primary value and additional values
+          const newPrimaryValue = allValues[0];
+          const newAdditionalValues = allValues.slice(1);
+          
+          // Update via onEditItem for primary value change
+          onEditItem(fromItemId, item.label, newPrimaryValue);
+          
+          // Clear and re-add additional values
+          // First remove all additional values
+          const currentValues = item.values || [];
+          for (let i = currentValues.length - 1; i >= 0; i--) {
+            onRemoveValue(fromItemId, i);
+          }
+          // Then add new additional values
+          for (const val of newAdditionalValues) {
+            onAddValue(fromItemId, val);
+          }
+        }
+      }
+    }
+    setDraggedValueInfo(null);
+    setDropValueTarget(null);
+  }, [draggedValueInfo, dropValueTarget, category.items, onEditItem, onAddValue, onRemoveValue, onUpdateValue]);
+
+  const handleValueDragOver = useCallback((e: React.DragEvent, itemId: string, valueIndex: number) => {
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = "move";
+    
+    if (!draggedValueInfo) return;
+    if (draggedValueInfo.itemId !== itemId) return; // Only allow within same item
+    if (draggedValueInfo.valueIndex === valueIndex) {
+      setDropValueTarget(null);
+      return;
+    }
+    
+    setDropValueTarget({ itemId, valueIndex });
+  }, [draggedValueInfo]);
+
+  // Value drop indicator style
+  const valueDropIndicatorStyle: React.CSSProperties = {
+    width: "3px",
+    height: "20px",
+    background: "var(--orca-color-primary, #007bff)",
+    borderRadius: "2px",
+    boxShadow: "0 0 4px var(--orca-color-primary, #007bff)",
+    flexShrink: 0,
+  };
+
 
   const renderItem = (item: PortraitInfoItem) => {
     const isDragging = draggedId === item.id;
@@ -380,47 +404,34 @@ export default function SortableInfoItemList({
     return createElement(
       "div",
       { key: item.id },
-      // Drop indicator before
       isDropTarget && dropPosition === "before" && createElement("div", { style: dropIndicatorStyle }),
       createElement(
         "div",
         {
           style: containerStyle,
-          draggable: true,
+          draggable: !draggedValueInfo, // Disable item drag when value is being dragged
           onDragStart: (e: any) => handleDragStart(e, item.id),
           onDragEnd: handleDragEnd,
-          onDragOver: (e: any) => handleDragOver(e, item.id),
-          onDragLeave: handleDragLeave,
+          onDragOver: (e: any) => {
+            // Only handle item drag over if not dragging a value
+            if (!draggedValueInfo) {
+              handleDragOver(e, item.id);
+            }
+          },
           onMouseEnter: () => setHoveredItemId(item.id),
           onMouseLeave: () => setHoveredItemId(null),
         },
-        // Delete button
-        isHovered &&
-          createElement(
-            "button",
-            {
-              style: itemDeleteBtnStyle,
-              onClick: (e: any) => {
-                e.stopPropagation();
-                onDeleteItem(item.id);
-              },
-              title: "删除",
-            },
-            createElement("i", { className: "ti ti-x" })
-          ),
-        // Item header
+        isHovered && createElement(
+          "button",
+          { style: itemDeleteBtnStyle, onClick: (e: any) => { e.stopPropagation(); onDeleteItem(item.id); }, title: "删除" },
+          createElement("i", { className: "ti ti-x" })
+        ),
         createElement(
           "div",
           { style: itemHeaderStyle },
-          // Drag handle
-          createElement(
-            "div",
-            { style: dragHandleStyle },
-            createElement("i", { className: "ti ti-grip-vertical" })
-          ),
-          // Label (editable inline)
-          item.label
-            ? editingLabelItemId === item.id
+          createElement("div", { style: dragHandleStyle }, createElement("i", { className: "ti ti-grip-vertical" })),
+          item.label ? (
+            editingLabelItemId === item.id
               ? createElement("input", {
                   ref: labelInputRef,
                   type: "text",
@@ -429,44 +440,31 @@ export default function SortableInfoItemList({
                   onKeyDown: (e: any) => handleLabelKeyDown(e, item),
                   onBlur: () => handleSaveEditLabel(item),
                   onClick: (e: any) => e.stopPropagation(),
-                  style: {
-                    color: "var(--orca-color-text-2)",
-                    fontWeight: 500,
-                    background: "var(--orca-color-bg-1)",
-                    border: "1px solid var(--orca-color-primary)",
-                    borderRadius: "4px",
-                    padding: "2px 6px",
-                    fontSize: "13px",
-                    outline: "none",
-                    minWidth: "60px",
-                  },
+                  style: { color: "var(--orca-color-text-2)", fontWeight: 500, background: "var(--orca-color-bg-1)", border: "1px solid var(--orca-color-primary)", borderRadius: "4px", padding: "2px 6px", fontSize: "13px", outline: "none", minWidth: "60px" },
                 })
               : createElement(
                   "span",
-                  {
-                    style: {
-                      color: "var(--orca-color-text-2)",
-                      fontWeight: 500,
-                      cursor: "pointer",
-                    },
-                    onClick: (e: any) => {
-                      e.stopPropagation();
-                      handleStartEditLabel(item.id, item.label);
-                    },
-                    title: "点击编辑标签",
-                  },
-                  `${item.label}：`
+                  { style: { color: "var(--orca-color-text-2)", fontWeight: 500, cursor: "pointer" }, onClick: (e: any) => { e.stopPropagation(); handleStartEditLabel(item.id, item.label); }, title: "点击编辑标签" },
+                  item.label + "："
                 )
-            : null
+          ) : null
         ),
-        // Values list
         createElement(
           "div",
           { style: valuesContainerStyle },
-          allValues.map((value, index) => {
+          allValues.flatMap((value, index) => {
             const isEditing = editingValue?.itemId === item.id && editingValue?.valueIndex === index;
+            const isDraggingValue = draggedValueInfo?.itemId === item.id && draggedValueInfo?.valueIndex === index;
+            const isDropValueTargetHere = dropValueTarget?.itemId === item.id && dropValueTarget?.valueIndex === index;
             
-            return createElement(
+            const elements = [];
+            
+            // Add drop indicator before this value if it's the drop target
+            if (isDropValueTargetHere && draggedValueInfo && draggedValueInfo.valueIndex > index) {
+              elements.push(createElement("div", { key: `indicator-${index}`, style: valueDropIndicatorStyle }));
+            }
+            
+            elements.push(createElement(
               "div",
               {
                 key: index,
@@ -474,164 +472,61 @@ export default function SortableInfoItemList({
                   ...valueChipStyle,
                   position: "relative",
                   background: index === 0 ? "var(--orca-color-bg-1)" : "var(--orca-color-bg-3)",
-                  cursor: "pointer",
-                  borderColor: isEditing ? "var(--orca-color-primary)" : "transparent",
+                  cursor: "grab",
                   border: isEditing ? "1px solid var(--orca-color-primary)" : "1px solid transparent",
+                  opacity: isDraggingValue ? 0.5 : 1,
                 },
+                draggable: !isEditing,
+                onDragStart: (e: any) => handleValueDragStart(e, item.id, index),
+                onDragEnd: handleValueDragEnd,
+                onDragOver: (e: any) => handleValueDragOver(e, item.id, index),
+                onDrop: (e: any) => { e.preventDefault(); e.stopPropagation(); },
               },
-              createElement(
-                "span",
-                {
-                  onClick: (e: any) => {
-                    e.stopPropagation();
-                    handleStartEditValue(item.id, index, value);
-                  },
-                  title: "点击编辑",
-                },
-                value
-              ),
-              index > 0 &&
-                createElement(
-                  "button",
-                  {
-                    style: valueDeleteBtnStyle,
-                    onClick: (e: any) => {
-                      e.stopPropagation();
-                      onRemoveValue(item.id, index - 1);
-                    },
-                    title: "删除",
-                  },
-                  createElement("i", { className: "ti ti-x", style: { fontSize: "10px" } })
-                ),
-              // Floating edit popup
-              isEditing &&
+              createElement("span", { onClick: (e: any) => { e.stopPropagation(); handleStartEditValue(item.id, index, value); }, title: "点击编辑，拖拽排序" }, value),
+              index > 0 && createElement("button", { style: valueDeleteBtnStyle, onClick: (e: any) => { e.stopPropagation(); onRemoveValue(item.id, index - 1); }, title: "删除" }, createElement("i", { className: "ti ti-x", style: { fontSize: "10px" } })),
+              isEditing && createElement(
+                "div",
+                { style: floatingEditStyle, onClick: (e: any) => e.stopPropagation() },
+                createElement("textarea", {
+                  ref: editInputRef,
+                  value: editingText,
+                  onChange: (e: any) => setEditingText(e.target.value),
+                  onKeyDown: (e: any) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSaveEditValue(); } else if (e.key === "Escape") { setEditingValue(null); setEditingText(""); } },
+                  style: floatingEditInputStyle,
+                  placeholder: "输入新值...",
+                }),
                 createElement(
                   "div",
-                  {
-                    style: floatingEditStyle,
-                    onClick: (e: any) => e.stopPropagation(),
-                  },
-                  createElement("textarea", {
-                    ref: editInputRef,
-                    value: editingText,
-                    onChange: (e: any) => setEditingText(e.target.value),
-                    onKeyDown: (e: any) => {
-                      if (e.key === "Enter" && !e.shiftKey) {
-                        e.preventDefault();
-                        handleSaveEditValue();
-                      } else if (e.key === "Escape") {
-                        setEditingValue(null);
-                        setEditingText("");
-                      }
-                    },
-                    style: floatingEditInputStyle,
-                    placeholder: "输入新值...",
-                  }),
-                  createElement(
-                    "div",
-                    { style: floatingEditButtonsStyle },
-                    createElement(
-                      "span",
-                      { style: { fontSize: "11px", color: "var(--orca-color-text-3)", marginRight: "auto" } },
-                      "Enter 保存，Shift+Enter 换行"
-                    ),
-                    createElement(
-                      "button",
-                      {
-                        style: {
-                          ...floatingEditBtnStyle,
-                          background: "var(--orca-color-bg-3)",
-                          color: "var(--orca-color-text-2)",
-                        },
-                        onClick: () => {
-                          setEditingValue(null);
-                          setEditingText("");
-                        },
-                      },
-                      "取消"
-                    ),
-                    createElement(
-                      "button",
-                      {
-                        style: {
-                          ...floatingEditBtnStyle,
-                          background: "var(--orca-color-primary)",
-                          color: "#fff",
-                        },
-                        onClick: handleSaveEditValue,
-                      },
-                      "保存"
-                    )
-                  )
+                  { style: floatingEditButtonsStyle },
+                  createElement("span", { style: { fontSize: "11px", color: "var(--orca-color-text-3)", marginRight: "auto" } }, "Enter 保存，Shift+Enter 换行"),
+                  createElement("button", { style: { ...floatingEditBtnStyle, background: "var(--orca-color-bg-3)", color: "var(--orca-color-text-2)" }, onClick: () => { setEditingValue(null); setEditingText(""); } }, "取消"),
+                  createElement("button", { style: { ...floatingEditBtnStyle, background: "var(--orca-color-primary)", color: "#fff" }, onClick: handleSaveEditValue }, "保存")
                 )
-            );
-          }),
-          // Add value input/button
-          isAddingValue
-            ? createElement("input", {
-                ref: inputRef,
-                type: "text",
-                placeholder: "输入值...",
-                value: newValue,
-                onChange: (e: any) => setNewValue(e.target.value),
-                onKeyDown: (e: any) => handleKeyDown(e, item.id),
-                onBlur: () => {
-                  if (!newValue.trim()) {
-                    setAddingValueToId(null);
-                  }
-                },
-                style: addValueInputStyle,
-              })
-            : createElement(
-                "button",
-                {
-                  style: {
-                    ...valueChipStyle,
-                    background: "transparent",
-                    border: "1px dashed var(--orca-color-border)",
-                    cursor: "pointer",
-                  },
-                  onClick: (e: any) => {
-                    e.stopPropagation();
-                    setAddingValueToId(item.id);
-                  },
-                  title: "添加值",
-                },
-                createElement("i", { className: "ti ti-plus", style: { fontSize: "10px" } })
               )
+            ));
+            
+            // Add drop indicator after this value if it's the drop target
+            if (isDropValueTargetHere && draggedValueInfo && draggedValueInfo.valueIndex < index) {
+              elements.push(createElement("div", { key: `indicator-after-${index}`, style: valueDropIndicatorStyle }));
+            }
+            
+            return elements;
+          }),
+          isAddingValue
+            ? createElement("input", { ref: inputRef, type: "text", placeholder: "输入值...", value: newValue, onChange: (e: any) => setNewValue(e.target.value), onKeyDown: (e: any) => handleKeyDown(e, item.id), onBlur: () => { if (!newValue.trim()) setAddingValueToId(null); }, style: addValueInputStyle })
+            : createElement("button", { style: { ...valueChipStyle, background: "transparent", border: "1px dashed var(--orca-color-border)", cursor: "pointer" }, onClick: (e: any) => { e.stopPropagation(); setAddingValueToId(item.id); }, title: "添加值" }, createElement("i", { className: "ti ti-plus", style: { fontSize: "10px" } }))
         )
       ),
-      // Drop indicator after
       isDropTarget && dropPosition === "after" && createElement("div", { style: dropIndicatorStyle })
     );
   };
 
-  if (category.items.length === 0) {
-    return null;
-  }
-
-  // Overlay style for clicking outside to close
-  const overlayStyle: React.CSSProperties = {
-    position: "fixed",
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    zIndex: 99,
-  };
+  if (category.items.length === 0) return null;
 
   return createElement(
     "div",
     { style: { display: "flex", flexDirection: "column", position: "relative" } },
-    // Invisible overlay to catch clicks outside when editing
-    editingValue &&
-      createElement("div", {
-        style: overlayStyle,
-        onClick: () => {
-          setEditingValue(null);
-          setEditingText("");
-        },
-      }),
+    editingValue && createElement("div", { style: { position: "fixed", top: 0, left: 0, right: 0, bottom: 0, zIndex: 99 }, onClick: () => { setEditingValue(null); setEditingText(""); } }),
     category.items.map(renderItem)
   );
 }
