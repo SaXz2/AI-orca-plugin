@@ -11,7 +11,7 @@
  */
 
 import type { FileRef } from "./session-service";
-import { buildVideoContentForApi, isVideoFile } from "./video-service";
+import { buildVideoContentForApi, isVideoFile, generateVideoThumbnail } from "./video-service";
 
 /**
  * 文件类型分类
@@ -359,13 +359,23 @@ export async function uploadFile(file: File): Promise<FileRef | null> {
     );
 
     if (assetPath) {
-      return {
+      const fileRef: FileRef = {
         path: assetPath,
         name: file.name,
         mimeType: file.type || "application/octet-stream",
         size: file.size,
         category: config.category,
       };
+
+      // 为视频生成缩略图
+      if (config.category === "video") {
+        const thumbnail = await generateVideoThumbnail(file);
+        if (thumbnail) {
+          fileRef.thumbnail = thumbnail;
+        }
+      }
+
+      return fileRef;
     }
   } catch (error) {
     console.error("[file-service] Failed to upload file:", error);

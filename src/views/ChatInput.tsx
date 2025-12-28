@@ -379,28 +379,30 @@ export default function ChatInput({
           ...pendingFiles.map((file, index) => {
             const isImage = file.category === "image";
             const isVideo = file.category === "video";
+            const hasPreview = isImage || (isVideo && file.thumbnail);
             return createElement(
               "div",
               {
                 key: `${file.path}-${index}`,
                 style: {
                   position: "relative",
-                  width: isImage ? "60px" : "auto",
-                  height: isImage ? "60px" : "auto",
-                  minWidth: isImage ? undefined : "80px",
-                  maxWidth: isImage ? undefined : "150px",
+                  width: hasPreview ? "60px" : "auto",
+                  height: hasPreview ? "60px" : "auto",
+                  minWidth: hasPreview ? undefined : "80px",
+                  maxWidth: hasPreview ? undefined : "150px",
                   borderRadius: "8px",
                   overflow: "hidden",
                   border: "1px solid var(--orca-color-border)",
-                  background: isImage ? undefined : "var(--orca-color-bg-3)",
-                  padding: isImage ? undefined : "8px 12px",
+                  background: hasPreview ? undefined : "var(--orca-color-bg-3)",
+                  padding: hasPreview ? undefined : "8px 12px",
                   display: "flex",
-                  flexDirection: isImage ? undefined : "column",
+                  flexDirection: hasPreview ? undefined : "column",
                   alignItems: "center",
                   justifyContent: "center",
-                  gap: isImage ? undefined : "4px",
+                  gap: hasPreview ? undefined : "4px",
                 },
               },
+              // 图片预览
               isImage
                 ? createElement("img", {
                     src: getFileDisplayUrl(file),
@@ -414,6 +416,95 @@ export default function ChatInput({
                       e.target.style.display = "none";
                     },
                   })
+              // 视频缩略图预览
+              : isVideo && file.thumbnail
+                ? [
+                    createElement("img", {
+                      key: "thumb",
+                      src: `data:image/jpeg;base64,${file.thumbnail}`,
+                      alt: file.name,
+                      style: {
+                        width: "100%",
+                        height: "100%",
+                        objectFit: "cover",
+                      },
+                    }),
+                    // 视频播放图标
+                    createElement("div", {
+                      key: "play-icon",
+                      style: {
+                        position: "absolute",
+                        top: "50%",
+                        left: "50%",
+                        transform: "translate(-50%, -50%)",
+                        width: "24px",
+                        height: "24px",
+                        borderRadius: "50%",
+                        background: "rgba(0,0,0,0.6)",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        pointerEvents: "none",
+                      },
+                    }, createElement("i", { 
+                      className: "ti ti-player-play-filled", 
+                      style: { color: "#fff", fontSize: "12px" } 
+                    })),
+                    // 视频模式切换按钮
+                    createElement(
+                      "div",
+                      {
+                        key: "video-mode",
+                        style: {
+                          position: "absolute",
+                          bottom: "2px",
+                          left: "2px",
+                          display: "flex",
+                          gap: "2px",
+                        },
+                      },
+                      createElement(
+                        "button",
+                        {
+                          onClick: (e: any) => {
+                            e.stopPropagation();
+                            handleSetVideoMode(index, "full");
+                          },
+                          style: {
+                            padding: "2px 4px",
+                            fontSize: "9px",
+                            border: "none",
+                            borderRadius: "3px",
+                            cursor: "pointer",
+                            background: file.videoMode !== "audio-only" ? "var(--orca-color-primary)" : "rgba(0,0,0,0.5)",
+                            color: "#fff",
+                          },
+                          title: "完整识别（画面+音频）",
+                        },
+                        "全"
+                      ),
+                      createElement(
+                        "button",
+                        {
+                          onClick: (e: any) => {
+                            e.stopPropagation();
+                            handleSetVideoMode(index, "audio-only");
+                          },
+                          style: {
+                            padding: "2px 4px",
+                            fontSize: "9px",
+                            border: "none",
+                            borderRadius: "3px",
+                            cursor: "pointer",
+                            background: file.videoMode === "audio-only" ? "var(--orca-color-primary)" : "rgba(0,0,0,0.5)",
+                            color: "#fff",
+                          },
+                          title: "仅音频识别",
+                        },
+                        "音"
+                      )
+                    ),
+                  ]
                 : [
                     createElement("i", {
                       key: "icon",
@@ -437,7 +528,7 @@ export default function ChatInput({
                       },
                       file.name.length > 12 ? file.name.slice(0, 10) + "..." : file.name
                     ),
-                    // 视频模式切换按钮
+                    // 视频模式切换按钮（无缩略图时）
                     isVideo &&
                       createElement(
                         "div",

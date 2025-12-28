@@ -28,6 +28,7 @@ export type FileRef = {
   size?: number; // 文件大小 (bytes)
   category?: "image" | "video" | "audio" | "document" | "code" | "data" | "other"; // 文件分类
   videoMode?: VideoProcessMode; // 视频处理模式：full=完整处理, audio-only=仅音频, frames-only=仅抽帧
+  thumbnail?: string; // 视频缩略图 base64（仅视频）
 };
 
 /**

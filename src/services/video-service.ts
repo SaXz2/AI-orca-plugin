@@ -469,3 +469,80 @@ export function isVideoFile(fileRef: FileRef): boolean {
     fileRef.mimeType.startsWith("video/") ||
     /\.(mp4|webm|mov|avi|mkv|m4v)$/i.test(fileRef.name);
 }
+
+/**
+ * 生成视频缩略图
+ * 从视频第一帧或指定时间点生成缩略图
+ */
+export async function generateVideoThumbnail(
+  videoFile: File,
+  timestamp: number = 0.5,
+  width: number = 120
+): Promise<string | null> {
+  return new Promise((resolve) => {
+    const video = document.createElement("video");
+    video.muted = true;
+    video.preload = "metadata";
+
+    let blobUrl: string | null = null;
+
+    const cleanup = () => {
+      video.remove();
+      if (blobUrl) {
+        URL.revokeObjectURL(blobUrl);
+      }
+    };
+
+    const captureThumb = () => {
+      try {
+        const canvas = document.createElement("canvas");
+        const ctx = canvas.getContext("2d");
+        if (!ctx) {
+          cleanup();
+          resolve(null);
+          return;
+        }
+
+        // 计算缩放尺寸
+        const scale = width / video.videoWidth;
+        canvas.width = width;
+        canvas.height = Math.round(video.videoHeight * scale);
+
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        const dataUrl = canvas.toDataURL("image/jpeg", 0.7);
+        const base64 = dataUrl.split(",")[1];
+
+        cleanup();
+        resolve(base64);
+      } catch (err) {
+        console.error("[video-service] Thumbnail capture failed:", err);
+        cleanup();
+        resolve(null);
+      }
+    };
+
+    video.onloadedmetadata = () => {
+      // 确保时间点在视频范围内
+      const seekTime = Math.min(timestamp, video.duration * 0.1 || 0.5);
+      video.currentTime = seekTime;
+    };
+
+    video.onseeked = captureThumb;
+
+    video.onerror = () => {
+      console.error("[video-service] Video load error for thumbnail");
+      cleanup();
+      resolve(null);
+    };
+
+    // 超时处理
+    setTimeout(() => {
+      cleanup();
+      resolve(null);
+    }, 5000);
+
+    // 加载视频
+    blobUrl = URL.createObjectURL(videoFile);
+    video.src = blobUrl;
+  });
+}
