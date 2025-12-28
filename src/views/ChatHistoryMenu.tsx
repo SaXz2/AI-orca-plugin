@@ -169,7 +169,6 @@ const clearButtonStyle: React.CSSProperties = {
   transition: "all 0.15s",
 };
 
-// 重命名输入框样式
 const renameInputStyle: React.CSSProperties = {
   width: "100%",
   padding: "4px 8px",
@@ -220,22 +219,18 @@ export default function ChatHistoryMenu({
   const menuRef = useRef<HTMLDivElement | null>(null);
   const renameInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Close menu when clicking outside
   useEffect(() => {
     if (!isOpen) return;
-
     const handleClickOutside = (e: MouseEvent) => {
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
         setIsOpen(false);
         setRenamingId(null);
       }
     };
-
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [isOpen]);
 
-  // Focus rename input when editing
   useEffect(() => {
     if (renamingId && renameInputRef.current) {
       renameInputRef.current.focus();
@@ -298,14 +293,157 @@ export default function ChatHistoryMenu({
     setIsOpen(false);
   }, [onNewSession]);
 
-  // 分组：收藏 + 置顶 + 普通
-  const filteredSessions = showFavoritesOnly 
-    ? sessions.filter((s) => s.favorited)
-    : sessions;
+  // 分组逻辑：
+  // - 默认视图：置顶 + 最近（收藏的混在最近里，不单独显示）
+  // - 收藏视图：只显示收藏的对话
+  const pinnedSessions = showFavoritesOnly 
+    ? sessions.filter((s) => s.pinned && s.favorited)
+    : sessions.filter((s) => s.pinned);
   
-  const favoritedSessions = filteredSessions.filter((s) => s.favorited && !s.pinned);
-  const pinnedSessions = filteredSessions.filter((s) => s.pinned);
-  const normalSessions = filteredSessions.filter((s) => !s.pinned && !s.favorited);
+  const normalSessions = showFavoritesOnly
+    ? sessions.filter((s) => s.favorited && !s.pinned)
+    : sessions.filter((s) => !s.pinned);
+  
+  const totalFiltered = pinnedSessions.length + normalSessions.length;
+
+  // 渲染单个会话项
+  function renderSessionItem(session: SavedSession, isPinned: boolean) {
+    const isActive = session.id === activeSessionId;
+    const isHovered = session.id === hoveredId;
+    const isRenaming = session.id === renamingId;
+
+    return createElement(
+      "div",
+      {
+        key: session.id,
+        style: sessionItemStyle(isActive, isPinned),
+        onClick: () => handleSelect(session.id),
+        onMouseEnter: () => setHoveredId(session.id),
+        onMouseLeave: () => setHoveredId(null),
+      },
+      createElement(
+        "div",
+        { style: sessionIconStyle(isPinned) },
+        createElement("i", { className: isPinned ? "ti ti-pin-filled" : "ti ti-message" })
+      ),
+      createElement(
+        "div",
+        { style: sessionContentStyle },
+        isRenaming
+          ? createElement("input", {
+              ref: renameInputRef as any,
+              type: "text",
+              value: renameValue,
+              onChange: (e: any) => setRenameValue(e.target.value),
+              onBlur: handleFinishRename,
+              onKeyDown: handleRenameKeyDown,
+              onClick: (e: any) => e.stopPropagation(),
+              style: renameInputStyle,
+            })
+          : createElement(
+              Fragment,
+              null,
+              createElement("div", { style: sessionTitleStyle }, session.title || "未命名"),
+              createElement(
+                "div",
+                { style: sessionMetaStyle },
+                createElement("span", null, formatSessionTime(session.updatedAt)),
+                createElement("span", null, "·"),
+                createElement("span", null, `${session.messages.length} 条`)
+              )
+            )
+      ),
+      !isRenaming &&
+        createElement(
+          "div",
+          {
+            style: {
+              display: "flex",
+              gap: 2,
+              opacity: isHovered ? 1 : 0,
+              transition: "opacity 0.15s",
+            },
+          },
+          onRename &&
+            createElement(
+              "button",
+              {
+                style: { ...actionButtonStyle, opacity: isHovered ? 0.6 : 0 },
+                onClick: (e: any) => handleStartRename(e, session),
+                title: "重命名",
+                onMouseOver: (e: any) => {
+                  e.currentTarget.style.opacity = "1";
+                  e.currentTarget.style.color = "var(--orca-color-primary)";
+                },
+                onMouseOut: (e: any) => {
+                  e.currentTarget.style.opacity = "0.6";
+                  e.currentTarget.style.color = "var(--orca-color-text-3)";
+                },
+              },
+              createElement("i", { className: "ti ti-edit", style: { fontSize: 14 } })
+            ),
+          onTogglePin &&
+            createElement(
+              "button",
+              {
+                style: { ...actionButtonStyle, opacity: isHovered ? 0.6 : 0 },
+                onClick: (e: any) => handleTogglePin(e, session.id),
+                title: isPinned ? "取消置顶" : "置顶",
+                onMouseOver: (e: any) => {
+                  e.currentTarget.style.opacity = "1";
+                  e.currentTarget.style.color = "var(--orca-color-primary)";
+                },
+                onMouseOut: (e: any) => {
+                  e.currentTarget.style.opacity = "0.6";
+                  e.currentTarget.style.color = "var(--orca-color-text-3)";
+                },
+              },
+              createElement("i", {
+                className: isPinned ? "ti ti-pinned-off" : "ti ti-pin",
+                style: { fontSize: 14 },
+              })
+            ),
+          onToggleFavorite &&
+            createElement(
+              "button",
+              {
+                style: { ...actionButtonStyle, opacity: isHovered || session.favorited ? 0.6 : 0 },
+                onClick: (e: any) => handleToggleFavorite(e, session.id),
+                title: session.favorited ? "取消收藏" : "收藏",
+                onMouseOver: (e: any) => {
+                  e.currentTarget.style.opacity = "1";
+                  e.currentTarget.style.color = session.favorited ? "#fbbf24" : "var(--orca-color-primary)";
+                },
+                onMouseOut: (e: any) => {
+                  e.currentTarget.style.opacity = session.favorited ? "0.6" : "0.6";
+                  e.currentTarget.style.color = session.favorited ? "#fbbf24" : "var(--orca-color-text-3)";
+                },
+              },
+              createElement("i", {
+                className: session.favorited ? "ti ti-star-filled" : "ti ti-star",
+                style: { fontSize: 14, color: session.favorited ? "#fbbf24" : undefined },
+              })
+            ),
+          createElement(
+            "button",
+            {
+              style: { ...actionButtonStyle, opacity: isHovered ? 0.6 : 0 },
+              onClick: (e: any) => handleDelete(e, session.id),
+              title: "删除",
+              onMouseOver: (e: any) => {
+                e.currentTarget.style.opacity = "1";
+                e.currentTarget.style.color = "var(--orca-color-danger, #dc3545)";
+              },
+              onMouseOut: (e: any) => {
+                e.currentTarget.style.opacity = "0.6";
+                e.currentTarget.style.color = "var(--orca-color-text-3)";
+              },
+            },
+            createElement("i", { className: "ti ti-trash", style: { fontSize: 14 } })
+          )
+        )
+    );
+  }
 
   return createElement(
     "div",
@@ -313,7 +451,6 @@ export default function ChatHistoryMenu({
       ref: menuRef as any,
       style: { position: "relative", display: "inline-block" },
     },
-    // Trigger Button
     createElement(
       Button,
       {
@@ -323,12 +460,10 @@ export default function ChatHistoryMenu({
       },
       createElement("i", { className: "ti ti-history" })
     ),
-    // Dropdown Panel
     isOpen &&
       createElement(
         "div",
         { style: panelStyle },
-        // Header
         createElement(
           "div",
           { style: headerStyle },
@@ -341,7 +476,6 @@ export default function ChatHistoryMenu({
           createElement(
             "div",
             { style: { display: "flex", gap: 4 } },
-            // 收藏筛选按钮
             createElement(
               "button",
               {
@@ -375,16 +509,14 @@ export default function ChatHistoryMenu({
             )
           )
         ),
-        // Session List
         createElement(
           "div",
           { style: listStyle },
-          filteredSessions.length === 0
+          totalFiltered === 0
             ? createElement("div", { style: emptyStyle }, showFavoritesOnly ? "暂无收藏对话" : "暂无历史对话")
             : createElement(
                 Fragment,
                 null,
-                // Pinned sessions
                 pinnedSessions.length > 0 &&
                   createElement(
                     "div",
@@ -401,37 +533,13 @@ export default function ChatHistoryMenu({
                       },
                       "📌 置顶"
                     ),
-                    ...pinnedSessions.map((session) =>
-                      renderSessionItem(session, true)
-                    )
+                    ...pinnedSessions.map((session) => renderSessionItem(session, true))
                   ),
-                // Favorited sessions (非置顶的收藏)
-                !showFavoritesOnly && favoritedSessions.length > 0 &&
-                  createElement(
-                    "div",
-                    { style: { marginBottom: 8 } },
-                    createElement(
-                      "div",
-                      {
-                        style: {
-                          fontSize: 11,
-                          color: "var(--orca-color-text-3)",
-                          padding: "4px 8px",
-                          fontWeight: 500,
-                        },
-                      },
-                      "⭐ 收藏"
-                    ),
-                    ...favoritedSessions.map((session) =>
-                      renderSessionItem(session, false)
-                    )
-                  ),
-                // Normal sessions
                 normalSessions.length > 0 &&
                   createElement(
                     "div",
                     null,
-                    (pinnedSessions.length > 0 || favoritedSessions.length > 0) &&
+                    pinnedSessions.length > 0 &&
                       createElement(
                         "div",
                         {
@@ -442,15 +550,12 @@ export default function ChatHistoryMenu({
                             fontWeight: 500,
                           },
                         },
-                        "最近"
+                        showFavoritesOnly ? "⭐ 收藏" : "最近"
                       ),
-                    ...normalSessions.map((session) =>
-                      renderSessionItem(session, false)
-                    )
+                    ...normalSessions.map((session) => renderSessionItem(session, false))
                   )
               )
         ),
-        // Footer
         sessions.length > 0 &&
           createElement(
             "div",
@@ -476,150 +581,4 @@ export default function ChatHistoryMenu({
           )
       )
   );
-
-  // 渲染单个会话项
-  function renderSessionItem(session: SavedSession, isPinned: boolean) {
-    const isActive = session.id === activeSessionId;
-    const isHovered = session.id === hoveredId;
-    const isRenaming = session.id === renamingId;
-
-    return createElement(
-      "div",
-      {
-        key: session.id,
-        style: sessionItemStyle(isActive, isPinned),
-        onClick: () => handleSelect(session.id),
-        onMouseEnter: () => setHoveredId(session.id),
-        onMouseLeave: () => setHoveredId(null),
-      },
-      // Icon
-      createElement(
-        "div",
-        { style: sessionIconStyle(isPinned) },
-        createElement("i", { className: isPinned ? "ti ti-pin-filled" : "ti ti-message" })
-      ),
-      // Content
-      createElement(
-        "div",
-        { style: sessionContentStyle },
-        isRenaming
-          ? createElement("input", {
-              ref: renameInputRef as any,
-              type: "text",
-              value: renameValue,
-              onChange: (e: any) => setRenameValue(e.target.value),
-              onBlur: handleFinishRename,
-              onKeyDown: handleRenameKeyDown,
-              onClick: (e: any) => e.stopPropagation(),
-              style: renameInputStyle,
-            })
-          : createElement(
-              Fragment,
-              null,
-              createElement("div", { style: sessionTitleStyle }, session.title || "未命名"),
-              createElement(
-                "div",
-                { style: sessionMetaStyle },
-                createElement("span", null, formatSessionTime(session.updatedAt)),
-                createElement("span", null, "·"),
-                createElement("span", null, `${session.messages.length} 条`)
-              )
-            )
-      ),
-      // Actions (visible on hover)
-      !isRenaming &&
-        createElement(
-          "div",
-          {
-            style: {
-              display: "flex",
-              gap: 2,
-              opacity: isHovered ? 1 : 0,
-              transition: "opacity 0.15s",
-            },
-          },
-          // Rename
-          onRename &&
-            createElement(
-              "button",
-              {
-                style: { ...actionButtonStyle, opacity: isHovered ? 0.6 : 0 },
-                onClick: (e: any) => handleStartRename(e, session),
-                title: "重命名",
-                onMouseOver: (e: any) => {
-                  e.currentTarget.style.opacity = "1";
-                  e.currentTarget.style.color = "var(--orca-color-primary)";
-                },
-                onMouseOut: (e: any) => {
-                  e.currentTarget.style.opacity = "0.6";
-                  e.currentTarget.style.color = "var(--orca-color-text-3)";
-                },
-              },
-              createElement("i", { className: "ti ti-edit", style: { fontSize: 14 } })
-            ),
-          // Pin/Unpin
-          onTogglePin &&
-            createElement(
-              "button",
-              {
-                style: { ...actionButtonStyle, opacity: isHovered ? 0.6 : 0 },
-                onClick: (e: any) => handleTogglePin(e, session.id),
-                title: isPinned ? "取消置顶" : "置顶",
-                onMouseOver: (e: any) => {
-                  e.currentTarget.style.opacity = "1";
-                  e.currentTarget.style.color = "var(--orca-color-primary)";
-                },
-                onMouseOut: (e: any) => {
-                  e.currentTarget.style.opacity = "0.6";
-                  e.currentTarget.style.color = "var(--orca-color-text-3)";
-                },
-              },
-              createElement("i", {
-                className: isPinned ? "ti ti-pinned-off" : "ti ti-pin",
-                style: { fontSize: 14 },
-              })
-            ),
-          // Favorite/Unfavorite
-          onToggleFavorite &&
-            createElement(
-              "button",
-              {
-                style: { ...actionButtonStyle, opacity: isHovered || session.favorited ? 0.6 : 0 },
-                onClick: (e: any) => handleToggleFavorite(e, session.id),
-                title: session.favorited ? "取消收藏" : "收藏",
-                onMouseOver: (e: any) => {
-                  e.currentTarget.style.opacity = "1";
-                  e.currentTarget.style.color = session.favorited ? "#fbbf24" : "var(--orca-color-primary)";
-                },
-                onMouseOut: (e: any) => {
-                  e.currentTarget.style.opacity = session.favorited ? "0.6" : "0.6";
-                  e.currentTarget.style.color = session.favorited ? "#fbbf24" : "var(--orca-color-text-3)";
-                },
-              },
-              createElement("i", {
-                className: session.favorited ? "ti ti-star-filled" : "ti ti-star",
-                style: { fontSize: 14, color: session.favorited ? "#fbbf24" : undefined },
-              })
-            ),
-          // Delete
-          createElement(
-            "button",
-            {
-              style: { ...actionButtonStyle, opacity: isHovered ? 0.6 : 0 },
-              onClick: (e: any) => handleDelete(e, session.id),
-              title: "删除",
-              onMouseOver: (e: any) => {
-                e.currentTarget.style.opacity = "1";
-                e.currentTarget.style.color = "var(--orca-color-danger, #dc3545)";
-              },
-              onMouseOut: (e: any) => {
-                e.currentTarget.style.opacity = "0.6";
-                e.currentTarget.style.color = "var(--orca-color-text-3)";
-              },
-            },
-            createElement("i", { className: "ti ti-trash", style: { fontSize: 14 } })
-          )
-        )
-    );
-  }
 }
