@@ -17,6 +17,7 @@ import EmptyState from "./EmptyState";
 import LoadingDots from "../components/LoadingDots";
 import MemoryManager from "./MemoryManager";
 import ChatNavigation from "../components/ChatNavigation";
+import FlashcardReview, { type Flashcard } from "../components/FlashcardReview";
 import { injectChatStyles } from "../styles/chat-animations";
 import {
   buildAiModelOptions,
@@ -123,6 +124,10 @@ export default function AiChatPanel({ panelId }: PanelProps) {
   // View mode state for switching between chat and memory manager
   type ViewMode = 'chat' | 'memory-manager';
   const [viewMode, setViewMode] = useState<ViewMode>('chat');
+
+  // Flashcard review state
+  const [flashcardMode, setFlashcardMode] = useState(false);
+  const [pendingFlashcards, setPendingFlashcards] = useState<Flashcard[]>([]);
 
   const listRef = useRef<HTMLDivElement | null>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -445,6 +450,134 @@ export default function AiChatPanel({ panelId }: PanelProps) {
 	      });
 	      
 	      return; // 直接返回，不走 AI
+	    }
+
+	    // /card - 闪卡生成模式（直接进入交互界面，不显示 AI 文本回复）
+	    const isFlashcardMode = content.includes("/card") || content.includes("帮我构建闪卡") || content.includes("生成闪卡");
+	    if (isFlashcardMode) {
+	      // 提取用户指定的主题（如果有）
+	      let cardTopic = processedContent
+	        .replace(/\/card/g, "")
+	        .replace(/帮我构建闪卡/g, "")
+	        .replace(/生成闪卡/g, "")
+	        .trim();
+	      
+	      // 添加用户消息
+	      const userMsg: Message = { 
+	        id: nowId(), 
+	        role: "user", 
+	        content, 
+	        createdAt: Date.now(),
+	      };
+	      setMessages((prev) => [...prev, userMsg]);
+	      
+	      // 设置发送状态，显示加载中
+	      setSending(true);
+	      
+	      // 构建闪卡生成的提示
+	      const { getFlashcardSystemPrompt, parseFlashcards } = await import("../services/flashcard-service");
+	      const flashcardSystemPrompt = systemPrompt + "\n\n" + getFlashcardSystemPrompt();
+	      
+	      let flashcardPrompt = cardTopic 
+	        ? `请结合我们之前的对话，生成关于「${cardTopic}」的闪卡`
+	        : "请根据我们的对话内容生成闪卡";
+	      
+	      // 构建对话历史（用于 AI 理解上下文）
+	      // 过滤掉 localOnly 消息，并添加闪卡请求
+	      const historyMessages = messages.filter((m) => !m.localOnly);
+	      const flashcardRequestMsg: Message = { 
+	        id: nowId(), 
+	        role: "user", 
+	        content: flashcardPrompt, 
+	        createdAt: Date.now() 
+	      };
+	      const conversationForFlashcard: Message[] = [...historyMessages, flashcardRequestMsg];
+	      
+	      const model = (currentSession.model || "").trim() || resolveAiModel(settings);
+	      const memoryText = memoryStore.getFullMemoryText();
+	      
+	      // 构建上下文
+	      let contextText = "";
+	      try {
+	        const contexts = contextStore.selected;
+	        if (contexts.length) {
+	          const result = await buildContextForSend(contexts);
+	          contextText = result.text;
+	        }
+	      } catch {}
+	      
+	      console.log("[Flashcard] Building messages for API, history count:", historyMessages.length);
+	      
+	      const { standard: apiMessages, fallback: apiMessagesFallback } = await buildConversationMessages({
+	        messages: conversationForFlashcard,
+	        systemPrompt: flashcardSystemPrompt,
+	        contextText,
+	        customMemory: memoryText,
+	        chatMode: "ask", // 不需要工具
+	      });
+	      
+	      console.log("[Flashcard] API messages built:", apiMessages.length);
+	      
+	      // 调用 AI 生成闪卡
+	      let fullContent = "";
+	      const aborter = new AbortController();
+	      abortRef.current = aborter;
+	      
+	      try {
+	        for await (const chunk of streamChatWithRetry(
+	          {
+	            apiUrl: settings.apiUrl,
+	            apiKey: settings.apiKey,
+	            model,
+	            temperature: settings.temperature,
+	            maxTokens: settings.maxTokens,
+	            signal: aborter.signal,
+	          },
+	          apiMessages,
+	          apiMessagesFallback,
+	        )) {
+	          if (chunk.type === "content") {
+	            fullContent += chunk.content;
+	          }
+	        }
+	        
+	        console.log("[Flashcard] AI response length:", fullContent.length);
+	        
+	        // 解析闪卡
+	        const cards = parseFlashcards(fullContent);
+	        console.log("[Flashcard] Parsed cards:", cards.length);
+	        
+	        if (cards.length > 0) {
+	          // 直接进入闪卡交互界面
+	          setPendingFlashcards(cards);
+	          setFlashcardMode(true);
+	        } else {
+	          // 没有解析到闪卡，显示 AI 的回复
+	          const assistantMsg: Message = {
+	            id: nowId(),
+	            role: "assistant",
+	            content: fullContent || "抱歉，无法生成闪卡。请提供更多上下文或指定主题。",
+	            createdAt: Date.now(),
+	          };
+	          setMessages((prev) => [...prev, assistantMsg]);
+	        }
+	      } catch (err: any) {
+	        console.error("[Flashcard] Error:", err);
+	        const msg = String(err?.message ?? err ?? "生成闪卡失败");
+	        orca.notify("error", msg);
+	        const assistantMsg: Message = {
+	          id: nowId(),
+	          role: "assistant",
+	          content: `生成闪卡失败: ${msg}`,
+	          createdAt: Date.now(),
+	        };
+	        setMessages((prev) => [...prev, assistantMsg]);
+	      } finally {
+	        setSending(false);
+	        if (abortRef.current === aborter) abortRef.current = null;
+	      }
+	      
+	      return; // 直接返回，不走常规 AI 流程
 	    }
 
 	    // Get current chat mode for tool handling
@@ -1141,6 +1274,68 @@ export default function AiChatPanel({ panelId }: PanelProps) {
     }
 
     messageListContent = messageElements;
+
+    // 如果在闪卡模式，在消息列表末尾添加闪卡组件
+    if (flashcardMode && pendingFlashcards.length > 0) {
+      messageElements.push(
+        createElement(
+          "div",
+          {
+            key: "flashcard-review",
+            style: {
+              margin: "16px 0",
+              padding: "16px",
+              background: "var(--orca-color-bg-2)",
+              borderRadius: "16px",
+              border: "1px solid var(--orca-color-border)",
+            },
+          },
+          createElement(FlashcardReview, {
+            cards: pendingFlashcards,
+            onKeepCard: async (card: Flashcard) => {
+              const { saveCardToJournal } = await import("../services/flashcard-service");
+              const result = await saveCardToJournal(card);
+              if (result.success) {
+                orca.notify("success", "已保存到今日日记");
+              } else {
+                orca.notify("error", result.message);
+              }
+            },
+            onComplete: (keptCards: Flashcard[]) => {
+              // 添加完成消息到聊天记录
+              const keptCount = keptCards.length;
+              const totalCount = pendingFlashcards.length;
+              const summaryMsg: Message = {
+                id: nowId(),
+                role: "assistant",
+                content: `✅ 闪卡复习完成！共 ${totalCount} 张卡片，已保存 ${keptCount} 张到今日日记。`,
+                createdAt: Date.now(),
+              };
+              setMessages((prev) => [...prev, summaryMsg]);
+              
+              // 完成后延迟关闭闪卡界面
+              setTimeout(() => {
+                setFlashcardMode(false);
+                setPendingFlashcards([]);
+              }, 500);
+            },
+            onCancel: () => {
+              // 添加取消消息
+              const cancelMsg: Message = {
+                id: nowId(),
+                role: "assistant",
+                content: "闪卡复习已取消。",
+                createdAt: Date.now(),
+              };
+              setMessages((prev) => [...prev, cancelMsg]);
+              setFlashcardMode(false);
+              setPendingFlashcards([]);
+            },
+          })
+        )
+      );
+      messageListContent = messageElements;
+    }
   }
 
   // If in memory manager view, render MemoryManager instead of chat

@@ -32,6 +32,7 @@ const { createElement, useRef, useState, useCallback, useEffect, useMemo } = Rea
 
 // 斜杠命令定义
 const SLASH_COMMANDS = [
+  { command: "/card", description: "生成闪卡，交互式复习并保存", icon: "ti ti-cards" },
   { command: "/timeline", description: "以时间线格式展示结果", icon: "ti ti-clock" },
   { command: "/brief", description: "简洁回答，不要长篇大论", icon: "ti ti-bolt" },
   { command: "/detail", description: "详细回答，展开说明", icon: "ti ti-file-text" },
