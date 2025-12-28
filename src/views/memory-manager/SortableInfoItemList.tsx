@@ -227,14 +227,24 @@ export default function SortableInfoItemList({
     // If value is being dragged, don't start item drag
     if (draggedValueInfo) {
       e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+    // Check if the drag started from a value chip (has value-drag data type)
+    if (e.dataTransfer.types.includes("application/value-drag")) {
+      e.preventDefault();
+      e.stopPropagation();
       return;
     }
     setDraggedId(itemId);
     e.dataTransfer.effectAllowed = "move";
-    e.dataTransfer.setData("text/plain", itemId);
+    e.dataTransfer.setData("application/item-drag", itemId);
   }, [draggedValueInfo]);
 
   const handleDragEnd = useCallback(() => {
+    // Only process if we were dragging an item (not a value)
+    if (draggedValueInfo) return;
+    
     if (draggedId && dropTargetId && dropPosition) {
       const items = category.items;
       const draggedIndex = items.findIndex(item => item.id === draggedId);
@@ -251,9 +261,18 @@ export default function SortableInfoItemList({
     setDraggedId(null);
     setDropTargetId(null);
     setDropPosition(null);
-  }, [draggedId, dropTargetId, dropPosition, category.items, onReorder]);
+  }, [draggedId, dropTargetId, dropPosition, category.items, onReorder, draggedValueInfo]);
 
   const handleDragOver = useCallback((e: React.DragEvent, itemId: string) => {
+    // If dragging a value, don't handle item drag over
+    if (draggedValueInfo) {
+      return;
+    }
+    // Check if this is a value drag
+    if (e.dataTransfer.types.includes("application/value-drag")) {
+      return;
+    }
+    
     e.preventDefault();
     e.stopPropagation();
     e.dataTransfer.dropEffect = "move";
@@ -269,7 +288,7 @@ export default function SortableInfoItemList({
       setDropTargetId(itemId);
       setDropPosition(position);
     }
-  }, [draggedId, dropTargetId, dropPosition]);
+  }, [draggedId, dropTargetId, dropPosition, draggedValueInfo]);
 
   const handleAddValue = useCallback((itemId: string) => {
     if (newValue.trim()) {
@@ -404,7 +423,8 @@ export default function SortableInfoItemList({
     return createElement(
       "div",
       { key: item.id },
-      isDropTarget && dropPosition === "before" && createElement("div", { style: dropIndicatorStyle }),
+      // Only show item drop indicator when not dragging a value
+      !draggedValueInfo && isDropTarget && dropPosition === "before" && createElement("div", { style: dropIndicatorStyle }),
       createElement(
         "div",
         {
@@ -412,12 +432,7 @@ export default function SortableInfoItemList({
           draggable: !draggedValueInfo, // Disable item drag when value is being dragged
           onDragStart: (e: any) => handleDragStart(e, item.id),
           onDragEnd: handleDragEnd,
-          onDragOver: (e: any) => {
-            // Only handle item drag over if not dragging a value
-            if (!draggedValueInfo) {
-              handleDragOver(e, item.id);
-            }
-          },
+          onDragOver: (e: any) => handleDragOver(e, item.id),
           onMouseEnter: () => setHoveredItemId(item.id),
           onMouseLeave: () => setHoveredItemId(null),
         },
@@ -517,7 +532,8 @@ export default function SortableInfoItemList({
             : createElement("button", { style: { ...valueChipStyle, background: "transparent", border: "1px dashed var(--orca-color-border)", cursor: "pointer" }, onClick: (e: any) => { e.stopPropagation(); setAddingValueToId(item.id); }, title: "添加值" }, createElement("i", { className: "ti ti-plus", style: { fontSize: "10px" } }))
         )
       ),
-      isDropTarget && dropPosition === "after" && createElement("div", { style: dropIndicatorStyle })
+      // Only show item drop indicator when not dragging a value
+      !draggedValueInfo && isDropTarget && dropPosition === "after" && createElement("div", { style: dropIndicatorStyle })
     );
   };
 

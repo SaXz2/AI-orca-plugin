@@ -19,6 +19,7 @@ import {
   cursorStyle,
   actionBarStyle,
   actionButtonStyle,
+  messageTimeStyle,
 } from "../styles/ai-chat-styles";
 import type { Message } from "../services/session-service";
 import type { ToolCallInfo } from "../services/chat-stream-handler";
@@ -31,6 +32,18 @@ const React = window.React as unknown as {
   Fragment: typeof window.React.Fragment;
 };
 const { createElement, useState, useCallback, useMemo, Fragment } = React;
+
+// 格式化消息时间
+function formatMessageTime(timestamp: number): string {
+  const date = new Date(timestamp);
+  const now = new Date();
+  const isToday = date.toDateString() === now.toDateString();
+  
+  if (isToday) {
+    return date.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
+  }
+  return date.toLocaleDateString("zh-CN", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
 
 interface MessageItemProps {
   message: Message;
@@ -166,6 +179,14 @@ export default function MessageItem({
               isLoading: isStreaming || !toolResults?.has(tc.id),
             })
           )
+        ),
+
+      // Message Time
+      message.createdAt &&
+        createElement(
+          "div",
+          { style: messageTimeStyle() },
+          formatMessageTime(message.createdAt)
         ),
 
       // Action Bar

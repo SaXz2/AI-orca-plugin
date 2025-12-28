@@ -947,6 +947,27 @@ br + .md-block-dot {
     background: rgba(255, 255, 255, 0.2);
 }
 
+/* ─────────────────────────────────────────────────────────────────────────────
+   Chat Navigation Highlight Animation
+   ─────────────────────────────────────────────────────────────────────────── */
+
+@keyframes chatNavHighlight {
+    0% {
+        box-shadow: 0 0 0 0 rgba(0, 123, 255, 0.4);
+    }
+    50% {
+        box-shadow: 0 0 0 8px rgba(0, 123, 255, 0.2);
+    }
+    100% {
+        box-shadow: 0 0 0 0 rgba(0, 123, 255, 0);
+    }
+}
+
+.chat-nav-highlight {
+    animation: chatNavHighlight 1.5s ease-out;
+    border-radius: 12px;
+}
+
 `;
 
 let styleElement: HTMLStyleElement | null = null;

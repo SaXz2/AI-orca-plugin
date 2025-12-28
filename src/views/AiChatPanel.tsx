@@ -15,6 +15,7 @@ import HeaderMenu from "./HeaderMenu";
 import EmptyState from "./EmptyState";
 import LoadingDots from "../components/LoadingDots";
 import MemoryManager from "./MemoryManager";
+import ChatNavigation from "../components/ChatNavigation";
 import { injectChatStyles } from "../styles/chat-animations";
 import {
   buildAiModelOptions,
@@ -858,6 +859,12 @@ export default function AiChatPanel({ panelId }: PanelProps) {
       },
       ...(Array.isArray(messageListContent) ? messageListContent : [messageListContent])
     ),
+    // Chat Navigation (floating button)
+    createElement(ChatNavigation, {
+      messages,
+      listRef: listRef as any,
+      visible: messages.length > 2,
+    }),
     // Chat Input
     createElement(ChatInput, {
       onSend: (text: string) => handleSend(text),

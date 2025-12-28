@@ -521,3 +521,15 @@ export const toolStatusRetryButtonStyle: React.CSSProperties = {
   marginLeft: "8px",
   flexShrink: 0,
 };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Message Time Styles
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const messageTimeStyle = (): React.CSSProperties => ({
+  fontSize: "11px",
+  color: "var(--orca-color-text-3)",
+  marginTop: "6px",
+  textAlign: "right",
+  userSelect: "none",
+});
