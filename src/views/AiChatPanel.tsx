@@ -964,11 +964,8 @@ export default function AiChatPanel({ panelId }: PanelProps) {
     // Chat Input
     createElement(ChatInput, {
       onSend: (text: string, files?: FileRef[], clearContext?: boolean) => {
-        if (clearContext) {
-          // 清除上下文：清空消息历史，开始新对话
-          setMessages([]);
-          contextStore.selected = [];
-        }
+        // clearContext=true 时，传递空历史给 handleSend，但不清空显示的消息
+        // 这样 AI 会把这条消息当作新对话的开始，但用户仍能看到之前的消息
         handleSend(text, files, clearContext ? [] : undefined);
       },
       onStop: stop,
