@@ -38,7 +38,7 @@ const SLASH_COMMANDS = [
   { command: "/table", description: "用表格格式展示结果", icon: "ti ti-table" },
   { command: "/summary", description: "总结模式，精炼内容要点", icon: "ti ti-list" },
   { command: "/compare", description: "对比模式，左右对比展示", icon: "ti ti-columns" },
-  { command: "/graph", description: "显示当前页面的链接关系图谱", icon: "ti ti-share" },
+  { command: "/localgraph", description: "显示页面的链接关系图谱", icon: "ti ti-share" },
 ];
 
 const { useSnapshot } = (window as any).Valtio as {

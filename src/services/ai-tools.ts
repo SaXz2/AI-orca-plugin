@@ -469,17 +469,24 @@ export const TOOLS: OpenAITool[] = [
     type: "function",
     function: {
       name: "getBlockLinks",
-      description: `获取指定块的链接关系图谱数据。返回该块的出链（引用的其他块）和入链（被其他块引用）。
-用于展示笔记之间的关联关系，类似 Obsidian 的 Local Graph。`,
+      description: `获取指定页面或块的链接关系图谱数据。返回该块的出链（引用的其他块）和入链（被其他块引用）。
+用于展示笔记之间的关联关系，类似 Obsidian 的 Local Graph。
+
+支持两种查询方式：
+1. 通过 blockId 查询：直接传入数字 ID
+2. 通过页面名称查询：传入 pageName 参数`,
       parameters: {
         type: "object",
         properties: {
           blockId: {
             type: "number",
-            description: "要查询链接关系的块 ID",
+            description: "要查询链接关系的块 ID（与 pageName 二选一）",
+          },
+          pageName: {
+            type: "string",
+            description: "要查询链接关系的页面名称（与 blockId 二选一）",
           },
         },
-        required: ["blockId"],
       },
     },
   },
@@ -1391,66 +1398,64 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
       }
     } else if (toolName === "getBlockLinks") {
       try {
-        let blockIdRaw = args.blockId || args.block_id || args.id;
-        if (typeof blockIdRaw === "string") {
-          const match = blockIdRaw.match(/^(?:orca-block:|blockid:)?(\d+)$/i);
-          if (match) blockIdRaw = parseInt(match[1], 10);
+        let blockId: number | null = null;
+        let blockData: any = null;
+        
+        // 支持通过 pageName 查找
+        const pageName = args.pageName || args.page_name || args.page || args.name;
+        if (pageName && typeof pageName === "string") {
+          // 通过页面名称查找，直接获取 block 数据
+          const block = await orca.invokeBackend("get-block-by-alias", pageName);
+          if (block) {
+            blockId = block.id;
+            blockData = block;
+          } else {
+            return `Error: 找不到名为 "${pageName}" 的页面。`;
+          }
+        } else {
+          // 通过 blockId 查找
+          let blockIdRaw = args.blockId || args.block_id || args.id;
+          if (typeof blockIdRaw === "string") {
+            const match = blockIdRaw.match(/^(?:orca-block:|blockid:)?(\d+)$/i);
+            if (match) blockIdRaw = parseInt(match[1], 10);
+          }
+          blockId = toFiniteNumber(blockIdRaw) ?? null;
+          if (blockId) {
+            // 先尝试从 state 获取，否则从 backend 获取
+            blockData = orca.state.blocks[blockId];
+            if (!blockData) {
+              const result = await orca.invokeBackend("get-block", blockId);
+              if (result) blockData = result;
+            }
+          }
         }
-        const blockId = toFiniteNumber(blockIdRaw);
-        if (!blockId) return "Error: Missing or invalid blockId.";
+        
+        if (!blockId) return "Error: 请提供 blockId 或 pageName 参数。";
+        if (!blockData) return `Error: Block ${blockId} not found.`;
 
-        const block = orca.state.blocks[blockId];
-        if (!block) return `Error: Block ${blockId} not found.`;
-
-        const getTitle = (id: number): string => {
-          const b = orca.state.blocks[id];
+        const getTitle = async (id: number): Promise<string> => {
+          let b = orca.state.blocks[id];
+          if (!b) {
+            try {
+              b = await orca.invokeBackend("get-block", id);
+            } catch {}
+          }
           if (!b) return `Block ${id}`;
-          // Ensure text is a string before splitting
-          const rawText = b.text;
+          const rawText = b.text || b.content || "";
           const text = typeof rawText === "string" ? rawText.split("\n")[0]?.trim() || "" : "";
           return text.length > 40 ? text.substring(0, 40) + "..." : (text || `Block ${id}`);
         };
 
-        const centerTitle = getTitle(blockId);
-        const outLinks: string[] = [];
-        const inLinks: string[] = [];
+        const centerTitle = await getTitle(blockId);
+        const outCount = blockData.refs?.length || 0;
+        const inCount = blockData.backRefs?.length || 0;
 
-        // Outgoing refs
-        if (block.refs && Array.isArray(block.refs)) {
-          for (const ref of block.refs) {
-            const title = getTitle(ref.to);
-            outLinks.push(`[${title}](orca-block:${ref.to})`);
-          }
+        // 返回 localgraph 代码块和带链接的统计
+        if (outCount === 0 && inCount === 0) {
+          return `[${centerTitle}](orca-block:${blockId}) 暂无链接关系。`;
         }
-
-        // Incoming refs (backlinks)
-        if (block.backRefs && Array.isArray(block.backRefs)) {
-          for (const ref of block.backRefs) {
-            const title = getTitle(ref.from);
-            inLinks.push(`[${title}](orca-block:${ref.from})`);
-          }
-        }
-
-        // Build response with graph data marker
-        let result = `## 📊 [${centerTitle}](orca-block:${blockId}) 的链接关系\n\n`;
         
-        if (outLinks.length === 0 && inLinks.length === 0) {
-          result += "该块暂无链接关系。";
-        } else {
-          if (outLinks.length > 0) {
-            result += `### 出链 (${outLinks.length})\n`;
-            result += outLinks.map(l => `- ${l}`).join("\n") + "\n\n";
-          }
-          if (inLinks.length > 0) {
-            result += `### 入链 (${inLinks.length})\n`;
-            result += inLinks.map(l => `- ${l}`).join("\n") + "\n\n";
-          }
-          
-          // Add graph marker for rendering
-          result += `\n\`\`\`localgraph\n${blockId}\n\`\`\``;
-        }
-
-        return result;
+        return `\`\`\`localgraph\n${blockId}\n\`\`\`\n\n[${centerTitle}](orca-block:${blockId}) 有 ${outCount} 个出链，${inCount} 个入链。`;
       } catch (err: any) {
         return `Error getting block links: ${err.message}`;
       }

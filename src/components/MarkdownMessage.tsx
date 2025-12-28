@@ -1025,13 +1025,18 @@ export default function MarkdownMessage({ content, role }: Props) {
   const cleanedContent = useMemo(() => {
     let text = content;
     
+    // 保留 [GRAPH_REQUEST:blockId] 标记，不要清理
+    const graphRequestMarker = text.match(/\[GRAPH_REQUEST:\d+\]/g) || [];
+    
     // 清理中文方括号引用标注：【引用】
     text = text.replace(/【([^】]+)】/g, '$1');
     
-    // 清理英文方括号，但保留 Markdown 语法
+    // 清理英文方括号，但保留 Markdown 语法和 GRAPH_REQUEST 标记
     // 使用更精确的方式：先标记需要保留的，再清理其他的
-    // 保留：[text](url) 链接、![alt](url) 图片、[ ] 和 [x] 任务列表
+    // 保留：[text](url) 链接、![alt](url) 图片、[ ] 和 [x] 任务列表、[GRAPH_REQUEST:xxx]
     text = text.replace(/\[([^\]]*)\]/g, (match, p1, offset) => {
+      // 保留 GRAPH_REQUEST 标记
+      if (match.startsWith('[GRAPH_REQUEST:')) return match;
       // 检查后面是否跟着 (url) - 这是链接或图片语法
       const afterMatch = text.slice(offset + match.length);
       if (afterMatch.startsWith('(')) return match;

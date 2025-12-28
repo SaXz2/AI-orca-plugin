@@ -8,18 +8,22 @@
  * - Drag nodes to reposition
  * - Zoom and pan with mouse wheel / drag
  * - Fullscreen mode
- * - Shows block aliases if available
+ * - Arrow markers on links
+ * - Different node types: page (alias), block, tag, property
  */
 
 import * as d3Force from "d3-force";
 
 const React = window.React as any;
-const { createElement, useState, useEffect, useRef, useMemo, useCallback } = React;
+const { createElement, useState, useEffect, useRef, useCallback } = React;
+
+// 节点类型
+type NodeType = "center" | "page" | "block" | "tag" | "property";
 
 interface GraphNode {
   id: number;
   title: string;
-  isCenter: boolean;
+  nodeType: NodeType;
   x?: number;
   y?: number;
   vx?: number;
@@ -28,64 +32,71 @@ interface GraphNode {
   fy?: number | null;
 }
 
+// 链接类型
+type LinkType = "ref" | "backref" | "tag" | "property";
+
 interface GraphLink {
   source: number | GraphNode;
   target: number | GraphNode;
+  linkType: LinkType;
 }
 
 interface LocalGraphProps {
   blockId: number;
 }
 
-// Get block title helper - prioritize alias, then content
-function getBlockTitle(blockId: number): string {
-  const block = orca.state.blocks[blockId];
-  if (!block) return `Block ${blockId}`;
-  
-  // First try aliases (array of strings)
-  if (block.aliases && Array.isArray(block.aliases) && block.aliases.length > 0) {
-    const alias = block.aliases[0];
-    if (typeof alias === "string" && alias.trim()) {
-      const trimmed = alias.trim();
-      return trimmed.length > 30 ? trimmed.substring(0, 30) + "..." : trimmed;
-    }
-  }
-  
-  // Then try text field
-  const rawText = block.text;
-  if (typeof rawText === "string" && rawText.trim()) {
-    // Get first line, remove markdown formatting
-    let text = rawText.split("\n")[0]?.trim() || "";
-    // Remove common markdown prefixes
-    text = text.replace(/^#+\s*/, ""); // headings
-    text = text.replace(/^[-*+]\s*/, ""); // list items
-    text = text.replace(/^\d+\.\s*/, ""); // numbered list
-    text = text.replace(/^>\s*/, ""); // blockquote
-    text = text.trim();
-    if (text) {
-      return text.length > 30 ? text.substring(0, 30) + "..." : text;
-    }
-  }
-  
-  // Then try content field (some blocks use this instead of text)
-  const rawContent = (block as any).content;
-  if (typeof rawContent === "string" && rawContent.trim()) {
-    let content = rawContent.split("\n")[0]?.trim() || "";
-    content = content.replace(/^#+\s*/, "");
-    content = content.replace(/^[-*+]\s*/, "");
-    content = content.trim();
-    if (content) {
-      return content.length > 30 ? content.substring(0, 30) + "..." : content;
-    }
-  }
-  
-  // Fallback to block ID
-  return `Block ${blockId}`;
+// 清理标题：去掉标签
+function cleanTitle(text: string): string {
+  if (!text) return "";
+  // 去掉 #标签 格式
+  return text.replace(/#[\w\u4e00-\u9fa5]+/g, "").trim();
 }
 
-// Build graph data from block refs
-function buildGraphData(centerBlockId: number): { nodes: GraphNode[]; links: GraphLink[] } {
-  const block = orca.state.blocks[centerBlockId];
+// 获取块标题
+async function getBlockTitleAsync(id: number): Promise<{ title: string; isPage: boolean }> {
+  let b = orca.state.blocks[id];
+  if (!b) {
+    try {
+      b = await orca.invokeBackend("get-block", id);
+    } catch {}
+  }
+  if (!b) return { title: `Block ${id}`, isPage: false };
+  
+  // 判断是否是页面（有 aliases）
+  const isPage = b.aliases && Array.isArray(b.aliases) && b.aliases.length > 0;
+  
+  // 优先用 alias
+  if (isPage) {
+    const alias = b.aliases[0];
+    if (typeof alias === "string" && alias.trim()) {
+      let trimmed = cleanTitle(alias.trim());
+      return { 
+        title: trimmed.length > 25 ? trimmed.substring(0, 25) + "..." : trimmed,
+        isPage: true 
+      };
+    }
+  }
+  
+  // 否则用 text
+  const rawText = b.text || b.content || "";
+  let text = typeof rawText === "string" ? rawText.split("\n")[0]?.trim() || "" : "";
+  text = text.replace(/^#+\s*/, "").replace(/^[-*+]\s*/, "").trim();
+  text = cleanTitle(text);
+  return { 
+    title: text.length > 25 ? text.substring(0, 25) + "..." : (text || `Block ${id}`),
+    isPage: false 
+  };
+}
+
+// 构建图谱数据
+async function buildGraphDataAsync(centerBlockId: number): Promise<{ nodes: GraphNode[]; links: GraphLink[] }> {
+  let block = orca.state.blocks[centerBlockId];
+  if (!block) {
+    try {
+      block = await orca.invokeBackend("get-block", centerBlockId);
+    } catch {}
+  }
+  
   if (!block) {
     return { nodes: [], links: [] };
   }
@@ -93,40 +104,61 @@ function buildGraphData(centerBlockId: number): { nodes: GraphNode[]; links: Gra
   const nodesMap = new Map<number, GraphNode>();
   const links: GraphLink[] = [];
 
-  // Add center node
+  // 添加中心节点
+  const centerInfo = await getBlockTitleAsync(centerBlockId);
   nodesMap.set(centerBlockId, {
     id: centerBlockId,
-    title: getBlockTitle(centerBlockId),
-    isCenter: true,
+    title: centerInfo.title,
+    nodeType: "center",
   });
 
-  // Add outgoing refs
+  // 处理出链 refs
   if (block.refs && Array.isArray(block.refs)) {
     for (const ref of block.refs) {
       const targetId = ref.to;
       if (!nodesMap.has(targetId)) {
+        const info = await getBlockTitleAsync(targetId);
+        
+        // 判断引用类型
+        let nodeType: NodeType = info.isPage ? "page" : "block";
+        let linkType: LinkType = "ref";
+        
+        // 检查是否是标签引用（目标块是标签页面）
+        const targetBlock = orca.state.blocks[targetId];
+        if (targetBlock?.aliases?.[0]?.startsWith("#")) {
+          nodeType = "tag";
+          linkType = "tag";
+        }
+        
+        // 检查是否是属性引用
+        if ((ref as any).type === "property" || (ref as any).propertyName) {
+          nodeType = "property";
+          linkType = "property";
+        }
+        
         nodesMap.set(targetId, {
           id: targetId,
-          title: getBlockTitle(targetId),
-          isCenter: false,
+          title: info.title,
+          nodeType,
         });
+        links.push({ source: centerBlockId, target: targetId, linkType });
       }
-      links.push({ source: centerBlockId, target: targetId });
     }
   }
 
-  // Add incoming refs (backlinks)
+  // 处理入链 backRefs
   if (block.backRefs && Array.isArray(block.backRefs)) {
     for (const ref of block.backRefs) {
       const sourceId = ref.from;
       if (!nodesMap.has(sourceId)) {
+        const info = await getBlockTitleAsync(sourceId);
         nodesMap.set(sourceId, {
           id: sourceId,
-          title: getBlockTitle(sourceId),
-          isCenter: false,
+          title: info.title,
+          nodeType: info.isPage ? "page" : "block",
         });
       }
-      links.push({ source: sourceId, target: centerBlockId });
+      links.push({ source: sourceId, target: centerBlockId, linkType: "backref" });
     }
   }
 
@@ -135,6 +167,23 @@ function buildGraphData(centerBlockId: number): { nodes: GraphNode[]; links: Gra
     links,
   };
 }
+
+// 节点颜色配置
+const nodeColors: Record<NodeType, string> = {
+  center: "#007bff",   // 蓝色 - 中心节点
+  page: "#28a745",     // 绿色 - 页面/别名块
+  block: "#6c757d",    // 灰色 - 普通块
+  tag: "#fd7e14",      // 橙色 - 标签
+  property: "#6f42c1", // 紫色 - 属性
+};
+
+// 链接颜色配置
+const linkColors: Record<LinkType, string> = {
+  ref: "#999",         // 灰色 - 普通引用
+  backref: "#17a2b8",  // 青色 - 反向引用
+  tag: "#fd7e14",      // 橙色 - 标签引用
+  property: "#6f42c1", // 紫色 - 属性引用
+};
 
 export default function LocalGraph({ blockId }: LocalGraphProps) {
   const containerRef = useRef(null) as any;
@@ -145,36 +194,45 @@ export default function LocalGraph({ blockId }: LocalGraphProps) {
   const [nodes, setNodes] = useState([] as GraphNode[]);
   const [links, setLinks] = useState([] as GraphLink[]);
   const [draggedNode, setDraggedNode] = useState(null as GraphNode | null);
+  const [graphData, setGraphData] = useState({ nodes: [] as GraphNode[], links: [] as GraphLink[] });
+  const [loading, setLoading] = useState(true);
   const simulationRef = useRef(null) as any;
   const isDraggingRef = useRef(false);
   const lastMouseRef = useRef({ x: 0, y: 0 });
 
-  // Build graph data
-  const graphData = useMemo(() => buildGraphData(blockId), [blockId]);
+  // 加载图谱数据
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    buildGraphDataAsync(blockId).then(data => {
+      if (!cancelled) {
+        setGraphData(data);
+        setLoading(false);
+      }
+    });
+    return () => { cancelled = true; };
+  }, [blockId]);
 
-  // Measure container width and update dimensions
+  // 计算尺寸
   useEffect(() => {
     const updateDimensions = () => {
       if (isFullscreen) {
-        setDimensions({ width: window.innerWidth - 40, height: window.innerHeight - 100 });
+        setDimensions({ width: window.innerWidth - 100, height: window.innerHeight - 150 });
       } else if (containerRef.current) {
         const containerWidth = containerRef.current.offsetWidth || 400;
-        // Calculate height based on node count, min 250, max 400
         const nodeCount = graphData.nodes.length;
-        const baseHeight = Math.min(400, Math.max(250, 150 + nodeCount * 20));
-        setDimensions({ width: containerWidth - 2, height: baseHeight });
+        const baseHeight = Math.min(400, Math.max(280, 180 + nodeCount * 15));
+        setDimensions({ width: Math.max(containerWidth - 2, 350), height: baseHeight });
       }
     };
     
     updateDimensions();
     
-    // Use ResizeObserver for responsive updates
     const resizeObserver = new ResizeObserver(updateDimensions);
     if (containerRef.current && !isFullscreen) {
       resizeObserver.observe(containerRef.current);
     }
     
-    // Also listen to window resize for fullscreen mode
     window.addEventListener("resize", updateDimensions);
     
     return () => {
@@ -183,8 +241,7 @@ export default function LocalGraph({ blockId }: LocalGraphProps) {
     };
   }, [isFullscreen, graphData.nodes.length]);
 
-
-  // Initialize simulation
+  // 初始化力导向模拟
   useEffect(() => {
     if (graphData.nodes.length === 0) return;
 
@@ -195,10 +252,10 @@ export default function LocalGraph({ blockId }: LocalGraphProps) {
     const simulation = d3Force.forceSimulation<GraphNode>(nodesCopy)
       .force("link", d3Force.forceLink<GraphNode, GraphLink>(linksCopy)
         .id(d => d.id)
-        .distance(80))
-      .force("charge", d3Force.forceManyBody().strength(-200))
+        .distance(100))
+      .force("charge", d3Force.forceManyBody().strength(-250))
       .force("center", d3Force.forceCenter(width / 2, height / 2))
-      .force("collision", d3Force.forceCollide().radius(35));
+      .force("collision", d3Force.forceCollide().radius(40));
 
     simulationRef.current = simulation;
 
@@ -212,7 +269,7 @@ export default function LocalGraph({ blockId }: LocalGraphProps) {
     };
   }, [graphData, dimensions]);
 
-  // Handle node drag
+  // 节点拖拽
   const handleNodeMouseDown = useCallback((e: any, node: GraphNode) => {
     e.stopPropagation();
     isDraggingRef.current = true;
@@ -226,7 +283,6 @@ export default function LocalGraph({ blockId }: LocalGraphProps) {
       y: (e.clientY - rect.top - transform.y) / transform.scale,
     };
 
-    // Fix node position
     node.fx = node.x;
     node.fy = node.y;
     simulationRef.current?.alphaTarget(0.3).restart();
@@ -255,26 +311,39 @@ export default function LocalGraph({ blockId }: LocalGraphProps) {
     setDraggedNode(null);
   }, [draggedNode]);
 
-  // Handle zoom
-  const handleWheel = useCallback((e: any) => {
-    e.preventDefault();
-    const delta = e.deltaY > 0 ? 0.9 : 1.1;
-    const newScale = Math.max(0.3, Math.min(3, transform.scale * delta));
-    
+  // 缩放 - 使用 ref 存储最新的 transform.scale
+  const transformRef = useRef(transform);
+  transformRef.current = transform;
+
+  // 用原生事件监听处理滚轮，确保能阻止冒泡
+  useEffect(() => {
     const svg = svgRef.current;
     if (!svg) return;
-    const rect = svg.getBoundingClientRect();
-    const mouseX = e.clientX - rect.left;
-    const mouseY = e.clientY - rect.top;
 
-    setTransform((prev: { x: number; y: number; scale: number }) => ({
-      x: mouseX - (mouseX - prev.x) * (newScale / prev.scale),
-      y: mouseY - (mouseY - prev.y) * (newScale / prev.scale),
-      scale: newScale,
-    }));
-  }, [transform.scale]);
+    const handleWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      
+      const delta = e.deltaY > 0 ? 0.9 : 1.1;
+      const currentScale = transformRef.current.scale;
+      const newScale = Math.max(0.3, Math.min(3, currentScale * delta));
+      
+      const rect = svg.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
 
-  // Handle pan (drag background)
+      setTransform((prev: { x: number; y: number; scale: number }) => ({
+        x: mouseX - (mouseX - prev.x) * (newScale / prev.scale),
+        y: mouseY - (mouseY - prev.y) * (newScale / prev.scale),
+        scale: newScale,
+      }));
+    };
+
+    svg.addEventListener("wheel", handleWheel, { passive: false });
+    return () => svg.removeEventListener("wheel", handleWheel);
+  }, []);
+
+  // 平移
   const [isPanning, setIsPanning] = useState(false);
   const panStartRef = useRef({ x: 0, y: 0 });
 
@@ -299,7 +368,7 @@ export default function LocalGraph({ blockId }: LocalGraphProps) {
     setIsPanning(false);
   }, []);
 
-  // Handle node click - navigate to block
+  // 点击节点跳转
   const handleNodeClick = useCallback((nodeId: number) => {
     if (isDraggingRef.current) return;
     try {
@@ -309,27 +378,28 @@ export default function LocalGraph({ blockId }: LocalGraphProps) {
     }
   }, []);
 
-  // Reset view
+  // 重置视图
   const resetView = useCallback(() => {
     setTransform({ x: 0, y: 0, scale: 1 });
   }, []);
 
-  // Node colors
-  const getNodeColor = (node: GraphNode) => {
-    if (node.isCenter) return "#007bff";
-    return "#6c757d";
-  };
+  // 切换全屏
+  const toggleFullscreen = useCallback(() => {
+    setIsFullscreen((prev: boolean) => {
+      setTransform({ x: 0, y: 0, scale: 1 });
+      return !prev;
+    });
+  }, []);
+
+  if (loading) {
+    return createElement("div", { className: "local-graph-empty" }, "加载中...");
+  }
 
   if (graphData.nodes.length === 0) {
-    return createElement(
-      "div",
-      { className: "local-graph-empty" },
-      "暂无链接关系"
-    );
+    return createElement("div", { className: "local-graph-empty" }, "暂无链接关系");
   }
 
   const { width, height } = dimensions;
-
 
   return createElement(
     "div",
@@ -345,59 +415,89 @@ export default function LocalGraph({ blockId }: LocalGraphProps) {
         zIndex: 9999,
         background: "var(--orca-color-bg-1)",
         padding: "20px",
-      } : undefined,
+        display: "flex",
+        flexDirection: "column",
+      } : {
+        width: "100%",
+        minWidth: "350px",
+      },
     },
-    // Toolbar
+    // 工具栏
     createElement(
       "div",
-      { className: "local-graph-toolbar" },
-      createElement(
-        "span",
-        { className: "local-graph-title" },
+      { 
+        className: "local-graph-toolbar",
+        style: { 
+          display: "flex", 
+          justifyContent: "space-between", 
+          alignItems: "center",
+          marginBottom: "8px",
+          padding: "4px 8px",
+          background: "var(--orca-color-bg-2)",
+          borderRadius: "6px",
+        }
+      },
+      createElement("span", { style: { fontSize: "12px", color: "var(--orca-color-text-2)" } },
         `链接图谱 (${nodes.length} 节点)`
       ),
       createElement(
         "div",
-        { className: "local-graph-actions" },
-        createElement(
-          "button",
-          { 
-            className: "local-graph-btn",
-            onClick: resetView,
-            title: "重置视图",
-          },
-          createElement("i", { className: "ti ti-refresh" })
-        ),
-        createElement(
-          "button",
-          { 
-            className: "local-graph-btn",
-            onClick: () => setIsFullscreen(!isFullscreen),
-            title: isFullscreen ? "退出全屏" : "全屏",
-          },
-          createElement("i", { className: isFullscreen ? "ti ti-minimize" : "ti ti-maximize" })
-        )
+        { style: { display: "flex", gap: "4px" } },
+        createElement("button", { 
+          className: "local-graph-btn",
+          onClick: resetView,
+          title: "重置视图",
+          style: { padding: "4px 8px", cursor: "pointer", background: "transparent", border: "none", color: "var(--orca-color-text-2)" },
+        }, createElement("i", { className: "ti ti-refresh" })),
+        createElement("button", { 
+          className: "local-graph-btn",
+          onClick: toggleFullscreen,
+          title: isFullscreen ? "退出全屏" : "全屏",
+          style: { padding: "4px 8px", cursor: "pointer", background: "transparent", border: "none", color: "var(--orca-color-text-2)" },
+        }, createElement("i", { className: isFullscreen ? "ti ti-minimize" : "ti ti-maximize" }))
       )
     ),
-    // SVG Graph
+    // SVG 图谱
     createElement(
       "svg",
       {
         ref: svgRef,
-        width,
-        height,
+        width: isFullscreen ? "100%" : width,
+        height: isFullscreen ? "calc(100% - 50px)" : height,
         className: "local-graph-svg",
         onMouseDown: handleBackgroundMouseDown,
         onMouseMove: (e: any) => { handleMouseMove(e); handlePanMove(e); },
         onMouseUp: () => { handleMouseUp(); handlePanEnd(); },
         onMouseLeave: () => { handleMouseUp(); handlePanEnd(); },
-        onWheel: handleWheel,
-        style: { cursor: isPanning ? "grabbing" : "grab" },
+        style: { 
+          cursor: isPanning ? "grabbing" : "grab",
+          background: "var(--orca-color-bg-2)",
+          borderRadius: "8px",
+          flex: isFullscreen ? 1 : undefined,
+        },
       },
+      // 箭头定义
+      createElement("defs", null,
+        ...Object.entries(linkColors).map(([type, color]) =>
+          createElement("marker", {
+            key: `arrow-${type}`,
+            id: `arrow-${type}`,
+            viewBox: "0 -5 10 10",
+            refX: 20,
+            refY: 0,
+            markerWidth: 6,
+            markerHeight: 6,
+            orient: "auto",
+          }, createElement("path", {
+            d: "M0,-5L10,0L0,5",
+            fill: color,
+          }))
+        )
+      ),
       createElement(
         "g",
         { transform: `translate(${transform.x}, ${transform.y}) scale(${transform.scale})` },
-        // Links
+        // 链接线
         createElement(
           "g",
           { className: "local-graph-links" },
@@ -412,16 +512,22 @@ export default function LocalGraph({ blockId }: LocalGraphProps) {
               y1: source.y,
               x2: target.x,
               y2: target.y,
-              className: "local-graph-link",
+              stroke: linkColors[link.linkType],
+              strokeWidth: 1.5,
+              markerEnd: `url(#arrow-${link.linkType})`,
+              opacity: 0.7,
             });
           })
         ),
-        // Nodes
+        // 节点
         createElement(
           "g",
           { className: "local-graph-nodes" },
           ...nodes.map((node: GraphNode) => {
             if (!node.x || !node.y) return null;
+            
+            const isCenter = node.nodeType === "center";
+            const radius = isCenter ? 12 : (node.nodeType === "page" ? 9 : 7);
             
             return createElement(
               "g",
@@ -433,31 +539,74 @@ export default function LocalGraph({ blockId }: LocalGraphProps) {
                 onClick: () => handleNodeClick(node.id),
                 style: { cursor: "pointer" },
               },
-              // Circle
+              // 圆形节点
               createElement("circle", {
-                r: node.isCenter ? 10 : 7,
-                fill: getNodeColor(node),
-                className: "local-graph-circle",
+                r: radius,
+                fill: nodeColors[node.nodeType],
+                stroke: isCenter ? "#fff" : "none",
+                strokeWidth: isCenter ? 2 : 0,
               }),
-              // Label
-              createElement(
-                "text",
-                {
-                  dy: node.isCenter ? -14 : -10,
-                  textAnchor: "middle",
-                  className: "local-graph-label",
+              // 标签
+              createElement("text", {
+                dy: -radius - 4,
+                textAnchor: "middle",
+                style: {
+                  fontSize: isCenter ? "12px" : "10px",
+                  fill: "var(--orca-color-text-1)",
+                  fontWeight: isCenter ? 600 : 400,
+                  pointerEvents: "none",
                 },
-                node.title
-              )
+              }, node.title)
             );
           })
         )
       )
     ),
-    // Zoom indicator
+    // 图例
     createElement(
       "div",
-      { className: "local-graph-zoom" },
+      { 
+        style: { 
+          display: "flex", 
+          gap: "12px", 
+          marginTop: "8px", 
+          fontSize: "10px",
+          color: "var(--orca-color-text-2)",
+          flexWrap: "wrap",
+        } 
+      },
+      createElement("span", null, 
+        createElement("span", { style: { display: "inline-block", width: 8, height: 8, borderRadius: "50%", background: nodeColors.page, marginRight: 4 } }),
+        "页面"
+      ),
+      createElement("span", null,
+        createElement("span", { style: { display: "inline-block", width: 8, height: 8, borderRadius: "50%", background: nodeColors.block, marginRight: 4 } }),
+        "块"
+      ),
+      createElement("span", null,
+        createElement("span", { style: { display: "inline-block", width: 8, height: 8, borderRadius: "50%", background: nodeColors.tag, marginRight: 4 } }),
+        "标签"
+      ),
+      createElement("span", null,
+        createElement("span", { style: { display: "inline-block", width: 8, height: 8, borderRadius: "50%", background: nodeColors.property, marginRight: 4 } }),
+        "属性"
+      )
+    ),
+    // 缩放指示
+    createElement(
+      "div",
+      { 
+        style: { 
+          position: "absolute", 
+          bottom: isFullscreen ? 30 : 10, 
+          right: 10, 
+          fontSize: "10px", 
+          color: "var(--orca-color-text-3)",
+          background: "var(--orca-color-bg-1)",
+          padding: "2px 6px",
+          borderRadius: "4px",
+        } 
+      },
       `${Math.round(transform.scale * 100)}%`
     )
   );

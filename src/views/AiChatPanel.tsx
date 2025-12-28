@@ -382,38 +382,69 @@ export default function AiChatPanel({ panelId }: PanelProps) {
 4. 对比项要一一对应，便于比较`;
 	    }
 
-	    // /graph - 链接关系图谱
-	    if (content.includes("/graph")) {
-	      processedContent = processedContent.replace(/\/graph/g, "").trim();
-	      // 获取当前页面的 blockId（从 context 或 active panel 获取）
-	      let graphBlockId: number | null = null;
-	      try {
-	        const activePanel = orca.state.activePanel;
-	        if (activePanel && activePanel !== uiStore.aiChatPanelId) {
-	          const vp = orca.nav.findViewPanel(activePanel, orca.state.panels);
-	          if (vp?.view === "block" && vp.viewArgs?.blockId) {
-	            graphBlockId = vp.viewArgs.blockId;
-	          }
-	        }
-	      } catch (e) {}
+	    // /localgraph - 链接关系图谱（直接调用工具，不走 AI）
+	    if (content.includes("/localgraph")) {
+	      const graphQuery = processedContent.replace(/\/localgraph/g, "").trim();
+	      const cleanedQuery = graphQuery.replace(/^(显示|查看|分析|的)?\s*/g, "").replace(/\s*(的)?(链接)?(关系)?(图谱)?$/g, "").trim();
 	      
-	      if (graphBlockId) {
-	        processedContent = `请调用 getBlockLinks 工具，参数 blockId=${graphBlockId}，获取该块的链接关系图谱`;
-	        systemPrompt += `\n\n【强制指令 - 链接图谱】
-这是一个图谱请求，你必须：
-1. 立即调用 getBlockLinks 工具，参数 blockId=${graphBlockId}
-2. 工具会返回包含 \`\`\`localgraph 代码块的结果，系统会自动渲染为可视化图谱
-
-⛔ 严禁以下行为：
-- 不要自己画图或生成任何图表代码
-- 不要返回 \`\`\`graph、\`\`\`mermaid、\`\`\`flowchart 等代码块
-- 不要用文字描述链接关系
-- 不要解释你要做什么，直接调用工具
-
-✅ 正确做法：直接调用 getBlockLinks(blockId=${graphBlockId})`;
-	      } else {
-	        processedContent = processedContent || "请先选择一个页面或块，然后使用 /graph 命令查看其链接关系";
-	      }
+	      // 添加用户消息
+	      const userMsg: Message = { 
+	        id: nowId(), 
+	        role: "user", 
+	        content, 
+	        createdAt: Date.now(),
+	      };
+	      setMessages((prev) => [...prev, userMsg]);
+	      
+	      // 直接调用 executeTool 生成图谱
+	      import("../services/ai-tools").then(async ({ executeTool }) => {
+	        let toolArgs: any = {};
+	        
+	        if (cleanedQuery) {
+	          // 检查是否是 blockId 格式：纯数字、blockid 123、blockid:123
+	          const blockIdMatch = cleanedQuery.match(/^(?:blockid[:\s]*)?(\d+)$/i);
+	          if (blockIdMatch) {
+	            toolArgs = { blockId: parseInt(blockIdMatch[1], 10) };
+	          } else {
+	            // 否则当作页面名称
+	            toolArgs = { pageName: cleanedQuery };
+	          }
+	        } else {
+	          // 使用当前打开的页面
+	          try {
+	            const activePanel = orca.state.activePanel;
+	            if (activePanel && activePanel !== uiStore.aiChatPanelId) {
+	              const vp = orca.nav.findViewPanel(activePanel, orca.state.panels);
+	              if (vp?.view === "block" && vp.viewArgs?.blockId) {
+	                toolArgs = { blockId: vp.viewArgs.blockId };
+	              }
+	            }
+	          } catch {}
+	        }
+	        
+	        if (!toolArgs.pageName && !toolArgs.blockId) {
+	          const assistantMsg: Message = {
+	            id: nowId(),
+	            role: "assistant",
+	            content: "请先选择一个页面，或指定页面名称，例如：/localgraph 阿拉丁",
+	            createdAt: Date.now(),
+	          };
+	          setMessages((prev) => [...prev, assistantMsg]);
+	          return;
+	        }
+	        
+	        const result = await executeTool("getBlockLinks", toolArgs);
+	        const assistantMsg: Message = {
+	          id: nowId(),
+	          role: "assistant",
+	          content: result,
+	          createdAt: Date.now(),
+	        };
+	        setMessages((prev) => [...prev, assistantMsg]);
+	        queueMicrotask(scrollToBottom);
+	      });
+	      
+	      return; // 直接返回，不走 AI
 	    }
 
 	    // Get current chat mode for tool handling
