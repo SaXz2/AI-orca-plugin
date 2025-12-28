@@ -90,28 +90,28 @@ const emptyStyle: React.CSSProperties = {
 };
 
 const sessionItemStyle = (isActive: boolean, isPinned: boolean): React.CSSProperties => ({
-  padding: "10px 12px",
-  marginBottom: 4,
-  borderRadius: 8,
+  padding: "6px 8px",
+  marginBottom: 2,
+  borderRadius: 6,
   cursor: "pointer",
   background: isActive ? "var(--orca-color-bg-3)" : "transparent",
   border: isPinned ? "1px solid var(--orca-color-primary, #007bff)" : "1px solid transparent",
   display: "flex",
   alignItems: "center",
-  gap: 10,
+  gap: 6,
   transition: "all 0.15s ease",
 });
 
 const sessionIconStyle = (isPinned: boolean): React.CSSProperties => ({
-  width: 28,
-  height: 28,
-  borderRadius: 6,
+  width: 22,
+  height: 22,
+  borderRadius: 4,
   background: isPinned ? "var(--orca-color-primary, #007bff)" : "var(--orca-color-bg-3)",
   color: isPinned ? "#fff" : "var(--orca-color-text-2)",
   display: "flex",
   alignItems: "center",
   justifyContent: "center",
-  fontSize: 12,
+  fontSize: 11,
   flexShrink: 0,
 });
 
@@ -122,7 +122,7 @@ const sessionContentStyle: React.CSSProperties = {
 
 const sessionTitleStyle: React.CSSProperties = {
   fontWeight: 500,
-  fontSize: 13,
+  fontSize: 12,
   color: "var(--orca-color-text-1)",
   whiteSpace: "nowrap",
   overflow: "hidden",
@@ -130,12 +130,12 @@ const sessionTitleStyle: React.CSSProperties = {
 };
 
 const sessionMetaStyle: React.CSSProperties = {
-  fontSize: 11,
+  fontSize: 10,
   color: "var(--orca-color-text-3)",
-  marginTop: 2,
+  marginTop: 1,
   display: "flex",
   alignItems: "center",
-  gap: 6,
+  gap: 4,
 };
 
 const actionButtonStyle: React.CSSProperties = {
@@ -143,8 +143,8 @@ const actionButtonStyle: React.CSSProperties = {
   border: "none",
   color: "var(--orca-color-text-3)",
   cursor: "pointer",
-  padding: 4,
-  borderRadius: 4,
+  padding: 2,
+  borderRadius: 3,
   display: "flex",
   alignItems: "center",
   justifyContent: "center",
@@ -380,7 +380,7 @@ export default function ChatHistoryMenu({
                   e.currentTarget.style.color = "var(--orca-color-text-3)";
                 },
               },
-              createElement("i", { className: "ti ti-edit", style: { fontSize: 14 } })
+              createElement("i", { className: "ti ti-edit", style: { fontSize: 12 } })
             ),
           onTogglePin &&
             createElement(
@@ -400,7 +400,7 @@ export default function ChatHistoryMenu({
               },
               createElement("i", {
                 className: isPinned ? "ti ti-pinned-off" : "ti ti-pin",
-                style: { fontSize: 14 },
+                style: { fontSize: 12 },
               })
             ),
           onToggleFavorite &&
@@ -421,7 +421,7 @@ export default function ChatHistoryMenu({
               },
               createElement("i", {
                 className: session.favorited ? "ti ti-star-filled" : "ti ti-star",
-                style: { fontSize: 14, color: session.favorited ? "#fbbf24" : undefined },
+                style: { fontSize: 12, color: session.favorited ? "#fbbf24" : undefined },
               })
             ),
           createElement(
@@ -439,7 +439,7 @@ export default function ChatHistoryMenu({
                 e.currentTarget.style.color = "var(--orca-color-text-3)";
               },
             },
-            createElement("i", { className: "ti ti-trash", style: { fontSize: 14 } })
+            createElement("i", { className: "ti ti-trash", style: { fontSize: 12 } })
           )
         )
     );
