@@ -5,13 +5,12 @@
 
 import type { DbId } from "../orca.d.ts";
 import type { AiModelOption } from "../settings/ai-chat-settings";
-import type { FileRef } from "../services/session-service";
+import type { FileRef, VideoProcessMode } from "../services/session-service";
 import { contextStore } from "../store/context-store";
-import { 
-  uploadFile, 
-  getFileDisplayUrl, 
-  getFileIcon, 
-  isImageFile, 
+import {
+  uploadFile,
+  getFileDisplayUrl,
+  getFileIcon,
   getSupportedExtensions,
   isSupportedFile,
 } from "../services/file-service";
@@ -19,10 +18,7 @@ import ContextChips from "./ContextChips";
 import ContextPicker from "./ContextPicker";
 import { ModelSelectorButton, InjectionModeSelector, ModeSelectorButton } from "./chat-input";
 import { loadFromStorage } from "../store/chat-mode-store";
-import {
-  textareaStyle,
-  sendButtonStyle,
-} from "./chat-input";
+import { textareaStyle, sendButtonStyle } from "./chat-input";
 
 const React = window.React as unknown as {
   createElement: typeof window.React.createElement;
@@ -238,6 +234,16 @@ export default function ChatInput({
     setPendingFiles(prev => prev.filter((_, i) => i !== index));
   }, []);
 
+  // 设置视频处理模式
+  const handleSetVideoMode = useCallback((index: number, mode: VideoProcessMode) => {
+    setPendingFiles(prev => prev.map((file, i) => {
+      if (i === index && file.category === "video") {
+        return { ...file, videoMode: mode };
+      }
+      return file;
+    }));
+  }, []);
+
   // 处理粘贴事件（支持图片粘贴）
   const handlePaste = useCallback(async (e: ClipboardEvent) => {
     const items = e.clipboardData?.items;
@@ -359,99 +365,158 @@ export default function ChatInput({
       ),
 
       // 文件预览区域
-      pendingFiles.length > 0 && createElement(
-        "div",
-        {
-          style: {
-            display: "flex",
-            flexWrap: "wrap",
-            gap: "8px",
-            marginBottom: "8px",
-          },
-        },
-        ...pendingFiles.map((file, index) => {
-          const isImage = file.category === "image";
-          return createElement(
-            "div",
-            {
-              key: `${file.path}-${index}`,
-              style: {
-                position: "relative",
-                width: isImage ? "60px" : "auto",
-                height: isImage ? "60px" : "auto",
-                minWidth: isImage ? undefined : "80px",
-                maxWidth: isImage ? undefined : "150px",
-                borderRadius: "8px",
-                overflow: "hidden",
-                border: "1px solid var(--orca-color-border)",
-                background: isImage ? undefined : "var(--orca-color-bg-3)",
-                padding: isImage ? undefined : "8px 12px",
-                display: "flex",
-                flexDirection: isImage ? undefined : "column",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: isImage ? undefined : "4px",
-              },
+      pendingFiles.length > 0 &&
+        createElement(
+          "div",
+          {
+            style: {
+              display: "flex",
+              flexWrap: "wrap",
+              gap: "8px",
+              marginBottom: "8px",
             },
-            isImage
-              ? createElement("img", {
-                  src: getFileDisplayUrl(file),
-                  alt: file.name,
-                  style: {
-                    width: "100%",
-                    height: "100%",
-                    objectFit: "cover",
-                  },
-                  onError: (e: any) => {
-                    e.target.style.display = "none";
-                  },
-                })
-              : [
-                  createElement("i", {
-                    key: "icon",
-                    className: getFileIcon(file.name, file.mimeType),
-                    style: { fontSize: "20px", color: "var(--orca-color-primary)" },
-                  }),
-                  createElement("span", {
-                    key: "name",
-                    style: {
-                      fontSize: "10px",
-                      color: "var(--orca-color-text-2)",
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                      maxWidth: "100%",
-                      textAlign: "center",
-                    },
-                    title: file.name,
-                  }, file.name.length > 12 ? file.name.slice(0, 10) + "..." : file.name),
-                ],
-            createElement(
-              "button",
+          },
+          ...pendingFiles.map((file, index) => {
+            const isImage = file.category === "image";
+            const isVideo = file.category === "video";
+            return createElement(
+              "div",
               {
-                onClick: () => handleRemoveFile(index),
+                key: `${file.path}-${index}`,
                 style: {
-                  position: "absolute",
-                  top: "2px",
-                  right: "2px",
-                  width: "18px",
-                  height: "18px",
-                  borderRadius: "50%",
-                  background: "rgba(0,0,0,0.6)",
-                  color: "#fff",
-                  border: "none",
-                  cursor: "pointer",
+                  position: "relative",
+                  width: isImage ? "60px" : "auto",
+                  height: isImage ? "60px" : "auto",
+                  minWidth: isImage ? undefined : "80px",
+                  maxWidth: isImage ? undefined : "150px",
+                  borderRadius: "8px",
+                  overflow: "hidden",
+                  border: "1px solid var(--orca-color-border)",
+                  background: isImage ? undefined : "var(--orca-color-bg-3)",
+                  padding: isImage ? undefined : "8px 12px",
                   display: "flex",
+                  flexDirection: isImage ? undefined : "column",
                   alignItems: "center",
                   justifyContent: "center",
-                  fontSize: "10px",
+                  gap: isImage ? undefined : "4px",
                 },
-                title: "移除文件",
               },
-              createElement("i", { className: "ti ti-x" })
-            )
-          );
-        }),
+              isImage
+                ? createElement("img", {
+                    src: getFileDisplayUrl(file),
+                    alt: file.name,
+                    style: {
+                      width: "100%",
+                      height: "100%",
+                      objectFit: "cover",
+                    },
+                    onError: (e: any) => {
+                      e.target.style.display = "none";
+                    },
+                  })
+                : [
+                    createElement("i", {
+                      key: "icon",
+                      className: getFileIcon(file.name, file.mimeType),
+                      style: { fontSize: "20px", color: "var(--orca-color-primary)" },
+                    }),
+                    createElement(
+                      "span",
+                      {
+                        key: "name",
+                        style: {
+                          fontSize: "10px",
+                          color: "var(--orca-color-text-2)",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                          maxWidth: "100%",
+                          textAlign: "center",
+                        },
+                        title: file.name,
+                      },
+                      file.name.length > 12 ? file.name.slice(0, 10) + "..." : file.name
+                    ),
+                    // 视频模式切换按钮
+                    isVideo &&
+                      createElement(
+                        "div",
+                        {
+                          key: "video-mode",
+                          style: {
+                            display: "flex",
+                            gap: "2px",
+                            marginTop: "2px",
+                          },
+                        },
+                        createElement(
+                          "button",
+                          {
+                            onClick: (e: any) => {
+                              e.stopPropagation();
+                              handleSetVideoMode(index, "full");
+                            },
+                            style: {
+                              padding: "2px 4px",
+                              fontSize: "9px",
+                              border: "none",
+                              borderRadius: "3px",
+                              cursor: "pointer",
+                              background: file.videoMode !== "audio-only" ? "var(--orca-color-primary)" : "var(--orca-color-bg-2)",
+                              color: file.videoMode !== "audio-only" ? "#fff" : "var(--orca-color-text-3)",
+                            },
+                            title: "完整识别（画面+音频）",
+                          },
+                          "全"
+                        ),
+                        createElement(
+                          "button",
+                          {
+                            onClick: (e: any) => {
+                              e.stopPropagation();
+                              handleSetVideoMode(index, "audio-only");
+                            },
+                            style: {
+                              padding: "2px 4px",
+                              fontSize: "9px",
+                              border: "none",
+                              borderRadius: "3px",
+                              cursor: "pointer",
+                              background: file.videoMode === "audio-only" ? "var(--orca-color-primary)" : "var(--orca-color-bg-2)",
+                              color: file.videoMode === "audio-only" ? "#fff" : "var(--orca-color-text-3)",
+                            },
+                            title: "仅音频识别",
+                          },
+                          "音"
+                        )
+                      ),
+                  ],
+              createElement(
+                "button",
+                {
+                  onClick: () => handleRemoveFile(index),
+                  style: {
+                    position: "absolute",
+                    top: "2px",
+                    right: "2px",
+                    width: "18px",
+                    height: "18px",
+                    borderRadius: "50%",
+                    background: "rgba(0,0,0,0.6)",
+                    color: "#fff",
+                    border: "none",
+                    cursor: "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    fontSize: "10px",
+                  },
+                  title: "移除文件",
+                },
+                createElement("i", { className: "ti ti-x" })
+              )
+            );
+          }),
         isUploading && createElement(
           "div",
           {

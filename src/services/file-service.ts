@@ -1,14 +1,17 @@
 /**
  * File Service - 处理各种文件类型的导入
- * 
+ *
  * 支持的文件类型：
  * - 图片：PNG, JPEG, GIF, WebP
+ * - 视频：MP4, WebM, MOV（抽帧+音频识别）
+ * - 音频：MP3, WAV, OGG
  * - 文档：PDF, TXT, Markdown, Word (docx)
  * - 代码：各种编程语言
  * - 数据：CSV, JSON, Excel (xlsx)
  */
 
 import type { FileRef } from "./session-service";
+import { buildVideoContentForApi, isVideoFile } from "./video-service";
 
 /**
  * 文件类型分类
@@ -393,8 +396,16 @@ export async function uploadFiles(files: FileList | File[]): Promise<FileRef[]> 
  * 获取文件显示 URL（用于图片预览）
  */
 export function getFileDisplayUrl(fileRef: FileRef): string {
+  const fullPath = getFileFullPath(fileRef);
+  return `file:///${fullPath.replace(/\\/g, "/")}`;
+}
+
+/**
+ * 获取文件完整路径（用于 shell-open 等操作）
+ */
+export function getFileFullPath(fileRef: FileRef): string {
   let fullPath = fileRef.path;
-  
+
   if (fileRef.path.startsWith("./") || fileRef.path.startsWith("../")) {
     const repoDir = orca.state.repoDir;
     if (repoDir) {
@@ -403,7 +414,7 @@ export function getFileDisplayUrl(fileRef: FileRef): string {
     }
   }
 
-  return `file:///${fullPath.replace(/\\/g, "/")}`;
+  return fullPath;
 }
 
 /**
@@ -512,16 +523,10 @@ export async function buildFileContentForApi(
     };
   }
 
-  // 视频类型
+  // 视频类型 - 使用抽帧处理
   if (config.category === "video") {
-    const base64 = await fileToBase64(fileRef);
-    if (!base64) return null;
-    return {
-      type: "video_url",
-      video_url: {
-        url: `data:${fileRef.mimeType};base64,${base64}`,
-      },
-    };
+    // 视频需要特殊处理，返回 null 让调用方使用 buildFileContentsForApi
+    return null;
   }
 
   // 音频类型
@@ -546,4 +551,37 @@ export async function buildFileContentForApi(
   }
 
   return null;
+}
+
+/**
+ * 构建发送给 API 的文件内容（支持返回多个内容）
+ * 主要用于视频处理（抽帧返回多张图片）
+ */
+export async function buildFileContentsForApi(
+  fileRef: FileRef
+): Promise<Array<{ type: string; [key: string]: any }>> {
+  const config = getFileTypeConfig(fileRef.name, fileRef.mimeType);
+  if (!config) return [];
+
+  // 视频类型 - 抽帧 + 音频识别
+  if (config.category === "video" || isVideoFile(fileRef)) {
+    try {
+      return await buildVideoContentForApi(fileRef);
+    } catch (error) {
+      console.error("[file-service] Video processing failed:", error);
+      // 降级：尝试直接发送 base64（小视频）
+      const base64 = await fileToBase64(fileRef);
+      if (base64) {
+        return [{
+          type: "video_url",
+          video_url: { url: `data:${fileRef.mimeType};base64,${base64}` },
+        }];
+      }
+      return [{ type: "text", text: `[视频处理失败: ${fileRef.name}]` }];
+    }
+  }
+
+  // 其他类型使用单内容函数
+  const content = await buildFileContentForApi(fileRef);
+  return content ? [content] : [];
 }

@@ -26,7 +26,6 @@ import {
 } from "../settings/ai-chat-settings";
 import {
   loadSessions,
-  saveSession,
   deleteSession,
   clearAllSessions,
   createNewSession,
@@ -37,7 +36,7 @@ import {
   type Message,
   type FileRef,
 } from "../services/session-service";
-import { sessionStore, updateSessionStore, markSessionSaved, clearSessionStore } from "../store/session-store";
+import { sessionStore, updateSessionStore, clearSessionStore } from "../store/session-store";
 import { TOOLS, executeTool } from "../services/ai-tools";
 import { nowId, safeText } from "../utils/text-utils";
 import { buildConversationMessages } from "../services/message-builder";
@@ -162,27 +161,6 @@ export default function AiChatPanel({ panelId }: PanelProps) {
       setSessionsLoaded(true);
     });
   }, []);
-
-  const handleSaveSession = useCallback(async () => {
-    const filteredMessages = messages.filter((m) => !m.localOnly);
-    if (filteredMessages.length === 0) {
-      orca.notify("info", "No messages to save");
-      return;
-    }
-
-    const sessionToSave: SavedSession = {
-      ...currentSession,
-      messages: filteredMessages,
-      contexts: [...contextStore.selected],
-      updatedAt: Date.now(),
-    };
-
-    await saveSession(sessionToSave);
-    markSessionSaved();
-    const data = await loadSessions();
-    setSessions(data.sessions);
-    orca.notify("success", "Session saved");
-  }, [messages, currentSession]);
 
   const handleNewSession = useCallback(() => {
     const pluginName = getAiChatPluginName();
@@ -894,6 +872,16 @@ export default function AiChatPanel({ panelId }: PanelProps) {
         style: headerStyle,
       },
       createElement("div", { style: headerTitleStyle }, "AI Chat"),
+      // New Session Button
+      createElement(
+        Button,
+        {
+          variant: "plain",
+          onClick: handleNewSession,
+          title: "新对话",
+        },
+        createElement("i", { className: "ti ti-plus" })
+      ),
       // Chat History
       createElement(ChatHistoryMenu, {
         sessions,
@@ -905,9 +893,8 @@ export default function AiChatPanel({ panelId }: PanelProps) {
         onTogglePin: handleTogglePin,
         onRename: handleRenameSession,
       }),
-      // More Menu (Save, Settings, Clear)
+      // More Menu (Settings, Memory, Clear)
       createElement(HeaderMenu, {
-        onSaveSession: handleSaveSession,
         onClearChat: clear,
         onOpenSettings: () => void orca.commands.invokeCommand("core.openSettings"),
         onOpenMemoryManager: handleOpenMemoryManager,

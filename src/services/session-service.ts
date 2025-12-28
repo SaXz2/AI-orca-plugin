@@ -13,6 +13,11 @@ export type ImageRef = {
 };
 
 /**
+ * 视频处理模式
+ */
+export type VideoProcessMode = "full" | "audio-only" | "frames-only";
+
+/**
  * File reference for messages (stores path, not content)
  * Supports images, videos, audio, documents, code files, and data files
  */
@@ -22,6 +27,7 @@ export type FileRef = {
   mimeType: string; // MIME 类型
   size?: number; // 文件大小 (bytes)
   category?: "image" | "video" | "audio" | "document" | "code" | "data" | "other"; // 文件分类
+  videoMode?: VideoProcessMode; // 视频处理模式：full=完整处理, audio-only=仅音频, frames-only=仅抽帧
 };
 
 /**

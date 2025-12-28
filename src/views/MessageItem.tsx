@@ -14,7 +14,7 @@ import MarkdownMessage from "../components/MarkdownMessage";
 import ToolStatusIndicator from "../components/ToolStatusIndicator";
 import ExtractMemoryButton from "./ExtractMemoryButton";
 import type { ExtractedMemory } from "../services/memory-extraction";
-import { getFileDisplayUrl, getFileIcon } from "../services/file-service";
+import { getFileDisplayUrl, getFileIcon, getFileFullPath } from "../services/file-service";
 import {
   messageRowStyle,
   messageBubbleStyle,
@@ -189,7 +189,7 @@ export default function MessageItem({
                   gap: isImage ? undefined : "8px",
                 },
                 onClick: () => {
-                  orca.invokeBackend("shell-open", file.path);
+                  orca.invokeBackend("shell-open", getFileFullPath(file));
                 },
                 title: file.name,
               },
@@ -253,7 +253,7 @@ export default function MessageItem({
                   cursor: "pointer",
                 },
                 onClick: () => {
-                  orca.invokeBackend("shell-open", img.path);
+                  orca.invokeBackend("shell-open", getFileFullPath(img));
                 },
                 title: img.name,
               },

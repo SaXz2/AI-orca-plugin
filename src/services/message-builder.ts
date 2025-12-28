@@ -2,14 +2,14 @@
  * Message Builder Service
  *
  * Builds OpenAI-compatible message arrays with standard and fallback formats.
- * Supports multimodal messages with images.
+ * Supports multimodal messages with images, videos, and other files.
  */
 
 import type { OpenAIChatMessage } from "./openai-client";
 import type { Message } from "./session-service";
 import type { ChatMode } from "../store/chat-mode-store";
 import { buildImageContent } from "./image-service";
-import { buildFileContentForApi, getFileTypeConfig } from "./file-service";
+import { buildFileContentsForApi } from "./file-service";
 
 export interface MessageBuildParams {
   messages: Message[];
@@ -92,23 +92,21 @@ async function messageToApiWithImages(m: Message): Promise<OpenAIChatMessage> {
     }
   }
 
-  // Handle messages with files (new format - supports all file types)
+  // Handle messages with files (new format - supports all file types including video)
   if (m.files && m.files.length > 0 && m.role === "user") {
     const contentParts: any[] = [];
-    
+
     // Add text content if present
     if (m.content) {
       contentParts.push({ type: "text", text: m.content });
     }
-    
-    // Add file content
+
+    // Add file content (may return multiple items for video)
     for (const file of m.files) {
-      const fileContent = await buildFileContentForApi(file);
-      if (fileContent) {
-        contentParts.push(fileContent);
-      }
+      const fileContents = await buildFileContentsForApi(file);
+      contentParts.push(...fileContents);
     }
-    
+
     if (contentParts.length > 0) {
       return {
         role: "user",
