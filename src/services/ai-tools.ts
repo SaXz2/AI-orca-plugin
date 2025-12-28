@@ -37,45 +37,49 @@ export const TOOLS: OpenAITool[] = [
     type: "function",
     function: {
       name: "searchBlocksByTag",
-      description: `根据标签精准搜索笔记。支持搜索单个标签（如 #TODO）或多个标签。
-使用建议：
-- 用户问"有多少条X"时，用 countOnly:true 只返回数量
-- 用户要"列出所有X"时，用 briefMode:true 返回简洁列表
-- 用户要"详细看看"时，用默认模式返回完整内容
-- 用户要"最近修改/创建的"时，用 sortBy + sortOrder 排序
-- 结果超过50条时，用 offset 分页获取更多`,
+      description: `根据标签精准搜索笔记。
+适用场景：
+- 查找带有特定标签的笔记（如 #TODO、#book、#project）
+- 统计某标签下的笔记数量
+- 按时间排序查看标签笔记
+
+参数说明：
+- countOnly=true：仅返回数量（用于"有多少条"类问题）
+- briefMode=true：返回简洁列表（用于"列出所有"类问题）
+- sortBy + sortOrder：按创建/修改时间排序
+- offset：分页获取更多结果`,
       parameters: {
         type: "object",
         properties: {
           tag_query: {
             type: "string",
-            description: "标签查询字符串，如 '#tag1' 或 '#tag1 #tag2'",
+            description: "标签查询，如 '#TODO' 或 '#book #reading'（多标签用空格分隔）",
           },
           maxResults: {
             type: "number",
-            description: "返回的最大结果数（默认 20，最大 50）",
+            description: "最大结果数（默认20，最大50）",
           },
           offset: {
             type: "number",
-            description: "跳过前 N 条结果（用于分页，如 offset:50 获取第51-100条）",
+            description: "跳过前N条（用于分页）",
           },
           countOnly: {
             type: "boolean",
-            description: "仅返回总数统计，不返回内容（用于回答'有多少条'类问题）",
+            description: "仅返回总数",
           },
           briefMode: {
             type: "boolean",
-            description: "简洁模式：返回标题+摘要，不返回完整内容（用于列表概览）",
+            description: "简洁模式（标题+摘要）",
           },
           sortBy: {
             type: "string",
             enum: ["created", "modified"],
-            description: "排序字段：created（创建时间）或 modified（修改时间）",
+            description: "排序字段",
           },
           sortOrder: {
             type: "string",
             enum: ["asc", "desc"],
-            description: "排序顺序：asc（升序/最早）或 desc（降序/最新），默认 desc",
+            description: "排序顺序（默认desc降序）",
           },
         },
         required: ["tag_query"],
@@ -86,44 +90,45 @@ export const TOOLS: OpenAITool[] = [
     type: "function",
     function: {
       name: "searchBlocksByText",
-      description: `全文搜索笔记内容。适合查找包含特定关键词或短语的笔记。
-使用建议：
-- 用户问"有多少条包含X的笔记"时，用 countOnly:true
-- 用户要"列出包含X的笔记"时，用 briefMode:true
-- 用户要"最近修改/创建的"时，用 sortBy + sortOrder 排序
-- 结果超过50条时，用 offset 分页`,
+      description: `全文搜索笔记内容。
+适用场景：
+- 查找包含特定关键词的笔记
+- 搜索某个主题相关的内容
+- 模糊查找（不知道具体标签时）
+
+⚠️ 注意：如果用户明确提到标签（如 #xxx），应优先使用 searchBlocksByTag`,
       parameters: {
         type: "object",
         properties: {
           query: {
             type: "string",
-            description: "搜索关键词或短语",
+            description: "搜索关键词",
           },
           maxResults: {
             type: "number",
-            description: "返回的最大结果数（默认 20，最大 50）",
+            description: "最大结果数（默认20，最大50）",
           },
           offset: {
             type: "number",
-            description: "跳过前 N 条结果（用于分页）",
+            description: "跳过前N条（用于分页）",
           },
           countOnly: {
             type: "boolean",
-            description: "仅返回总数统计（用于回答'有多少条'类问题）",
+            description: "仅返回总数",
           },
           briefMode: {
             type: "boolean",
-            description: "简洁模式：返回标题+摘要（用于列表概览）",
+            description: "简洁模式",
           },
           sortBy: {
             type: "string",
             enum: ["created", "modified"],
-            description: "排序字段：created（创建时间）或 modified（修改时间）",
+            description: "排序字段",
           },
           sortOrder: {
             type: "string",
             enum: ["asc", "desc"],
-            description: "排序顺序：asc（升序/最早）或 desc（降序/最新），默认 desc",
+            description: "排序顺序",
           },
         },
         required: ["query"],
@@ -217,17 +222,23 @@ export const TOOLS: OpenAITool[] = [
     type: "function",
     function: {
       name: "getRecentJournals",
-      description: "获取最近几天的日记条目。当你需要了解用户最近的动态、计划或记录时使用。",
+      description: `获取最近几天的日记。
+适用场景：
+- 查看用户最近的记录和动态
+- 回顾过去几天的内容
+- 了解用户近期计划
+
+⚠️ 如果只需要今天的日记，请使用 getTodayJournal（更高效）`,
       parameters: {
         type: "object",
         properties: {
           days: {
             type: "number",
-            description: "追溯的天数（默认 7）",
+            description: "追溯天数（默认7天）",
           },
           includeChildren: {
             type: "boolean",
-            description: "是否包含日记条目的子块（默认 true）",
+            description: "是否包含子块（默认true）",
           },
           maxResults: {
             type: "number",
@@ -241,13 +252,19 @@ export const TOOLS: OpenAITool[] = [
     type: "function",
     function: {
       name: "getTodayJournal",
-      description: "获取今日日记的完整内容。当你需要了解用户今天的计划、记录或待办事项时使用。这是最常用的日记查询工具。",
+      description: `获取今日日记的完整内容。
+适用场景：
+- 查看今天的计划和待办
+- 了解今天记录了什么
+- 在今日日记中添加内容前先查看
+
+这是最常用的日记查询工具，比 getRecentJournals 更高效。`,
       parameters: {
         type: "object",
         properties: {
           includeChildren: {
             type: "boolean",
-            description: "是否包含日记条目的子块（默认 true）",
+            description: "是否包含子块（默认true）",
           },
         },
       },
@@ -332,21 +349,27 @@ export const TOOLS: OpenAITool[] = [
     type: "function",
     function: {
       name: "getBlock",
-      description: "根据块 ID 获取单个块的详细内容。当你需要查看某个特定块的完整内容时使用。",
+      description: `根据块 ID 获取单个块的详细内容。
+适用场景：
+- 查看搜索结果中某个块的完整内容
+- 获取特定块的详细信息
+- 需要块的创建/修改时间时设置 includeMeta=true
+
+⚠️ 如果要查看页面内容，优先使用 getPage（按名称查找更方便）`,
       parameters: {
         type: "object",
         properties: {
           blockId: {
             type: "number",
-            description: "块的 ID（数字）",
+            description: "块 ID（数字）",
           },
           includeChildren: {
             type: "boolean",
-            description: "是否包含所有子块内容（默认 true）",
+            description: "是否包含子块（默认true）",
           },
           includeMeta: {
             type: "boolean",
-            description: "是否包含元数据（创建时间、修改时间）。当用户询问单个笔记的时间信息时设为 true",
+            description: "是否包含时间信息（创建/修改时间）",
           },
         },
         required: ["blockId"],
@@ -385,17 +408,25 @@ export const TOOLS: OpenAITool[] = [
     type: "function",
     function: {
       name: "createBlock",
-      description: "在指定位置创建新笔记条目。你需要提供参考块 ID 以及新内容插入的位置（如子块末尾、当前块之后等）。",
+      description: `在指定位置创建新笔记。
+适用场景：
+- 在今日日记中添加内容
+- 在某个页面下创建新条目
+- 记录用户要求保存的信息
+
+参数说明：
+- pageName：在指定页面末尾创建（推荐）
+- refBlockId + position：在指定块的相对位置创建`,
       parameters: {
         type: "object",
         properties: {
           refBlockId: {
             type: "number",
-            description: "参考块的 ID。你也可以提供 pageName 替代此参数。",
+            description: "参考块 ID（与 pageName 二选一）",
           },
           pageName: {
             type: "string",
-            description: "页面名称。如果提供了此项，将在该页面末尾创建块。",
+            description: "页面名称，在该页面末尾创建（推荐使用）",
           },
           content: {
             type: "string",
@@ -404,7 +435,7 @@ export const TOOLS: OpenAITool[] = [
           position: {
             type: "string",
             enum: ["firstChild", "lastChild", "before", "after"],
-            description: "相对于参考块的插入位置，默认为 'lastChild' (作为子块末尾)",
+            description: "插入位置（默认 lastChild）",
           },
         },
         required: ["content"],
@@ -469,12 +500,10 @@ export const TOOLS: OpenAITool[] = [
     type: "function",
     function: {
       name: "getBlockLinks",
-      description: `获取指定页面或块的链接关系图谱数据。返回该块的出链（引用的其他块）和入链（被其他块引用）。
-用于展示笔记之间的关联关系，类似 Obsidian 的 Local Graph。
-
-支持两种查询方式：
-1. 通过 blockId 查询：直接传入数字 ID
-2. 通过页面名称查询：传入 pageName 参数`,
+      description: `获取指定页面或块的出链和入链（反链）列表。
+⚠️ 重要：此工具仅返回链接数据的文本列表，不会生成可视化图谱！
+- 如果用户要求"显示图谱"、"链接图"、"关系图"，请告知用户使用 /localgraph 命令
+- 此工具适用于：查询反链数量、列出引用关系、分析链接结构`,
       parameters: {
         type: "object",
         properties: {
@@ -1447,15 +1476,42 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
         };
 
         const centerTitle = await getTitle(blockId);
-        const outCount = blockData.refs?.length || 0;
-        const inCount = blockData.backRefs?.length || 0;
+        const refs = blockData.refs || [];
+        const backRefs = blockData.backRefs || [];
+        const outCount = refs.length;
+        const inCount = backRefs.length;
 
-        // 返回 localgraph 代码块和带链接的统计
+        // 返回链接列表（不返回 localgraph 代码块）
         if (outCount === 0 && inCount === 0) {
           return `[${centerTitle}](orca-block:${blockId}) 暂无链接关系。`;
         }
         
-        return `\`\`\`localgraph\n${blockId}\n\`\`\`\n\n[${centerTitle}](orca-block:${blockId}) 有 ${outCount} 个出链，${inCount} 个入链。`;
+        let result = `[${centerTitle}](orca-block:${blockId}) 的链接关系：\n\n`;
+        
+        // 出链列表
+        if (outCount > 0) {
+          result += `**出链 (${outCount})**:\n`;
+          for (const ref of refs.slice(0, 20)) {
+            const targetId = ref.to;
+            const title = await getTitle(targetId);
+            result += `- [${title}](orca-block:${targetId})\n`;
+          }
+          if (outCount > 20) result += `- ...还有 ${outCount - 20} 个\n`;
+          result += "\n";
+        }
+        
+        // 入链（反链）列表
+        if (inCount > 0) {
+          result += `**入链/反链 (${inCount})**:\n`;
+          for (const ref of backRefs.slice(0, 20)) {
+            const sourceId = ref.from;
+            const title = await getTitle(sourceId);
+            result += `- [${title}](orca-block:${sourceId})\n`;
+          }
+          if (inCount > 20) result += `- ...还有 ${inCount - 20} 个\n`;
+        }
+        
+        return result.trim();
       } catch (err: any) {
         return `Error getting block links: ${err.message}`;
       }

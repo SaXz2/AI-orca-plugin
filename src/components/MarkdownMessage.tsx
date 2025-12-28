@@ -312,14 +312,14 @@ function ChecklistBlock({
 
 // 时间线事件类型颜色映射
 const TIMELINE_CATEGORY_COLORS: Record<string, string> = {
-  work: "#007bff",      // 工作 - 蓝色
-  fun: "#e83e8c",       // 娱乐 - 粉色
-  study: "#28a745",     // 学习 - 绿色
-  life: "#fd7e14",      // 生活 - 橙色
-  health: "#20c997",    // 健康 - 青色
-  travel: "#6f42c1",    // 旅行 - 紫色
-  finance: "#ffc107",   // 财务 - 黄色
-  social: "#17a2b8",    // 社交 - 蓝绿色
+  工作: "#007bff",    // 蓝色
+  娱乐: "#e83e8c",    // 粉色
+  学习: "#28a745",    // 绿色
+  生活: "#fd7e14",    // 橙色
+  健康: "#20c997",    // 青色
+  旅行: "#6f42c1",    // 紫色
+  财务: "#ffc107",    // 黄色
+  社交: "#17a2b8",    // 蓝绿色
 };
 
 function getTimelineDotColor(category?: string): string {
@@ -334,6 +334,11 @@ function TimelineBlock({ items, renderInline }: { items: TimelineItem[], renderI
     { className: "md-timeline" },
     ...items.map((item, index) => {
       const dotColor = getTimelineDotColor(item.category);
+      // 分离日期和时间：支持 "2024-01-15 14:30" 格式
+      const dateTimeParts = item.date.split(" ");
+      const datePart = dateTimeParts[0] || item.date;
+      const timePart = dateTimeParts[1] || null; // HH:mm 部分
+      
       return createElement(
         "div",
         { key: index, className: "md-timeline-item" },
@@ -347,7 +352,12 @@ function TimelineBlock({ items, renderInline }: { items: TimelineItem[], renderI
           createElement(
             "div",
             { className: "md-timeline-date", style: { color: dotColor } },
-            item.date,
+            datePart,
+            timePart && createElement(
+              "span",
+              { className: "md-timeline-time", style: { marginLeft: "8px", opacity: 0.8, fontSize: "0.9em" } },
+              timePart
+            ),
             item.category && createElement(
               "span",
               { className: "md-timeline-category", style: { background: dotColor } },
