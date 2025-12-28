@@ -324,6 +324,7 @@ export async function renameSession(sessionId: string, newTitle: string): Promis
 /**
  * Auto-cache current session (called on message changes)
  * This saves without requiring manual action
+ * Only generates title on first message, preserves existing title afterwards
  */
 export async function autoCacheSession(session: SavedSession): Promise<void> {
   const data = await loadSessions();
@@ -334,16 +335,28 @@ export async function autoCacheSession(session: SavedSession): Promise<void> {
   // Filter out localOnly messages
   const filteredMessages = session.messages.filter((m) => !m.localOnly);
 
-  // Always cache, even if empty (to preserve session state)
+  // Find existing session
+  const existingIndex = data.sessions.findIndex((s) => s.id === session.id);
+  const existingSession = existingIndex >= 0 ? data.sessions[existingIndex] : null;
+
+  // Only generate title on first save (when no existing title)
+  // After that, keep the existing title unchanged
+  let title = session.title;
+  if (existingSession?.title) {
+    // Keep existing title
+    title = existingSession.title;
+  } else if (!title && filteredMessages.length > 0) {
+    // First time with messages, generate title
+    title = generateSessionTitle(filteredMessages);
+  }
+
   const sessionToSave: SavedSession = {
     ...session,
     messages: filteredMessages,
-    title: session.title || generateSessionTitle(filteredMessages),
+    title: title || "",
     updatedAt: Date.now(),
   };
 
-  // Find existing or add new
-  const existingIndex = data.sessions.findIndex((s) => s.id === session.id);
   if (existingIndex >= 0) {
     // Preserve pinned status
     sessionToSave.pinned = data.sessions[existingIndex].pinned;
