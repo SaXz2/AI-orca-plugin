@@ -484,10 +484,6 @@ export const chatAnimations = `
     vertical-align: super;
     margin: 0 2px;
     transition: transform 0.2s, box-shadow 0.2s;
-    /* 稍微增大点击区域 */
-    padding: 2px;
-    background-clip: content-box;
-    box-sizing: content-box;
 }
 
 .md-block-dot:hover {
