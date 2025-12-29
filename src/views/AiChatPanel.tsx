@@ -1172,8 +1172,8 @@ export default function AiChatPanel({ panelId }: PanelProps) {
   }, []);
 
   const handleAddModelToSettings = useCallback(
-    async (model: string) => {
-      const trimmed = model.trim();
+    async (preset: import("../settings/ai-chat-settings").AiModelPreset) => {
+      const trimmed = preset.model?.trim();
       if (!trimmed) return;
 
       try {
@@ -1181,11 +1181,11 @@ export default function AiChatPanel({ panelId }: PanelProps) {
         if (current.customModels.some((m) => m.model === trimmed)) return;
 
         await updateAiChatSettings("app", pluginNameForUi, {
-          customModels: [...current.customModels, { model: trimmed }],
+          customModels: [...current.customModels, { ...preset, model: trimmed }],
         });
-        orca.notify("success", `Added model: ${trimmed}`);
+        orca.notify("success", `已添加模型: ${preset.label || trimmed}`);
       } catch (err: any) {
-        orca.notify("error", `Failed to add model: ${String(err?.message ?? err ?? "unknown error")}`);
+        orca.notify("error", `添加模型失败: ${String(err?.message ?? err ?? "unknown error")}`);
       }
     },
     [pluginNameForUi]

@@ -3,7 +3,7 @@
  * 包含模型过滤、分组显示、添加自定义模型功能
  */
 
-import type { AiModelOption, ModelCapability } from "../../settings/ai-chat-settings";
+import type { AiModelOption, ModelCapability, AiModelPreset } from "../../settings/ai-chat-settings";
 import { MODEL_CAPABILITY_LABELS } from "../../settings/ai-chat-settings";
 import {
   menuContainerStyle,
@@ -34,7 +34,8 @@ type Props = {
   modelOptions: AiModelOption[];
   selectedModel: string;
   onModelChange: (model: string) => void;
-  onAddModel?: (model: string) => void | Promise<void>;
+  onAddModel?: (preset: AiModelPreset) => void | Promise<void>;
+  onDeleteModel?: (model: string) => void | Promise<void>;
   close: () => void;
 };
 
@@ -301,48 +302,227 @@ function ModelListPanel({
   );
 }
 
+/** 能力选项 */
+const CAPABILITY_OPTIONS: { value: ModelCapability; label: string }[] = [
+  { value: "vision", label: "视觉" },
+  { value: "web", label: "联网" },
+  { value: "reasoning", label: "推理" },
+  { value: "tools", label: "工具" },
+  { value: "rerank", label: "重排" },
+  { value: "embedding", label: "嵌入" },
+];
+
 /**
- * 添加模型面板
+ * 添加/编辑模型面板
  */
 function AddModelPanel({
-  modelDraft,
-  onDraftChange,
   onAdd,
   isAdding,
 }: {
-  modelDraft: string;
-  onDraftChange: (value: string) => void;
-  onAdd: () => void;
+  onAdd: (preset: AiModelPreset) => void;
   isAdding: boolean;
 }) {
+  const [model, setModel] = useState("");
+  const [label, setLabel] = useState("");
+  const [apiUrl, setApiUrl] = useState("");
+  const [apiKey, setApiKey] = useState("");
+  const [inputPrice, setInputPrice] = useState("");
+  const [outputPrice, setOutputPrice] = useState("");
+  const [capabilities, setCapabilities] = useState<ModelCapability[]>([]);
+  const [showAdvanced, setShowAdvanced] = useState(false);
+
+  const handleAdd = useCallback(() => {
+    if (!model.trim()) return;
+    
+    const preset: AiModelPreset = {
+      model: model.trim(),
+      label: label.trim() || undefined,
+      apiUrl: apiUrl.trim() || undefined,
+      apiKey: apiKey.trim() || undefined,
+      inputPrice: inputPrice ? parseFloat(inputPrice) : undefined,
+      outputPrice: outputPrice ? parseFloat(outputPrice) : undefined,
+      capabilities: capabilities.length > 0 ? capabilities : undefined,
+    };
+    
+    onAdd(preset);
+    
+    // 重置表单
+    setModel("");
+    setLabel("");
+    setApiUrl("");
+    setApiKey("");
+    setInputPrice("");
+    setOutputPrice("");
+    setCapabilities([]);
+  }, [model, label, apiUrl, apiKey, inputPrice, outputPrice, capabilities, onAdd]);
+
+  const toggleCapability = useCallback((cap: ModelCapability) => {
+    setCapabilities(prev => 
+      prev.includes(cap) ? prev.filter(c => c !== cap) : [...prev, cap]
+    );
+  }, []);
+
+  const inputStyle: React.CSSProperties = {
+    width: "100%",
+    padding: "6px 10px",
+    fontSize: "13px",
+    border: "1px solid var(--orca-color-border)",
+    borderRadius: "6px",
+    background: "var(--orca-color-bg-2)",
+    color: "var(--orca-color-text-1)",
+    outline: "none",
+    boxSizing: "border-box",
+  };
+
+  const labelStyle: React.CSSProperties = {
+    fontSize: "11px",
+    color: "var(--orca-color-text-2)",
+    marginBottom: "4px",
+    display: "block",
+  };
+
   return createElement(
     "div",
-    { style: addModelPanelStyle },
-    createElement("div", { style: addModelTitleStyle }, "Add model"),
-    createElement(Input as any, {
-      placeholder: "e.g. gpt-4.1-mini",
-      value: modelDraft,
-      onChange: (e: any) => onDraftChange(e.target.value),
-      onKeyDown: (e: any) => {
-        if (e.key === "Enter") {
-          e.preventDefault();
-          onAdd();
-        }
+    { style: { ...addModelPanelStyle, minWidth: "280px" } },
+    createElement("div", { style: addModelTitleStyle }, "添加模型"),
+    
+    // 模型名称（必填）
+    createElement("div", { style: { marginBottom: "12px" } },
+      createElement("label", { style: labelStyle }, "模型名称 *"),
+      createElement("input", {
+        type: "text",
+        placeholder: "如 gpt-4o, claude-3-opus",
+        value: model,
+        onChange: (e: any) => setModel(e.target.value),
+        style: inputStyle,
+      })
+    ),
+    
+    // 显示名称
+    createElement("div", { style: { marginBottom: "12px" } },
+      createElement("label", { style: labelStyle }, "显示名称"),
+      createElement("input", {
+        type: "text",
+        placeholder: "可选，留空使用模型名",
+        value: label,
+        onChange: (e: any) => setLabel(e.target.value),
+        style: inputStyle,
+      })
+    ),
+    
+    // API 配置
+    createElement("div", { style: { marginBottom: "12px" } },
+      createElement("label", { style: labelStyle }, "API 地址"),
+      createElement("input", {
+        type: "text",
+        placeholder: "留空使用全局设置",
+        value: apiUrl,
+        onChange: (e: any) => setApiUrl(e.target.value),
+        style: inputStyle,
+      })
+    ),
+    
+    createElement("div", { style: { marginBottom: "12px" } },
+      createElement("label", { style: labelStyle }, "API 密钥"),
+      createElement("input", {
+        type: "password",
+        placeholder: "留空使用全局设置",
+        value: apiKey,
+        onChange: (e: any) => setApiKey(e.target.value),
+        style: inputStyle,
+      })
+    ),
+    
+    // 高级选项折叠
+    createElement(
+      "div",
+      {
+        style: {
+          display: "flex",
+          alignItems: "center",
+          gap: "4px",
+          cursor: "pointer",
+          color: "var(--orca-color-text-3)",
+          fontSize: "12px",
+          marginBottom: showAdvanced ? "12px" : "0",
+        },
+        onClick: () => setShowAdvanced(!showAdvanced),
       },
-      pre: createElement("i", { className: "ti ti-plus" }),
-      style: { width: "100%", maxWidth: "100%", boxSizing: "border-box", overflow: "hidden", minWidth: 0 },
-    }),
+      createElement("i", { className: showAdvanced ? "ti ti-chevron-down" : "ti ti-chevron-right", style: { fontSize: "12px" } }),
+      "高级选项"
+    ),
+    
+    // 高级选项内容
+    showAdvanced && createElement(
+      "div",
+      { style: { paddingLeft: "8px", borderLeft: "2px solid var(--orca-color-border)" } },
+      
+      // 价格
+      createElement("div", { style: { display: "flex", gap: "8px", marginBottom: "12px" } },
+        createElement("div", { style: { flex: 1 } },
+          createElement("label", { style: labelStyle }, "输入价格 ($/M)"),
+          createElement("input", {
+            type: "number",
+            placeholder: "0",
+            value: inputPrice,
+            onChange: (e: any) => setInputPrice(e.target.value),
+            style: { ...inputStyle, width: "100%" },
+          })
+        ),
+        createElement("div", { style: { flex: 1 } },
+          createElement("label", { style: labelStyle }, "输出价格 ($/M)"),
+          createElement("input", {
+            type: "number",
+            placeholder: "0",
+            value: outputPrice,
+            onChange: (e: any) => setOutputPrice(e.target.value),
+            style: { ...inputStyle, width: "100%" },
+          })
+        )
+      ),
+      
+      // 能力标签
+      createElement("div", { style: { marginBottom: "8px" } },
+        createElement("label", { style: labelStyle }, "模型能力"),
+        createElement(
+          "div",
+          { style: { display: "flex", flexWrap: "wrap", gap: "4px" } },
+          ...CAPABILITY_OPTIONS.map(opt => {
+            const isActive = capabilities.includes(opt.value);
+            const config = MODEL_CAPABILITY_LABELS[opt.value];
+            return createElement(
+              "button",
+              {
+                key: opt.value,
+                onClick: () => toggleCapability(opt.value),
+                style: {
+                  padding: "3px 8px",
+                  fontSize: "11px",
+                  border: `1px solid ${isActive ? config.color : "var(--orca-color-border)"}`,
+                  borderRadius: "4px",
+                  background: isActive ? `${config.color}20` : "transparent",
+                  color: isActive ? config.color : "var(--orca-color-text-2)",
+                  cursor: "pointer",
+                },
+              },
+              opt.label
+            );
+          })
+        )
+      )
+    ),
+    
+    // 添加按钮
     createElement(
       Button,
       {
         variant: "solid",
-        disabled: isAdding || !modelDraft.trim(),
-        onClick: onAdd,
-        style: { marginTop: 8, width: "100%", boxSizing: "border-box" },
+        disabled: isAdding || !model.trim(),
+        onClick: handleAdd,
+        style: { marginTop: 12, width: "100%", boxSizing: "border-box" },
       },
-      isAdding ? "Adding..." : "Add"
-    ),
-    createElement("div", { style: addModelHintStyle }, "Models share the same API URL/Key (for now).")
+      isAdding ? "添加中..." : "添加模型"
+    )
   );
 }
 
@@ -354,43 +534,39 @@ export default function ModelSelectorMenu({
   selectedModel,
   onModelChange,
   onAddModel,
+  onDeleteModel,
   close,
 }: Props) {
   const [modelFilter, setModelFilter] = useState("");
-  const [modelDraft, setModelDraft] = useState("");
   const [addingModel, setAddingModel] = useState(false);
 
   const modelGroups = useModelGroups(modelOptions, modelFilter);
 
-  const handleAddModel = useCallback(async () => {
-    const next = modelDraft.trim();
-    if (!next) return;
+  const handleAddModel = useCallback(async (preset: AiModelPreset) => {
+    if (!preset.model) return;
 
     // If already exists, just select it.
-    if (modelOptions.some((o) => o.value === next)) {
-      onModelChange(next);
-      setModelDraft("");
+    if (modelOptions.some((o) => o.value === preset.model)) {
+      onModelChange(preset.model);
       close();
       return;
     }
 
     if (!onAddModel) {
-      onModelChange(next);
-      setModelDraft("");
+      onModelChange(preset.model);
       close();
       return;
     }
 
     try {
       setAddingModel(true);
-      await onAddModel(next);
-      onModelChange(next);
-      setModelDraft("");
+      await onAddModel(preset);
+      onModelChange(preset.model);
       close();
     } finally {
       setAddingModel(false);
     }
-  }, [modelDraft, modelOptions, onAddModel, onModelChange, close]);
+  }, [modelOptions, onAddModel, onModelChange, close]);
 
   return createElement(
     "div",
@@ -407,8 +583,6 @@ export default function ModelSelectorMenu({
         close,
       }),
       createElement(AddModelPanel, {
-        modelDraft,
-        onDraftChange: setModelDraft,
         onAdd: handleAddModel,
         isAdding: addingModel,
       })
