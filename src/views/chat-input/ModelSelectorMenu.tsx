@@ -3,7 +3,8 @@
  * 包含模型过滤、分组显示、添加自定义模型功能
  */
 
-import type { AiModelOption } from "../../settings/ai-chat-settings";
+import type { AiModelOption, ModelCapability } from "../../settings/ai-chat-settings";
+import { MODEL_CAPABILITY_LABELS } from "../../settings/ai-chat-settings";
 import {
   menuContainerStyle,
   menuFlexStyle,
@@ -22,7 +23,7 @@ const React = window.React as unknown as {
 };
 const { createElement, useState, useMemo, useCallback } = React;
 
-const { Button, Menu, MenuText, MenuTitle, MenuSeparator, Input } = orca.components;
+const { Button, Input } = orca.components;
 
 type ModelGroup = {
   group: string;
@@ -75,6 +76,131 @@ function useModelGroups(modelOptions: AiModelOption[], filterQuery: string): Mod
 }
 
 /**
+ * 能力标签组件
+ */
+function CapabilityBadge({ capability }: { capability: ModelCapability }) {
+  const config = MODEL_CAPABILITY_LABELS[capability];
+  if (!config) return null;
+  
+  return createElement(
+    "span",
+    {
+      style: {
+        display: "inline-flex",
+        alignItems: "center",
+        gap: "2px",
+        padding: "1px 4px",
+        borderRadius: "4px",
+        fontSize: "10px",
+        background: `${config.color}20`,
+        color: config.color,
+        whiteSpace: "nowrap",
+      },
+      title: config.label,
+    },
+    createElement("i", { className: config.icon, style: { fontSize: "9px" } }),
+    config.label
+  );
+}
+
+/**
+ * 模型列表项组件
+ */
+function ModelListItem({
+  opt,
+  isSelected,
+  onClick,
+}: {
+  opt: AiModelOption;
+  isSelected: boolean;
+  onClick: () => void;
+}) {
+  const hasPrice = opt.inputPrice !== undefined || opt.outputPrice !== undefined;
+  const hasCapabilities = opt.capabilities && opt.capabilities.length > 0;
+  
+  return createElement(
+    "div",
+    {
+      onClick,
+      style: {
+        padding: "8px 12px",
+        cursor: "pointer",
+        background: isSelected ? "var(--orca-color-bg-3)" : "transparent",
+        borderRadius: "4px",
+        margin: "2px 4px",
+      },
+      onMouseEnter: (e: any) => {
+        if (!isSelected) e.currentTarget.style.background = "var(--orca-color-bg-2)";
+      },
+      onMouseLeave: (e: any) => {
+        if (!isSelected) e.currentTarget.style.background = "transparent";
+      },
+    },
+    // 第一行：模型名称 + 选中标记
+    createElement(
+      "div",
+      { style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px" } },
+      createElement(
+        "div",
+        { style: { display: "flex", alignItems: "center", gap: "6px", flex: 1, minWidth: 0 } },
+        createElement(
+          "span",
+          { 
+            style: { 
+              fontWeight: 500, 
+              color: "var(--orca-color-text-1)",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            } 
+          },
+          opt.label
+        ),
+        // 能力标签
+        hasCapabilities && createElement(
+          "div",
+          { style: { display: "flex", gap: "3px", flexShrink: 0 } },
+          ...opt.capabilities!.slice(0, 3).map((cap) =>
+            createElement(CapabilityBadge, { key: cap, capability: cap })
+          ),
+          opt.capabilities!.length > 3 && createElement(
+            "span",
+            { style: { fontSize: "10px", color: "var(--orca-color-text-3)" } },
+            `+${opt.capabilities!.length - 3}`
+          )
+        )
+      ),
+      isSelected && createElement("i", { 
+        className: "ti ti-check", 
+        style: { color: "var(--orca-color-primary)", fontSize: "14px" } 
+      })
+    ),
+    // 第二行：模型ID + 价格
+    (opt.label !== opt.value || hasPrice) && createElement(
+      "div",
+      { 
+        style: { 
+          display: "flex", 
+          alignItems: "center", 
+          justifyContent: "space-between",
+          marginTop: "4px",
+          fontSize: "11px",
+          color: "var(--orca-color-text-3)",
+        } 
+      },
+      opt.label !== opt.value 
+        ? createElement("span", { style: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, opt.value)
+        : createElement("span", null),
+      hasPrice && createElement(
+        "span",
+        { style: { whiteSpace: "nowrap", marginLeft: "8px" } },
+        `$${opt.inputPrice ?? 0}/${opt.outputPrice ?? 0}`
+      )
+    )
+  );
+}
+
+/**
  * 模型列表面板
  */
 function ModelListPanel({
@@ -92,33 +218,47 @@ function ModelListPanel({
   onFilterChange: (value: string) => void;
   close: () => void;
 }) {
-  const menuItems: any[] = [];
+  const listItems: any[] = [];
 
   if (modelGroups.length === 0) {
-    menuItems.push(
-      createElement(MenuText as any, {
-        key: "empty",
-        title: "No models found",
-        disabled: true,
-      })
+    listItems.push(
+      createElement(
+        "div",
+        { key: "empty", style: { padding: "12px", color: "var(--orca-color-text-3)", textAlign: "center" } },
+        "No models found"
+      )
     );
   } else {
     for (let i = 0; i < modelGroups.length; i++) {
       const { group, options } = modelGroups[i];
       
-      menuItems.push(
-        createElement(MenuTitle as any, { key: `t:${group}`, title: group })
+      // 分组标题
+      listItems.push(
+        createElement(
+          "div",
+          { 
+            key: `t:${group}`, 
+            style: { 
+              padding: "8px 12px 4px", 
+              fontSize: "11px", 
+              fontWeight: 600,
+              color: "var(--orca-color-text-2)",
+              textTransform: "uppercase",
+              letterSpacing: "0.5px",
+            } 
+          },
+          group
+        )
       );
       
-      menuItems.push(
+      // 模型列表项
+      listItems.push(
         ...options.map((opt) => {
           const isSelected = opt.value === selectedModel;
-          const subtitle = opt.label === opt.value ? undefined : opt.value;
-          return createElement(MenuText as any, {
+          return createElement(ModelListItem, {
             key: opt.value,
-            title: opt.label,
-            subtitle,
-            postIcon: isSelected ? "ti ti-check" : undefined,
+            opt,
+            isSelected,
             onClick: () => {
               if (opt.value !== selectedModel) onModelChange(opt.value);
               close();
@@ -127,9 +267,17 @@ function ModelListPanel({
         })
       );
 
+      // 分隔线
       if (i !== modelGroups.length - 1) {
-        menuItems.push(
-          createElement(MenuSeparator as any, { key: `s:${group}` })
+        listItems.push(
+          createElement("div", { 
+            key: `s:${group}`, 
+            style: { 
+              height: "1px", 
+              background: "var(--orca-color-border)", 
+              margin: "8px 12px" 
+            } 
+          })
         );
       }
     }
@@ -148,11 +296,7 @@ function ModelListPanel({
     createElement(
       "div",
       { style: modelListScrollStyle },
-      createElement(Menu as any, { 
-        keyboardNav: true, 
-        navDirection: "vertical", 
-        style: { width: "100%", borderRadius: 0, background: "transparent" } 
-      }, ...menuItems)
+      ...listItems
     )
   );
 }

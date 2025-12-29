@@ -5,8 +5,10 @@
 
 import type { DbId } from "../orca.d.ts";
 import type { AiModelOption } from "../settings/ai-chat-settings";
+import type { CurrencyType } from "../settings/ai-chat-settings";
 import type { FileRef, VideoProcessMode } from "../services/session-service";
 import { contextStore, addPageById } from "../store/context-store";
+import { estimateTokens, formatTokenCount, estimateCost, formatCost } from "../utils/token-utils";
 import {
   uploadFile,
   getFileDisplayUrl,
@@ -57,6 +59,8 @@ type Props = {
   selectedModel: string;
   onModelChange: (model: string) => void;
   onAddModel?: (model: string) => void | Promise<void>;
+  /** 币种设置 */
+  currency?: CurrencyType;
 };
 
 // Enhanced Styles
@@ -92,6 +96,7 @@ export default function ChatInput({
   selectedModel,
   onModelChange,
   onAddModel,
+  currency = "USD",
 }: Props) {
   const [text, setText] = useState("");
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -106,6 +111,21 @@ export default function ChatInput({
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const contextSnap = useSnapshot(contextStore);
+
+  // 获取当前选中模型的价格信息
+  const selectedModelInfo = useMemo(() => {
+    return modelOptions.find(m => m.value === selectedModel);
+  }, [modelOptions, selectedModel]);
+
+  // 计算 Token 预估
+  const tokenEstimate = useMemo(() => {
+    const inputTokens = estimateTokens(text);
+    const outputTokens = Math.ceil(inputTokens * 1.5); // 预估输出为输入的 1.5 倍
+    const inputPrice = selectedModelInfo?.inputPrice ?? 0;
+    const outputPrice = selectedModelInfo?.outputPrice ?? 0;
+    const cost = estimateCost(inputTokens, outputTokens, inputPrice, outputPrice);
+    return { inputTokens, outputTokens, cost };
+  }, [text, selectedModelInfo]);
 
   // 检测是否显示斜杠命令菜单
   const filteredCommands = useMemo(() => {
@@ -822,7 +842,31 @@ export default function ChatInput({
             onAddModel,
           }),
           createElement(InjectionModeSelector, null),
-          createElement(ModeSelectorButton, null)
+          createElement(ModeSelectorButton, null),
+          // Token 预估显示
+          tokenEstimate.inputTokens > 0 && createElement(
+            "div",
+            {
+              style: {
+                display: "flex",
+                alignItems: "center",
+                gap: "4px",
+                fontSize: "11px",
+                color: "var(--orca-color-text-3)",
+                padding: "2px 8px",
+                background: "var(--orca-color-bg-3)",
+                borderRadius: "10px",
+              },
+              title: `预估输入: ${formatTokenCount(tokenEstimate.inputTokens)} tokens\n预估输出: ${formatTokenCount(tokenEstimate.outputTokens)} tokens`,
+            },
+            createElement("i", { className: "ti ti-coins", style: { fontSize: "12px" } }),
+            `~${formatTokenCount(tokenEstimate.inputTokens)}`,
+            selectedModelInfo?.inputPrice !== undefined && selectedModelInfo.inputPrice > 0 && createElement(
+              "span",
+              { style: { color: "var(--orca-color-text-4)" } },
+              ` ${formatCost(tokenEstimate.cost, currency)}`
+            )
+          )
         ),
 
         // Right Tool: Send/Stop Button

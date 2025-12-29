@@ -1434,6 +1434,7 @@ export default function AiChatPanel({ panelId }: PanelProps) {
       selectedModel,
       onModelChange: handleModelChange,
       onAddModel: handleAddModelToSettings,
+      currency: settingsForUi.currency,
     })
   );
 }

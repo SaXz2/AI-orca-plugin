@@ -89,6 +89,29 @@ export async function registerAiChatSettingsSchema(
           type: "string",
           defaultValue: "",
         },
+        inputPrice: {
+          label: isZh ? "输入价格 ($/百万Token)" : "Input Price ($/M tokens)",
+          type: "number",
+          defaultValue: 0,
+        },
+        outputPrice: {
+          label: isZh ? "输出价格 ($/百万Token)" : "Output Price ($/M tokens)",
+          type: "number",
+          defaultValue: 0,
+        },
+        capabilities: {
+          label: isZh ? "模型能力" : "Capabilities",
+          type: "multiChoices",
+          choices: [
+            { label: isZh ? "视觉" : "Vision", value: "vision" },
+            { label: isZh ? "联网" : "Web", value: "web" },
+            { label: isZh ? "推理" : "Reasoning", value: "reasoning" },
+            { label: isZh ? "工具" : "Tools", value: "tools" },
+            { label: isZh ? "重排" : "Rerank", value: "rerank" },
+            { label: isZh ? "嵌入" : "Embedding", value: "embedding" },
+          ],
+          defaultValue: [],
+        },
       },
     },
     systemPrompt: {
@@ -134,8 +157,29 @@ export async function registerAiChatSettingsSchema(
       type: "number",
       defaultValue: 10,
     },
+    currency: {
+      label: isZh ? "价格币种" : "Currency",
+      description: isZh ? "用于显示预估费用的货币单位" : "Currency unit for estimated cost display",
+      type: "singleChoice",
+      choices: [
+        { label: "USD ($)", value: "USD" },
+        { label: "CNY (¥)", value: "CNY" },
+        { label: "EUR (€)", value: "EUR" },
+        { label: "JPY (¥)", value: "JPY" },
+      ],
+      defaultValue: "USD",
+    },
   });
 }
+
+export type CurrencyType = "USD" | "CNY" | "EUR" | "JPY";
+
+export const CURRENCY_SYMBOLS: Record<CurrencyType, string> = {
+  USD: "$",
+  CNY: "¥",
+  EUR: "€",
+  JPY: "¥",
+};
 
 export type AiChatSettings = {
 	apiKey: string;
@@ -149,11 +193,31 @@ export type AiChatSettings = {
 	maxToolRounds: number;
 	autoSaveChat: "on_close" | "manual" | "never";
 	maxSavedSessions: number;
+	currency: CurrencyType;
+};
+
+/** 模型能力类型 */
+export type ModelCapability = "vision" | "web" | "reasoning" | "tools" | "rerank" | "embedding";
+
+/** 模型能力标签配置 */
+export const MODEL_CAPABILITY_LABELS: Record<ModelCapability, { label: string; icon: string; color: string }> = {
+  vision: { label: "视觉", icon: "ti ti-eye", color: "#8b5cf6" },
+  web: { label: "联网", icon: "ti ti-world", color: "#06b6d4" },
+  reasoning: { label: "推理", icon: "ti ti-brain", color: "#f59e0b" },
+  tools: { label: "工具", icon: "ti ti-tool", color: "#10b981" },
+  rerank: { label: "重排", icon: "ti ti-arrows-sort", color: "#ec4899" },
+  embedding: { label: "嵌入", icon: "ti ti-vector", color: "#6366f1" },
 };
 
 export type AiModelPreset = {
   label?: string;
   model: string;
+  /** 输入价格，单位：每百万Token */
+  inputPrice?: number;
+  /** 输出价格，单位：每百万Token */
+  outputPrice?: number;
+  /** 模型能力标签 */
+  capabilities?: ModelCapability[];
 };
 
 export const DEFAULT_AI_CHAT_SETTINGS: AiChatSettings = {
@@ -168,6 +232,7 @@ export const DEFAULT_AI_CHAT_SETTINGS: AiChatSettings = {
 	maxToolRounds: 5,
 	autoSaveChat: "manual",
 	maxSavedSessions: 10,
+	currency: "USD",
 };
 
 function toNumber(value: unknown, fallback: number): number {
@@ -192,10 +257,22 @@ function toModelPresets(value: unknown, fallback: AiModelPreset[]): AiModelPrese
     if (!item || typeof item !== "object") continue;
     const rawLabel = (item as any).label;
     const rawModel = (item as any).model;
+    const rawInputPrice = (item as any).inputPrice;
+    const rawOutputPrice = (item as any).outputPrice;
+    const rawCapabilities = (item as any).capabilities;
+    
     const model = typeof rawModel === "string" ? rawModel.trim() : "";
     if (!model) continue;
     const label = typeof rawLabel === "string" ? rawLabel.trim() : "";
-    out.push({ label, model });
+    const inputPrice = typeof rawInputPrice === "number" && rawInputPrice >= 0 ? rawInputPrice : undefined;
+    const outputPrice = typeof rawOutputPrice === "number" && rawOutputPrice >= 0 ? rawOutputPrice : undefined;
+    const capabilities = Array.isArray(rawCapabilities) 
+      ? rawCapabilities.filter((c): c is ModelCapability => 
+          ["vision", "web", "reasoning", "tools", "rerank", "embedding"].includes(c)
+        )
+      : undefined;
+    
+    out.push({ label, model, inputPrice, outputPrice, capabilities });
   }
 
   const seen = new Set<string>();
@@ -219,6 +296,13 @@ function toAutoSaveChoice(
   return fallback;
 }
 
+function toCurrency(value: unknown, fallback: CurrencyType): CurrencyType {
+  if (value === "USD" || value === "CNY" || value === "EUR" || value === "JPY") {
+    return value;
+  }
+  return fallback;
+}
+
 export function getAiChatSettings(pluginName: string): AiChatSettings {
 	const raw = (orca.state.plugins as any)?.[pluginName]?.settings ?? {};
 	const merged: AiChatSettings = {
@@ -233,6 +317,7 @@ export function getAiChatSettings(pluginName: string): AiChatSettings {
 		maxToolRounds: toNumber(raw.maxToolRounds, DEFAULT_AI_CHAT_SETTINGS.maxToolRounds),
 		autoSaveChat: toAutoSaveChoice(raw.autoSaveChat, DEFAULT_AI_CHAT_SETTINGS.autoSaveChat),
 		maxSavedSessions: toNumber(raw.maxSavedSessions, DEFAULT_AI_CHAT_SETTINGS.maxSavedSessions),
+		currency: toCurrency(raw.currency, DEFAULT_AI_CHAT_SETTINGS.currency),
 	};
 
   merged.apiUrl = merged.apiUrl.trim();
@@ -251,11 +336,17 @@ export type AiModelOption = {
   value: string;
   label: string;
   group?: string;
+  /** 输入价格，单位：每百万Token */
+  inputPrice?: number;
+  /** 输出价格，单位：每百万Token */
+  outputPrice?: number;
+  /** 模型能力标签 */
+  capabilities?: ModelCapability[];
 };
 
 const BUILTIN_MODEL_OPTIONS: AiModelOption[] = [
-  { value: "gpt-4o-mini", label: "GPT-4o Mini", group: "Built-in" },
-  { value: "gpt-4o", label: "GPT-4o", group: "Built-in" },
+  { value: "gpt-4o-mini", label: "GPT-4o Mini", group: "Built-in", inputPrice: 0.15, outputPrice: 0.6, capabilities: ["vision", "tools"] },
+  { value: "gpt-4o", label: "GPT-4o", group: "Built-in", inputPrice: 2.5, outputPrice: 10, capabilities: ["vision", "tools"] },
 ];
 
 export function buildAiModelOptions(
@@ -265,22 +356,31 @@ export function buildAiModelOptions(
   const seen = new Set<string>();
   const out: AiModelOption[] = [];
 
-  const add = (value: string, label: string, group: string) => {
-    const v = value.trim();
+  const add = (opt: AiModelOption) => {
+    const v = opt.value.trim();
     if (!v) return;
     if (seen.has(v)) return;
     seen.add(v);
-    out.push({ value: v, label: label.trim() || v, group });
+    out.push({ ...opt, value: v, label: (opt.label || v).trim() });
   };
 
-  for (const opt of BUILTIN_MODEL_OPTIONS) add(opt.value, opt.label, opt.group ?? "Built-in");
+  for (const opt of BUILTIN_MODEL_OPTIONS) add(opt);
 
   for (const item of settings.customModels) {
-    add(item.model, item.label || item.model, "Custom");
+    add({
+      value: item.model,
+      label: item.label || item.model,
+      group: "Custom",
+      inputPrice: item.inputPrice,
+      outputPrice: item.outputPrice,
+      capabilities: item.capabilities,
+    });
   }
-  if (settings.customModel.trim()) add(settings.customModel, settings.customModel, "Custom");
+  if (settings.customModel.trim()) {
+    add({ value: settings.customModel, label: settings.customModel, group: "Custom" });
+  }
 
-  for (const m of extraModels) add(m, m, "Other");
+  for (const m of extraModels) add({ value: m, label: m, group: "Other" });
 
   return out;
 }
