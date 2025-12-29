@@ -20,6 +20,8 @@ import ContextPicker from "./ContextPicker";
 import { ModelSelectorButton, InjectionModeSelector, ModeSelectorButton } from "./chat-input";
 import { loadFromStorage } from "../store/chat-mode-store";
 import { textareaStyle, sendButtonStyle } from "./chat-input";
+import { MultiModelToggleButton } from "../components/MultiModelSelector";
+import { multiModelStore } from "../store/multi-model-store";
 
 const React = window.React as unknown as {
   createElement: typeof window.React.createElement;
@@ -855,6 +857,10 @@ export default function ChatInput({
             settings,
             onSelect: onModelSelect,
             onUpdateSettings,
+          }),
+          // 多模型并行按钮
+          createElement(MultiModelToggleButton, {
+            settings,
           }),
           createElement(InjectionModeSelector, null),
           createElement(ModeSelectorButton, null),

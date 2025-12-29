@@ -17,6 +17,7 @@ import SuggestedReplies from "../components/SuggestedReplies";
 import ExtractMemoryButton from "./ExtractMemoryButton";
 import type { ExtractedMemory } from "../services/memory-extraction";
 import { getFileDisplayUrl, getFileIcon, getFileFullPath } from "../services/file-service";
+import { saveSingleMessageToJournal } from "../services/export-service";
 import {
   messageRowStyle,
   messageBubbleStyle,
@@ -214,6 +215,10 @@ interface MessageItemProps {
   messageIndex?: number; // 消息在列表中的索引，用于目录导航
   isLastAiMessage?: boolean;
   isStreaming?: boolean;
+  // 选择模式相关
+  selectionMode?: boolean;
+  isSelected?: boolean;
+  onToggleSelection?: () => void;
   onRegenerate?: () => void;
   onDelete?: () => void;
   onRollback?: () => void; // 回档到此消息（删除此消息及之后的所有消息）
@@ -413,6 +418,9 @@ export default function MessageItem({
   messageIndex,
   isLastAiMessage,
   isStreaming,
+  selectionMode,
+  isSelected,
+  onToggleSelection,
   onRegenerate,
   onDelete,
   onRollback,
@@ -456,15 +464,44 @@ export default function MessageItem({
     return createElement(ToolResultItem, { message });
   }
 
+  // 选择模式下的样式
+  const selectionModeStyle: React.CSSProperties = selectionMode ? {
+    cursor: "pointer",
+    border: isSelected ? "2px solid var(--orca-color-primary)" : "2px solid transparent",
+    borderRadius: "12px",
+    transition: "border-color 0.2s",
+  } : {};
+
   return createElement(
     "div",
     {
-      style: messageRowStyle(message.role),
+      style: { ...messageRowStyle(message.role), ...selectionModeStyle },
       "data-message-index": messageIndex,
       "data-message-id": message.id,
       onMouseEnter: () => setIsHovered(true),
       onMouseLeave: () => setIsHovered(false),
+      onClick: selectionMode && onToggleSelection ? onToggleSelection : undefined,
     },
+    // 选择模式下显示复选框
+    selectionMode && createElement(
+      "div",
+      {
+        style: {
+          position: "absolute",
+          left: isUser ? "auto" : "8px",
+          right: isUser ? "8px" : "auto",
+          top: "8px",
+          zIndex: 10,
+        },
+      },
+      createElement("i", {
+        className: isSelected ? "ti ti-checkbox" : "ti ti-square",
+        style: {
+          fontSize: "20px",
+          color: isSelected ? "var(--orca-color-primary)" : "var(--orca-color-text-3)",
+        },
+      })
+    ),
     createElement(
       "div",
       {
@@ -870,6 +907,25 @@ export default function MessageItem({
               title: "回档到此处（删除此消息及之后的所有消息）",
             },
             createElement("i", { className: "ti ti-arrow-back-up" })
+          ),
+        // Save to Journal Button (保存单条消息到日记)
+        !isStreaming &&
+          message.content &&
+          createElement(
+            "button",
+            {
+              style: actionButtonStyle,
+              onClick: async () => {
+                const result = await saveSingleMessageToJournal(message, message.model);
+                if (result.success) {
+                  orca.notify("success", result.message);
+                } else {
+                  orca.notify("error", result.message);
+                }
+              },
+              title: "保存到日记",
+            },
+            createElement("i", { className: "ti ti-notebook" })
           ),
         // Extract Memory Button (Only for AI messages with content)
         isAssistant &&

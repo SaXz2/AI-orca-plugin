@@ -48,6 +48,12 @@ export interface MessageListProps {
   style?: React.CSSProperties;
   /** 自定义类名 */
   className?: string;
+  /** 是否处于选择模式 */
+  selectionMode?: boolean;
+  /** 已选中的消息 ID 集合 */
+  selectedMessageIds?: Set<string>;
+  /** 切换消息选中状态回调 */
+  onToggleMessageSelection?: (messageId: string) => void;
   
   // ─────────────────────────────────────────────────────────────────────────
   // 交互回调（readonly=true 时不需要）
@@ -83,6 +89,9 @@ export default function MessageList({
   readonly = false,
   style,
   className,
+  selectionMode = false,
+  selectedMessageIds,
+  onToggleMessageSelection,
   onRegenerate,
   onDeleteMessage,
   onRollbackToMessage,
@@ -118,6 +127,10 @@ export default function MessageList({
         messageIndex: i,
         isLastAiMessage: isLastAi,
         isStreaming,
+        // 选择模式相关
+        selectionMode: readonly ? false : selectionMode,
+        isSelected: selectedMessageIds?.has(m.id) || false,
+        onToggleSelection: readonly ? undefined : (selectionMode && onToggleMessageSelection ? () => onToggleMessageSelection(m.id) : undefined),
         // 只读模式下不传递交互回调
         onRegenerate: readonly ? undefined : (isLastAi ? onRegenerate : undefined),
         onDelete: readonly ? undefined : (onDeleteMessage ? () => onDeleteMessage(m.id) : undefined),

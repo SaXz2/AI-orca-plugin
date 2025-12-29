@@ -43,7 +43,7 @@ import {
   type Message,
   type FileRef,
 } from "../services/session-service";
-import { exportSessionAsFile, saveSessionToJournal } from "../services/export-service";
+import { exportSessionAsFile, saveSessionToJournal, saveMessagesToJournal } from "../services/export-service";
 import { sessionStore, updateSessionStore, clearSessionStore } from "../store/session-store";
 import { TOOLS, executeTool } from "../services/ai-tools";
 import { nowId, safeText } from "../utils/text-utils";
@@ -57,6 +57,14 @@ import {
   loadingContainerStyle,
   loadingBubbleStyle,
 } from "../styles/ai-chat-styles";
+import { multiModelStore } from "../store/multi-model-store";
+import MultiModelResponse, { type ModelResponse } from "../components/MultiModelResponse";
+import {
+  streamMultiModelChat,
+  createInitialResponses,
+  updateModelResponse,
+  getModelDisplayInfo,
+} from "../services/multi-model-service";
 
 const React = window.React as unknown as {
   createElement: typeof window.React.createElement;
@@ -105,6 +113,111 @@ function smoothScrollToBottom(el: HTMLDivElement | null, duration = 300) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// EditableTitle Component - 可编辑的会话标题
+// ─────────────────────────────────────────────────────────────────────────────
+
+type EditableTitleProps = {
+  title: string;
+  onSave: (newTitle: string) => void;
+};
+
+function EditableTitle({ title, onSave }: EditableTitleProps) {
+  const [isEditing, setIsEditing] = useState(false);
+  const [editValue, setEditValue] = useState(title);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    setEditValue(title);
+  }, [title]);
+
+  useEffect(() => {
+    if (isEditing && inputRef.current) {
+      inputRef.current.focus();
+      inputRef.current.select();
+    }
+  }, [isEditing]);
+
+  const handleSave = useCallback(() => {
+    const trimmed = editValue.trim();
+    if (trimmed && trimmed !== title) {
+      onSave(trimmed);
+    }
+    setIsEditing(false);
+  }, [editValue, title, onSave]);
+
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.key === "Enter") {
+      handleSave();
+    } else if (e.key === "Escape") {
+      setEditValue(title);
+      setIsEditing(false);
+    }
+  }, [handleSave, title]);
+
+  if (isEditing) {
+    return createElement("input", {
+      ref: inputRef as any,
+      type: "text",
+      value: editValue,
+      onChange: (e: any) => setEditValue(e.target.value),
+      onBlur: handleSave,
+      onKeyDown: handleKeyDown,
+      style: {
+        ...headerTitleStyle,
+        border: "1px solid var(--orca-color-primary)",
+        borderRadius: 4,
+        padding: "2px 8px",
+        background: "var(--orca-color-bg-1)",
+        color: "var(--orca-color-text-1)",
+        outline: "none",
+        minWidth: 100,
+        maxWidth: 200,
+      },
+    });
+  }
+
+  return createElement(
+    "div",
+    {
+      style: {
+        ...headerTitleStyle,
+        cursor: "pointer",
+        display: "flex",
+        alignItems: "center",
+        gap: 4,
+        padding: "2px 4px",
+        borderRadius: 4,
+        transition: "background 0.15s",
+      },
+      onClick: () => setIsEditing(true),
+      title: "点击编辑标题",
+      onMouseOver: (e: any) => {
+        e.currentTarget.style.background = "var(--orca-color-bg-2)";
+      },
+      onMouseOut: (e: any) => {
+        e.currentTarget.style.background = "transparent";
+      },
+    },
+    createElement("span", {
+      style: {
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap",
+        maxWidth: 180,
+      },
+    }, title),
+    createElement("i", {
+      className: "ti ti-edit",
+      style: {
+        fontSize: 12,
+        opacity: 0.5,
+        flexShrink: 0,
+      },
+    })
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Main Component
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -133,8 +246,16 @@ export default function AiChatPanel({ panelId }: PanelProps) {
   const [flashcardMode, setFlashcardMode] = useState(false);
   const [pendingFlashcards, setPendingFlashcards] = useState<Flashcard[]>([]);
 
+  // Multi-model parallel response state
+  const [multiModelResponses, setMultiModelResponses] = useState<ModelResponse[]>([]);
+  const [isMultiModelMode, setIsMultiModelMode] = useState(false);
+
   // Compression settings modal state
   const [showCompressionSettings, setShowCompressionSettings] = useState(false);
+
+  // Message selection mode state (for batch save)
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedMessageIds, setSelectedMessageIds] = useState<Set<string>>(new Set());
 
   const listRef = useRef<HTMLDivElement | null>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -326,6 +447,52 @@ export default function AiChatPanel({ panelId }: PanelProps) {
   const handleCloseMemoryManager = useCallback(() => {
     setViewMode('chat');
   }, []);
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Message Selection Mode (for batch save)
+  // ─────────────────────────────────────────────────────────────────────────
+
+  const handleToggleSelectionMode = useCallback(() => {
+    setSelectionMode(prev => {
+      if (prev) {
+        // 退出选择模式时清空选中
+        setSelectedMessageIds(new Set());
+      }
+      return !prev;
+    });
+  }, []);
+
+  const handleToggleMessageSelection = useCallback((messageId: string) => {
+    setSelectedMessageIds(prev => {
+      const next = new Set(prev);
+      if (next.has(messageId)) {
+        next.delete(messageId);
+      } else {
+        next.add(messageId);
+      }
+      return next;
+    });
+  }, []);
+
+  const handleSaveSelectedMessages = useCallback(async () => {
+    if (selectedMessageIds.size === 0) {
+      orca.notify("warn", "请先选择要保存的消息");
+      return;
+    }
+    
+    // 按原始顺序获取选中的消息
+    const selectedMessages = messages.filter(m => selectedMessageIds.has(m.id));
+    
+    const result = await saveMessagesToJournal(selectedMessages, undefined, currentSession.model);
+    if (result.success) {
+      orca.notify("success", result.message);
+      // 保存成功后退出选择模式
+      setSelectionMode(false);
+      setSelectedMessageIds(new Set());
+    } else {
+      orca.notify("error", result.message);
+    }
+  }, [selectedMessageIds, messages, currentSession.model]);
 
   // ─────────────────────────────────────────────────────────────────────────
   // Chat Send Logic
@@ -670,6 +837,73 @@ export default function AiChatPanel({ panelId }: PanelProps) {
     
     queueMicrotask(scrollToBottom);
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // 多模型并行模式处理
+    // ─────────────────────────────────────────────────────────────────────────
+    if (multiModelStore.enabled && multiModelStore.selectedModels.length >= 2) {
+      setIsMultiModelMode(true);
+      const selectedModels = [...multiModelStore.selectedModels];
+      
+      // 初始化多模型响应状态
+      const initialResponses = createInitialResponses(selectedModels);
+      setMultiModelResponses(initialResponses);
+      
+      const aborter = new AbortController();
+      abortRef.current = aborter;
+      
+      try {
+        // 构建上下文
+        let contextText = "";
+        try {
+          const contexts = contextStore.selected;
+          if (contexts.length) {
+            const result = await buildContextForSend(contexts, { maxChars: settings.maxContextChars });
+            contextText = result.text;
+          }
+        } catch {}
+        
+        const memoryText = memoryStore.getFullMemoryText();
+        const baseMessages = historyOverride || messages;
+        const conversation: Message[] = [...baseMessages.filter((m) => !m.localOnly), {
+          ...userMsg,
+          content: processedContent,
+        }];
+        
+        // 构建 API 消息（不包含工具，多模型模式下简化处理）
+        const { standard: apiMessages, fallback: apiMessagesFallback } = await buildConversationMessages({
+          messages: conversation,
+          systemPrompt,
+          contextText,
+          customMemory: memoryText,
+          chatMode: "ask", // 多模型模式下不使用工具
+        });
+        
+        // 并行流式请求所有模型
+        for await (const update of streamMultiModelChat({
+          modelIds: selectedModels,
+          messages: apiMessages,
+          fallbackMessages: apiMessagesFallback,
+          temperature: settings.temperature,
+          maxTokens: settings.maxTokens,
+          signal: aborter.signal,
+        })) {
+          setMultiModelResponses(prev => updateModelResponse(prev, update));
+        }
+        
+      } catch (err: any) {
+        const isAbort = String(err?.name ?? "") === "AbortError";
+        if (!isAbort) {
+          orca.notify("error", String(err?.message ?? err ?? "多模型请求失败"));
+        }
+      } finally {
+        if (abortRef.current === aborter) abortRef.current = null;
+        setSending(false);
+      }
+      
+      return; // 多模型模式处理完成，不走单模型流程
+    }
+    // ─────────────────────────────────────────────────────────────────────────
+
     // 发送给 API 的消息使用处理后的内容（去掉指令）
     const userMsgForApi: Message = { 
       id: userMsg.id, 
@@ -996,6 +1230,7 @@ export default function AiChatPanel({ panelId }: PanelProps) {
                 nextReasoningMessageId = nowId();
                 nextReasoningCreatedAt = Date.now();
                 setStreamingMessageId(nextReasoningMessageId);
+                nextReasoning = chunk.reasoning;
                 setMessages((prev) => [...prev, { 
                   id: nextReasoningMessageId!, 
                   role: "assistant", 
@@ -1008,7 +1243,6 @@ export default function AiChatPanel({ panelId }: PanelProps) {
                 nextReasoning += chunk.reasoning;
                 updateMessage(nextReasoningMessageId, { reasoning: nextReasoning });
               }
-              nextReasoning += chunk.reasoning;
             } else if (chunk.type === "content") {
               // 第一次收到 content 时，创建 assistant 消息
               if (!nextReasoningMessageId) {
@@ -1484,6 +1718,10 @@ export default function AiChatPanel({ panelId }: PanelProps) {
           messageIndex: i,
           isLastAiMessage: isLastAi,
           isStreaming: streamingMessageId === m.id,
+          // 选择模式相关
+          selectionMode,
+          isSelected: selectedMessageIds.has(m.id),
+          onToggleSelection: selectionMode ? () => handleToggleMessageSelection(m.id) : undefined,
           onRegenerate: isLastAi ? handleRegenerate : undefined,
           onDelete: () => handleDeleteMessage(m.id),
           onRollback: i > 0 ? () => handleRollbackToMessage(m.id) : undefined,
@@ -1622,6 +1860,100 @@ export default function AiChatPanel({ panelId }: PanelProps) {
       );
       messageListContent = messageElements;
     }
+
+    // 如果在多模型模式，在消息列表末尾添加多模型响应组件
+    if (isMultiModelMode && multiModelResponses.length > 0) {
+      messageElements.push(
+        createElement(
+          "div",
+          {
+            key: "multi-model-response",
+            style: {
+              margin: "16px 0",
+              padding: "16px",
+              background: "var(--orca-color-bg-2)",
+              borderRadius: "16px",
+              border: "1px solid var(--orca-color-border)",
+            },
+          },
+          // 标题栏
+          createElement(
+            "div",
+            {
+              style: {
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                marginBottom: "12px",
+                paddingBottom: "12px",
+                borderBottom: "1px solid var(--orca-color-border)",
+              },
+            },
+            createElement(
+              "div",
+              {
+                style: {
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "8px",
+                  fontSize: "14px",
+                  fontWeight: 600,
+                  color: "var(--orca-color-text-1)",
+                },
+              },
+              createElement("i", { className: "ti ti-layout-columns", style: { fontSize: "18px", color: "var(--orca-color-primary)" } }),
+              `多模型对比 (${multiModelResponses.length})`
+            ),
+            // 关闭按钮
+            createElement(
+              "button",
+              {
+                onClick: () => {
+                  setIsMultiModelMode(false);
+                  setMultiModelResponses([]);
+                },
+                style: {
+                  padding: "4px 8px",
+                  border: "1px solid var(--orca-color-border)",
+                  borderRadius: "4px",
+                  background: "transparent",
+                  color: "var(--orca-color-text-2)",
+                  cursor: "pointer",
+                  fontSize: "12px",
+                },
+              },
+              "关闭对比"
+            )
+          ),
+          // 多模型响应内容
+          createElement(MultiModelResponse, {
+            responses: multiModelResponses,
+            layout: multiModelResponses.length <= 2 ? "side-by-side" : "stacked",
+            onCopy: (modelId: string, content: string) => {
+              navigator.clipboard.writeText(content).then(() => {
+                orca.notify("success", "已复制到剪贴板");
+              });
+            },
+            onAdopt: (modelId: string, content: string) => {
+              // 采用某个模型的回答，添加到消息列表
+              const info = getModelDisplayInfo(modelId);
+              const adoptedMsg: Message = {
+                id: nowId(),
+                role: "assistant",
+                content,
+                createdAt: Date.now(),
+                model: modelId,
+              };
+              setMessages((prev) => [...prev, adoptedMsg]);
+              setIsMultiModelMode(false);
+              setMultiModelResponses([]);
+              orca.notify("success", `已采用 ${info.modelLabel} 的回答`);
+            },
+          })
+        )
+      );
+      messageListContent = messageElements;
+    }
   }
 
   // If in memory manager view, render MemoryManager instead of chat
@@ -1640,7 +1972,15 @@ export default function AiChatPanel({ panelId }: PanelProps) {
       {
         style: headerStyle,
       },
-      createElement("div", { style: headerTitleStyle }, "AI Chat"),
+      // Editable session title
+      createElement(EditableTitle, {
+        title: currentSession.title || "新对话",
+        onSave: (newTitle: string) => {
+          if (currentSession.id) {
+            handleRenameSession(currentSession.id, newTitle);
+          }
+        },
+      }),
       // New Session Button
       createElement(
         Button,
@@ -1693,6 +2033,10 @@ export default function AiChatPanel({ panelId }: PanelProps) {
             orca.notify("error", result.message);
           }
         },
+        onToggleSelectionMode: handleToggleSelectionMode,
+        selectionMode,
+        selectedCount: selectedMessageIds.size,
+        onSaveSelected: handleSaveSelectedMessages,
       }),
       // Close Button
       createElement(Button, { variant: "plain", onClick: () => closeAiChatPanel(panelId), title: "Close" }, createElement("i", { className: "ti ti-x" }))

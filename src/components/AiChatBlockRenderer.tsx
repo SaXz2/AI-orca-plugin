@@ -19,11 +19,12 @@ import { estimateTokens } from "../utils/token-utils";
 const React = window.React as unknown as {
   createElement: typeof window.React.createElement;
   useState: <T>(initial: T | (() => T)) => [T, (next: T | ((prev: T) => T)) => void];
+  useEffect: (fn: () => void | (() => void), deps: any[]) => void;
   useMemo: <T>(fn: () => T, deps: any[]) => T;
   useRef: <T>(value: T) => { current: T };
   useCallback: <T extends (...args: any[]) => any>(fn: T, deps: any[]) => T;
 };
-const { createElement, useState, useMemo, useRef, useCallback } = React;
+const { createElement, useState, useEffect, useMemo, useRef, useCallback } = React;
 const { useSnapshot } = (window as any).Valtio as {
   useSnapshot: <T extends object>(obj: T) => T;
 };
@@ -62,19 +63,19 @@ function ToolbarButton({ icon, label, onClick, disabled }: {
       style: {
         display: "flex",
         alignItems: "center",
-        gap: "4px",
-        padding: "4px 8px",
-        fontSize: "12px",
+        justifyContent: "center",
+        padding: "6px",
+        fontSize: "14px",
         background: "transparent",
         border: "1px solid var(--orca-color-border)",
         borderRadius: "6px",
         color: disabled ? "var(--orca-color-text-3)" : "var(--orca-color-text-2)",
         cursor: disabled ? "not-allowed" : "pointer",
         transition: "all 0.2s",
+        userSelect: "none",
       },
     },
-    createElement("i", { className: `ti ti-${icon}`, style: { fontSize: "14px" } }),
-    label
+    createElement("i", { className: `ti ti-${icon}` })
   );
 }
 
@@ -98,6 +99,7 @@ export default function AiChatBlockRenderer({
   const [expanded, setExpanded] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [showSearch, setShowSearch] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const listRef = useRef<HTMLDivElement | null>(null);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -107,6 +109,55 @@ export default function AiChatBlockRenderer({
   const messages: Message[] = propMessages || repr.messages || [];
   const model = propModel || repr.model || "";
   const createdAt = propCreatedAt || repr.createdAt;
+  const targetBlockId = mirrorId ?? blockId;
+
+  // 备注标题状态
+  const [note, setNote] = useState("");
+  const [isEditingNote, setIsEditingNote] = useState(false);
+  const [noteValue, setNoteValue] = useState("");
+  const noteInputRef = useRef<HTMLInputElement | null>(null);
+
+  // 加载备注
+  useEffect(() => {
+    const loadNote = async () => {
+      try {
+        const pluginName = "ai-chat";
+        const key = `block-note-${targetBlockId}`;
+        const saved = await orca.plugins.getData(pluginName, key);
+        if (saved && typeof saved === "string") {
+          setNote(saved);
+        }
+      } catch (err) {
+        // 忽略
+      }
+    };
+    loadNote();
+  }, [targetBlockId]);
+
+  // 保存备注
+  const handleSaveNote = useCallback(async () => {
+    const trimmed = noteValue.trim();
+    try {
+      const pluginName = "ai-chat";
+      const key = `block-note-${targetBlockId}`;
+      await orca.plugins.setData(pluginName, key, trimmed);
+      setNote(trimmed);
+      setIsEditingNote(false);
+      if (trimmed) {
+        orca.notify("success", "备注已保存");
+      }
+    } catch (err) {
+      console.error("[AiChatBlockRenderer] Failed to save note:", err);
+      orca.notify("error", "保存备注失败");
+    }
+  }, [targetBlockId, noteValue]);
+
+  // 开始编辑备注
+  const handleStartEditNote = useCallback(() => {
+    setNoteValue(note);
+    setIsEditingNote(true);
+    setTimeout(() => noteInputRef.current?.focus(), 50);
+  }, [note]);
 
   // 计算统计信息
   const stats = useMemo(() => {
@@ -268,53 +319,98 @@ export default function AiChatBlockRenderer({
     "div",
     {
       style: {
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
         padding: "12px 16px",
         borderBottom: "1px solid var(--orca-color-border)",
         background: "var(--orca-color-bg-2)",
+        userSelect: "none",
       },
     },
-    // 左侧：图标和标题
+    // 第一行：备注（大字体），默认显示标题
     createElement(
       "div",
-      { style: { display: "flex", alignItems: "center", gap: "8px", flex: 1, minWidth: 0 } },
-      createElement("i", {
-        className: "ti ti-message-chatbot",
-        style: { fontSize: "18px", color: "var(--orca-color-primary)", flexShrink: 0 },
-      }),
+      {
+        style: {
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+        },
+      },
+      // 左侧：图标和备注
       createElement(
-        "span",
-        {
-          style: {
-            fontWeight: 600,
-            fontSize: "15px",
-            color: "var(--orca-color-text-1)",
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-          },
-        },
-        title
-      )
-    ),
-    // 右侧：模型和时间
-    createElement(
-      "div",
-      { style: { fontSize: "11px", color: "var(--orca-color-text-3)", display: "flex", alignItems: "center", gap: "8px", flexShrink: 0 } },
-      model && createElement(
-        "span",
-        {
-          style: {
-            background: "var(--orca-color-bg-3)",
-            padding: "2px 8px",
-            borderRadius: "4px",
-          },
-        },
-        model
+        "div",
+        { style: { display: "flex", alignItems: "center", gap: "6px", flex: 1, minWidth: 0 } },
+        createElement("i", {
+          className: "ti ti-message-chatbot",
+          style: { fontSize: "18px", color: "var(--orca-color-primary)", flexShrink: 0 },
+        }),
+        isEditingNote
+          ? createElement("input", {
+              ref: noteInputRef as any,
+              type: "text",
+              value: noteValue,
+              onChange: (e: any) => setNoteValue(e.target.value),
+              onBlur: handleSaveNote,
+              onKeyDown: (e: any) => {
+                if (e.key === "Enter") handleSaveNote();
+                if (e.key === "Escape") setIsEditingNote(false);
+              },
+              placeholder: title || "添加备注...",
+              style: {
+                flex: 1,
+                fontWeight: 600,
+                fontSize: "15px",
+                color: "var(--orca-color-text-1)",
+                border: "1px solid var(--orca-color-primary)",
+                borderRadius: "4px",
+                padding: "2px 8px",
+                background: "var(--orca-color-bg-1)",
+                outline: "none",
+              },
+            })
+          : createElement(
+              "span",
+              {
+                style: {
+                  flex: 1,
+                  fontWeight: 600,
+                  fontSize: "15px",
+                  color: "var(--orca-color-text-1)",
+                  cursor: "pointer",
+                  padding: "2px 4px",
+                  borderRadius: "4px",
+                  transition: "background 0.15s",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                },
+                onClick: handleStartEditNote,
+                onMouseOver: (e: any) => {
+                  e.currentTarget.style.background = "var(--orca-color-bg-3)";
+                },
+                onMouseOut: (e: any) => {
+                  e.currentTarget.style.background = "transparent";
+                },
+              },
+              note || title || "点击添加备注..."
+            )
       ),
-      createdAt && new Date(createdAt).toLocaleDateString("zh-CN")
+      // 右侧：模型和时间
+      createElement(
+        "div",
+        { style: { fontSize: "11px", color: "var(--orca-color-text-3)", display: "flex", alignItems: "center", gap: "8px", flexShrink: 0 } },
+        model && createElement(
+          "span",
+          {
+            style: {
+              background: "var(--orca-color-bg-3)",
+              padding: "2px 8px",
+              borderRadius: "4px",
+            },
+          },
+          model
+        ),
+        createdAt && new Date(createdAt).toLocaleDateString("zh-CN")
+      )
     )
   );
 
@@ -331,6 +427,7 @@ export default function AiChatBlockRenderer({
         background: "var(--orca-color-bg-1)",
         gap: "8px",
         flexWrap: "wrap",
+        userSelect: "none",
       },
     },
     // 左侧：操作按钮
@@ -361,6 +458,11 @@ export default function AiChatBlockRenderer({
         icon: "json",
         label: "导出 JSON",
         onClick: handleExportJson,
+      }),
+      createElement(ToolbarButton, {
+        icon: isFullscreen ? "arrows-minimize" : "arrows-maximize",
+        label: isFullscreen ? "退出全屏" : "全屏",
+        onClick: () => setIsFullscreen(!isFullscreen),
       })
     ),
     // 右侧：统计信息
@@ -433,12 +535,24 @@ export default function AiChatBlockRenderer({
     {
       style: {
         background: "var(--orca-color-bg-1)",
-        borderRadius: "12px",
-        border: "1px solid var(--orca-color-border)",
+        borderRadius: isFullscreen ? "0" : "12px",
+        border: isFullscreen ? "none" : "1px solid var(--orca-color-border)",
         overflow: "hidden",
-        position: "relative",
         userSelect: "text",
         WebkitUserSelect: "text",
+        // 全屏样式
+        ...(isFullscreen ? {
+          position: "fixed",
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          zIndex: 9999,
+          display: "flex",
+          flexDirection: "column",
+        } : {
+          position: "relative",
+        }),
       } as React.CSSProperties,
       // 允许复制事件正常传播
       onCopy: (e: any) => {
@@ -459,6 +573,7 @@ export default function AiChatBlockRenderer({
         style: {
           position: "relative",
           overflow: "hidden",
+          flex: isFullscreen ? 1 : undefined,
         },
       },
       // 消息列表滚动容器
@@ -467,7 +582,8 @@ export default function AiChatBlockRenderer({
         {
           ref: listRef as any,
           style: {
-            maxHeight: expanded || showSearch ? "800px" : "400px",
+            maxHeight: isFullscreen ? "100%" : (expanded || showSearch ? "800px" : "400px"),
+            height: isFullscreen ? "100%" : undefined,
             overflow: "auto",
           },
         },
