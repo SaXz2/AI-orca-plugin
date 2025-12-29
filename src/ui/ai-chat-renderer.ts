@@ -31,12 +31,13 @@ export function registerAiChatRenderer(): void {
   
   // 注册块渲染器
   // isEditable = true 允许块参与正常的编辑操作（缩进、移动等）
-  // 注意：Orca 不支持自定义块有子块，useChildren 参数无效
+  // useChildren = true 允许其他块缩进到此块下成为子块
   orca.renderers.registerBlock(
     BLOCK_TYPE,
     true, // 可编辑（允许缩进等操作）
     AiChatBlockRenderer as any,
-    [] // 无资源字段
+    [], // 无资源字段
+    true // useChildren - 允许子块
   );
   console.log("[ai-chat-renderer] Registered block renderer:", BLOCK_TYPE);
   

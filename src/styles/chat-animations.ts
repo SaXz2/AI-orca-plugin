@@ -1012,6 +1012,27 @@ br + .md-block-dot {
     border-radius: 12px;
 }
 
+/* ─────────────────────────────────────────────────────────────────────────────
+   AI Chat Block Renderer - Text Selection Support
+   ─────────────────────────────────────────────────────────────────────────── */
+
+/* 确保 AI 对话块内的文本可以被选择和复制 */
+.aichat-repr-conversation,
+.aichat-repr-conversation-content,
+.aichat-repr-conversation-content * {
+    user-select: text !important;
+    -webkit-user-select: text !important;
+    -moz-user-select: text !important;
+    -ms-user-select: text !important;
+}
+
+/* 按钮和交互元素除外 */
+.aichat-repr-conversation button,
+.aichat-repr-conversation input {
+    user-select: none !important;
+    -webkit-user-select: none !important;
+}
+
 `;
 
 let styleElement: HTMLStyleElement | null = null;
