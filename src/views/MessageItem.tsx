@@ -27,6 +27,7 @@ import {
 } from "../styles/ai-chat-styles";
 import type { Message } from "../services/session-service";
 import type { ToolCallInfo } from "../services/chat-stream-handler";
+import { formatTokenCount } from "../utils/token-utils";
 
 const React = window.React as unknown as {
   createElement: typeof window.React.createElement;
@@ -226,6 +227,20 @@ interface MessageItemProps {
   onSuggestedReply?: (text: string) => void;
   // Callback to generate AI-powered suggestions
   onGenerateSuggestions?: () => Promise<string[]>;
+  // Token statistics for this message
+  tokenStats?: {
+    messageTokens: number;      // 当前消息的 token 数
+    cumulativeTokens: number;   // 累计到此消息的 token 数
+    cost?: number;              // 本条消息费用
+    cumulativeCost?: number;    // 累计费用
+    currencySymbol?: string;    // 货币符号
+    // 新增：输入/输出分开统计（用于最后一条消息显示总计）
+    totalInputTokens?: number;  // 总输入 token
+    totalOutputTokens?: number; // 总输出 token
+    totalInputCost?: number;    // 总输入费用
+    totalOutputCost?: number;   // 总输出费用
+    isLastMessage?: boolean;    // 是否是最后一条消息
+  };
 }
 
 /**
@@ -405,6 +420,7 @@ export default function MessageItem({
   onExtractMemory,
   onSuggestedReply,
   onGenerateSuggestions,
+  tokenStats,
 }: MessageItemProps) {
   const [isHovered, setIsHovered] = useState(false);
   const [isExtractDropdownOpen, setIsExtractDropdownOpen] = useState(false);
@@ -573,6 +589,53 @@ export default function MessageItem({
         isStreaming,
       }),
 
+      // Context References (显示用户消息关联的上下文引用)
+      isUser && message.contextRefs && message.contextRefs.length > 0 && createElement(
+        "div",
+        {
+          style: {
+            display: "flex",
+            flexWrap: "wrap",
+            gap: "6px",
+            marginBottom: "8px",
+          },
+        },
+        ...message.contextRefs.map((ref, idx) => createElement(
+          "span",
+          {
+            key: idx,
+            style: {
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "4px",
+              fontSize: "12px",
+              color: "var(--orca-color-primary)",
+              background: "var(--orca-color-bg-3)",
+              padding: "2px 8px",
+              borderRadius: "4px",
+              border: "1px solid var(--orca-color-border)",
+              cursor: ref.blockId ? "pointer" : "default",
+            },
+            onClick: ref.blockId ? (e: any) => {
+              e.preventDefault();
+              e.stopPropagation();
+              // 跳转到页面
+              try {
+                orca.nav.openInLastPanel("block", { blockId: ref.blockId });
+              } catch (error) {
+                console.error("[MessageItem] Navigation failed:", error);
+              }
+            } : undefined,
+            title: ref.blockId ? "点击跳转到页面" : undefined,
+          },
+          createElement("i", {
+            className: ref.kind === "page" ? "ti ti-file-text" : "ti ti-hash",
+            style: { fontSize: "12px" },
+          }),
+          ref.title
+        ))
+      ),
+
       // Content
       createElement(MarkdownMessage, { content: message.content || "", role: message.role }),
 
@@ -626,12 +689,124 @@ export default function MessageItem({
           onGenerate: onGenerateSuggestions,
         }),
 
-      // Message Time
-      message.createdAt &&
+      // Message Time and Token Stats
+      (message.createdAt || tokenStats || (isAssistant && message.model)) &&
         createElement(
           "div",
-          { style: messageTimeStyle(message.role) },
-          formatMessageTime(message.createdAt)
+          { 
+            style: {
+              ...messageTimeStyle(message.role),
+              display: "flex",
+              alignItems: "center",
+              gap: "8px",
+              flexWrap: "wrap",
+            } 
+          },
+          // 时间
+          message.createdAt && formatMessageTime(message.createdAt),
+          // Token 统计
+          tokenStats && createElement(
+            "span",
+            {
+              style: {
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "4px",
+                fontSize: "11px",
+                color: "var(--orca-color-text-3)",
+                background: "var(--orca-color-bg-3)",
+                padding: "2px 6px",
+                borderRadius: "4px",
+              },
+              title: `本条消息: ${tokenStats.messageTokens} tokens${tokenStats.cost ? ` (${tokenStats.currencySymbol || '$'}${tokenStats.cost.toFixed(4)})` : ''}\n累计上下文: ${tokenStats.cumulativeTokens} tokens${tokenStats.cumulativeCost ? ` (${tokenStats.currencySymbol || '$'}${tokenStats.cumulativeCost.toFixed(4)})` : ''}`,
+            },
+            createElement("i", {
+              className: "ti ti-chart-bar",
+              style: { fontSize: "10px" },
+            }),
+            `${formatTokenCount(tokenStats.messageTokens)}`,
+            createElement(
+              "span",
+              { style: { opacity: 0.6 } },
+              `/ ${formatTokenCount(tokenStats.cumulativeTokens)}`
+            ),
+            // 显示本条消息费用（如果有）
+            tokenStats.cost !== undefined && tokenStats.cost > 0 && createElement(
+              "span",
+              { 
+                style: { 
+                  marginLeft: "4px",
+                  color: "var(--orca-color-warning)",
+                  fontWeight: 500,
+                } 
+              },
+              `${tokenStats.currencySymbol || '$'}${tokenStats.cost < 0.001 ? tokenStats.cost.toFixed(5) : tokenStats.cost < 0.01 ? tokenStats.cost.toFixed(4) : tokenStats.cost.toFixed(3)}`
+            )
+          ),
+          // 模型名称（仅 AI 消息，显示在最右边）
+          isAssistant && message.model && createElement(
+            "span",
+            {
+              style: {
+                fontSize: "11px",
+                color: "var(--orca-color-primary)",
+                background: "var(--orca-color-bg-3)",
+                padding: "2px 6px",
+                borderRadius: "4px",
+              },
+            },
+            message.model
+          ),
+          // 最后一条消息显示总计统计
+          tokenStats?.isLastMessage && createElement(
+            "div",
+            {
+              style: {
+                display: "flex",
+                alignItems: "center",
+                gap: "8px",
+                fontSize: "11px",
+                color: "var(--orca-color-text-2)",
+                background: "var(--orca-color-bg-3)",
+                padding: "4px 8px",
+                borderRadius: "4px",
+                marginTop: "4px",
+                width: "100%",
+              },
+            },
+            createElement("i", { className: "ti ti-calculator", style: { fontSize: "12px" } }),
+            createElement("span", { style: { fontWeight: 500 } }, "总计:"),
+            // 输入
+            createElement(
+              "span",
+              { style: { display: "flex", alignItems: "center", gap: "2px" } },
+              createElement("i", { className: "ti ti-arrow-up", style: { fontSize: "10px", color: "var(--orca-color-success)" } }),
+              `${formatTokenCount(tokenStats.totalInputTokens || 0)}`,
+              tokenStats.totalInputCost !== undefined && tokenStats.totalInputCost > 0 && createElement(
+                "span",
+                { style: { color: "var(--orca-color-success)", marginLeft: "2px" } },
+                `(${tokenStats.currencySymbol || '$'}${tokenStats.totalInputCost < 0.001 ? tokenStats.totalInputCost.toFixed(5) : tokenStats.totalInputCost.toFixed(4)})`
+              )
+            ),
+            // 输出
+            createElement(
+              "span",
+              { style: { display: "flex", alignItems: "center", gap: "2px" } },
+              createElement("i", { className: "ti ti-arrow-down", style: { fontSize: "10px", color: "var(--orca-color-primary)" } }),
+              `${formatTokenCount(tokenStats.totalOutputTokens || 0)}`,
+              tokenStats.totalOutputCost !== undefined && tokenStats.totalOutputCost > 0 && createElement(
+                "span",
+                { style: { color: "var(--orca-color-primary)", marginLeft: "2px" } },
+                `(${tokenStats.currencySymbol || '$'}${tokenStats.totalOutputCost < 0.001 ? tokenStats.totalOutputCost.toFixed(5) : tokenStats.totalOutputCost.toFixed(4)})`
+              )
+            ),
+            // 总费用
+            tokenStats.cumulativeCost !== undefined && tokenStats.cumulativeCost > 0 && createElement(
+              "span",
+              { style: { fontWeight: 600, color: "var(--orca-color-warning)", marginLeft: "4px" } },
+              `= ${tokenStats.currencySymbol || '$'}${tokenStats.cumulativeCost < 0.01 ? tokenStats.cumulativeCost.toFixed(4) : tokenStats.cumulativeCost.toFixed(3)}`
+            )
+          )
         ),
 
       // Action Bar

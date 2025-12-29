@@ -94,6 +94,14 @@ export function clearContexts(): void {
 }
 
 /**
+ * Clear high priority contexts (dragged blocks)
+ * Called after sending a message to remove temporary context
+ */
+export function clearHighPriorityContexts(): void {
+  contextStore.selected = contextStore.selected.filter((c) => (c.priority ?? 0) === 0);
+}
+
+/**
  * Get display label for a context ref (used in chips)
  */
 export function getDisplayLabel(ref: ContextRef): string {

@@ -43,6 +43,8 @@ export type Message = {
   images?: ImageRef[]; // 图片引用（存路径）- 兼容旧版
   files?: FileRef[]; // 文件引用（存路径）- 新版，支持多种文件类型
   reasoning?: string; // AI 推理过程（DeepSeek/Claude thinking）
+  model?: string; // 使用的模型（用于计费）
+  contextRefs?: Array<{ title: string; kind: string; blockId?: number }>; // 消息关联的上下文引用（用于显示和跳转）
   tool_calls?: Array<{
     id: string;
     type: "function";

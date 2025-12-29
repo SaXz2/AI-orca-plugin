@@ -183,6 +183,17 @@ export async function* openAIChatCompletionsStream(
     },
   };
 
+  // Debug: 检查 assistant 消息是否符合 DeepSeek 要求
+  for (const msg of args.messages) {
+    if (msg.role === "assistant") {
+      const hasContent = msg.content !== null && msg.content !== undefined;
+      const hasToolCalls = msg.tool_calls && msg.tool_calls.length > 0;
+      if (!hasContent && !hasToolCalls) {
+        console.warn("[openAI] Warning: assistant message has no content and no tool_calls:", msg);
+      }
+    }
+  }
+
   // Add tools if provided
   if (args.tools && args.tools.length > 0) {
     requestBody.tools = args.tools;

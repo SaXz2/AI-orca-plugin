@@ -51,11 +51,31 @@ const ASK_MODE_INSTRUCTION = `
  * Convert internal Message to OpenAI API format (sync, text only)
  */
 function messageToApi(m: Message): OpenAIChatMessage {
+  // DeepSeek 要求 assistant 消息必须有 content 或 tool_calls
+  // 规则：
+  // 1. 如果有 tool_calls，content 可以是 null
+  // 2. 如果没有 tool_calls，content 必须是字符串（可以是空字符串）
+  let content: string | null;
+  if (m.role === "assistant") {
+    const hasToolCalls = m.tool_calls && m.tool_calls.length > 0;
+    if (hasToolCalls) {
+      // 有 tool_calls 时，content 可以是 null 或实际内容
+      content = m.content || null;
+    } else {
+      // 没有 tool_calls 时，content 必须是字符串
+      content = m.content || "";
+    }
+  } else {
+    content = m.content;
+  }
+
   const msg: OpenAIChatMessage = {
     role: m.role as any,
-    content: m.role === "assistant" && !m.content ? null : m.content,
+    content,
   };
-  if (m.tool_calls) msg.tool_calls = m.tool_calls;
+  if (m.tool_calls && m.tool_calls.length > 0) {
+    msg.tool_calls = m.tool_calls;
+  }
   if (m.tool_call_id) {
     msg.tool_call_id = m.tool_call_id;
     msg.name = m.name;
@@ -156,8 +176,38 @@ export async function buildConversationMessages(params: ConversationBuildParams)
   const systemContent = buildSystemContent(systemPrompt, contextText, customMemory, chatMode);
   const filteredMessages = messages.filter((m) => !m.localOnly);
   
+  // 收集所有有效的 tool_call_id（来自 assistant 消息的 tool_calls）
+  const validToolCallIds = new Set<string>();
+  filteredMessages.forEach((m) => {
+    if (m.role === "assistant" && m.tool_calls && m.tool_calls.length > 0) {
+      m.tool_calls.forEach((tc) => validToolCallIds.add(tc.id));
+    }
+  });
+  
+  // 过滤掉无效消息：
+  // 1. 没有对应 tool_calls 的 tool 消息
+  // 2. 既没有 content 也没有 tool_calls 的 assistant 消息
+  const validMessages = filteredMessages.filter((m) => {
+    // 过滤孤儿 tool 消息
+    if (m.role === "tool" && m.tool_call_id) {
+      return validToolCallIds.has(m.tool_call_id);
+    }
+    // 过滤无效 assistant 消息（既没有 content 也没有 tool_calls）
+    if (m.role === "assistant") {
+      const hasContent = m.content && m.content.trim().length > 0;
+      const hasToolCalls = m.tool_calls && m.tool_calls.length > 0;
+      const hasReasoning = m.reasoning && m.reasoning.trim().length > 0;
+      // 至少要有 content、tool_calls 或 reasoning 之一
+      if (!hasContent && !hasToolCalls && !hasReasoning) {
+        console.log("[message-builder] Filtering out invalid assistant message (no content/tool_calls/reasoning):", m.id);
+        return false;
+      }
+    }
+    return true;
+  });
+  
   // Build standard format with async image conversion
-  const history = await Promise.all(filteredMessages.map(messageToApiWithImages));
+  const history = await Promise.all(validMessages.map(messageToApiWithImages));
 
   const standard: OpenAIChatMessage[] = [
     ...(systemContent ? [{ role: "system" as const, content: systemContent }] : []),
@@ -165,7 +215,7 @@ export async function buildConversationMessages(params: ConversationBuildParams)
   ];
 
   // Build fallback format (sync, no images)
-  const fallbackHistory = filteredMessages.map(messageToApi);
+  const fallbackHistory = validMessages.map(messageToApi);
   const fallback: OpenAIChatMessage[] = [
     ...(systemContent ? [{ role: "system" as const, content: systemContent }] : []),
     ...fallbackHistory.flatMap((m) => {

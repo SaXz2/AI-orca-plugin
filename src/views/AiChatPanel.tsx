@@ -8,6 +8,7 @@ import { memoryStore } from "../store/memory-store";
 import { getMode } from "../store/chat-mode-store";
 import { findViewPanelById } from "../utils/panel-tree";
 import { generateSuggestedReplies } from "../services/suggestion-service";
+import { estimateTokens, formatTokenCount } from "../utils/token-utils";
 import ChatInput from "./ChatInput";
 import MarkdownMessage from "../components/MarkdownMessage";
 import MessageItem from "./MessageItem";
@@ -612,6 +613,15 @@ export default function AiChatPanel({ panelId }: PanelProps) {
 
     setSending(true);
 
+    // 获取高优先级上下文（拖入的块）用于显示
+    const highPriorityContexts = contextStore.selected
+      .filter(c => (c.priority ?? 0) > 0)
+      .map(c => ({
+        title: c.kind === 'page' ? c.title : `#${c.tag}`,
+        kind: c.kind,
+        blockId: c.kind === 'page' ? c.rootBlockId : undefined,
+      }));
+
     // 先添加用户消息到列表
     const userMsg: Message = { 
       id: nowId(), 
@@ -619,6 +629,7 @@ export default function AiChatPanel({ panelId }: PanelProps) {
       content, 
       createdAt: Date.now(),
       files: files && files.length > 0 ? files : undefined,
+      contextRefs: highPriorityContexts.length > 0 ? highPriorityContexts : undefined,
     };
 
     // Use override if provided (for regeneration), otherwise append to current state
@@ -716,18 +727,19 @@ export default function AiChatPanel({ panelId }: PanelProps) {
             reasoningMessageId = nowId();
             reasoningCreatedAt = Date.now();
             setStreamingMessageId(reasoningMessageId);
+            currentReasoning = chunk.reasoning;
             setMessages((prev) => [...prev, { 
               id: reasoningMessageId!, 
               role: "assistant", 
               content: "", 
-              reasoning: chunk.reasoning,
+              reasoning: currentReasoning,
               createdAt: reasoningCreatedAt!,
+              model,
             }]);
           } else {
             currentReasoning += chunk.reasoning;
             updateMessage(reasoningMessageId, { reasoning: currentReasoning });
           }
-          currentReasoning += chunk.reasoning;
         } else if (chunk.type === "content") {
           // 第一次收到 content 时，创建 assistant 消息（如果还没有 reasoning 消息，或者 reasoning 已完成）
           if (!reasoningMessageId) {
@@ -739,7 +751,8 @@ export default function AiChatPanel({ panelId }: PanelProps) {
               id: assistantId, 
               role: "assistant", 
               content: chunk.content, 
-              createdAt: assistantCreatedAt 
+              createdAt: assistantCreatedAt,
+              model,
             }]);
             currentContent = chunk.content;
             reasoningMessageId = assistantId; // 复用这个 ID 作为 assistant ID
@@ -753,7 +766,8 @@ export default function AiChatPanel({ panelId }: PanelProps) {
               id: assistantId, 
               role: "assistant", 
               content: chunk.content, 
-              createdAt: assistantCreatedAt 
+              createdAt: assistantCreatedAt,
+              model,
             }]);
             currentContent = chunk.content;
             reasoningMessageId = assistantId; // 更新为 assistant ID
@@ -780,7 +794,8 @@ export default function AiChatPanel({ panelId }: PanelProps) {
             id: assistantId, 
             role: "assistant", 
             content: "(empty response)", 
-            createdAt: assistantCreatedAt 
+            createdAt: assistantCreatedAt,
+            model,
           }]);
         } else {
           // 完全空响应
@@ -788,7 +803,8 @@ export default function AiChatPanel({ panelId }: PanelProps) {
             id: assistantId, 
             role: "assistant", 
             content: "(empty response)", 
-            createdAt: assistantCreatedAt 
+            createdAt: assistantCreatedAt,
+            model,
           }]);
         }
       } else if (!currentContent && toolCalls.length > 0) {
@@ -797,7 +813,8 @@ export default function AiChatPanel({ panelId }: PanelProps) {
           id: assistantId, 
           role: "assistant", 
           content: "", 
-          createdAt: assistantCreatedAt 
+          createdAt: assistantCreatedAt,
+          model,
         }]);
       }
 
@@ -946,6 +963,7 @@ export default function AiChatPanel({ panelId }: PanelProps) {
                   content: "", 
                   reasoning: chunk.reasoning,
                   createdAt: nextReasoningCreatedAt!,
+                  model,
                 }]);
               } else {
                 nextReasoning += chunk.reasoning;
@@ -963,7 +981,8 @@ export default function AiChatPanel({ panelId }: PanelProps) {
                   id: nextAssistantId, 
                   role: "assistant", 
                   content: chunk.content, 
-                  createdAt: nextAssistantCreatedAt 
+                  createdAt: nextAssistantCreatedAt,
+                  model,
                 }]);
                 nextContent = chunk.content;
                 nextReasoningMessageId = nextAssistantId;
@@ -977,7 +996,8 @@ export default function AiChatPanel({ panelId }: PanelProps) {
                   id: nextAssistantId, 
                   role: "assistant", 
                   content: chunk.content, 
-                  createdAt: nextAssistantCreatedAt 
+                  createdAt: nextAssistantCreatedAt,
+                  model,
                 }]);
                 nextContent = chunk.content;
                 nextReasoningMessageId = nextAssistantId;
@@ -1007,7 +1027,8 @@ export default function AiChatPanel({ panelId }: PanelProps) {
             id: nextAssistantId, 
             role: "assistant", 
             content: "(empty response)", 
-            createdAt: nextAssistantCreatedAt 
+            createdAt: nextAssistantCreatedAt,
+            model,
           }]);
         }
 
@@ -1210,7 +1231,172 @@ export default function AiChatPanel({ panelId }: PanelProps) {
       }
     });
 
+    // 计算系统开销 token（系统提示 + 记忆 + 上下文）
+    const systemPromptTokens = estimateTokens(settingsForUi.systemPrompt || "");
+    const memoryTokens = estimateTokens(memoryStore.getFullMemoryText() || "");
+    // 上下文 token 在 ChatInput 中已经显示，这里只计算基础开销
+    const baseOverheadTokens = systemPromptTokens + memoryTokens;
+
+    // 货币符号
+    const currencySymbol = settingsForUi.currency === 'CNY' ? '¥' : 
+                          settingsForUi.currency === 'EUR' ? '€' : 
+                          settingsForUi.currency === 'JPY' ? '¥' : '$';
+
+    // 辅助函数：根据模型名获取价格
+    const getModelPrices = (modelName?: string) => {
+      const model = modelName || selectedModel;
+      const opt = modelOptions.find(o => o.value === model);
+      return {
+        inputPrice: opt?.inputPrice || 0,
+        outputPrice: opt?.outputPrice || 0,
+      };
+    };
+
+    // 计算每条消息的 token 统计和费用
+    const tokenStatsMap = new Map<string, { 
+      messageTokens: number; 
+      cumulativeTokens: number;
+      cost: number;
+      cumulativeCost: number;
+      currencySymbol: string;
+      totalInputTokens?: number;
+      totalOutputTokens?: number;
+      totalInputCost?: number;
+      totalOutputCost?: number;
+      isLastMessage?: boolean;
+    }>();
+    let cumulativeTokens = baseOverheadTokens;
+    let cumulativeCost = 0;
+    
+    // 输入/输出分开统计
+    let totalInputTokens = baseOverheadTokens; // 系统开销算作输入
+    let totalOutputTokens = 0;
+    let totalInputCost = 0;
+    let totalOutputCost = 0;
+    
+    // 系统开销按当前模型的输入价格计算
+    const currentPrices = getModelPrices(selectedModel);
+    const systemOverheadCost = (baseOverheadTokens / 1_000_000) * currentPrices.inputPrice;
+    cumulativeCost += systemOverheadCost;
+    totalInputCost += systemOverheadCost;
+    
+    // 过滤掉 tool 消息，获取有效消息列表
+    const validMessages = messages.filter(m => m.role !== "tool");
+    const lastMessageId = validMessages.length > 0 ? validMessages[validMessages.length - 1].id : null;
+    
+    messages.forEach((m) => {
+      if (m.role === "tool") return; // 跳过 tool 消息
+      const messageTokens = estimateTokens(m.content || "") + 
+        (m.reasoning ? estimateTokens(m.reasoning) : 0);
+      
+      // 获取该消息使用的模型价格
+      const prices = getModelPrices(m.model);
+      const isInput = m.role === "user";
+      
+      // 计算本条消息费用（用户消息用输入价，AI消息用输出价）
+      const messageCost = isInput 
+        ? (messageTokens / 1_000_000) * prices.inputPrice
+        : (messageTokens / 1_000_000) * prices.outputPrice;
+      
+      cumulativeTokens += messageTokens;
+      cumulativeCost += messageCost;
+      
+      // 累计输入/输出
+      if (isInput) {
+        totalInputTokens += messageTokens;
+        totalInputCost += messageCost;
+      } else {
+        totalOutputTokens += messageTokens;
+        totalOutputCost += messageCost;
+      }
+      
+      const isLast = m.id === lastMessageId;
+      
+      tokenStatsMap.set(m.id, { 
+        messageTokens, 
+        cumulativeTokens,
+        cost: messageCost,
+        cumulativeCost,
+        currencySymbol,
+        // 只在最后一条消息上附加总计信息
+        ...(isLast ? {
+          totalInputTokens,
+          totalOutputTokens,
+          totalInputCost,
+          totalOutputCost,
+          isLastMessage: true,
+        } : {}),
+      });
+    });
+
     const messageElements: any[] = [];
+    
+    // 在消息列表顶部显示系统开销
+    if (baseOverheadTokens > 0) {
+      messageElements.push(
+        createElement(
+          "div",
+          {
+            key: "system-overhead",
+            style: {
+              display: "flex",
+              justifyContent: "center",
+              padding: "8px 16px",
+              marginBottom: "8px",
+            },
+          },
+          createElement(
+            "div",
+            {
+              style: {
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "12px",
+                fontSize: "11px",
+                color: "var(--orca-color-text-3)",
+                background: "var(--orca-color-bg-2)",
+                padding: "6px 12px",
+                borderRadius: "12px",
+                border: "1px solid var(--orca-color-border)",
+              },
+            },
+            createElement(
+              "span",
+              {
+                style: { display: "flex", alignItems: "center", gap: "4px" },
+                title: "系统提示词消耗",
+              },
+              createElement("i", { className: "ti ti-prompt", style: { fontSize: "12px" } }),
+              `提示词 ${formatTokenCount(systemPromptTokens)}`
+            ),
+            memoryTokens > 0 && createElement(
+              "span",
+              {
+                style: { display: "flex", alignItems: "center", gap: "4px" },
+                title: "记忆消耗（用户画像+记忆）",
+              },
+              createElement("i", { className: "ti ti-brain", style: { fontSize: "12px" } }),
+              `记忆 ${formatTokenCount(memoryTokens)}`
+            ),
+            createElement(
+              "span",
+              {
+                style: { 
+                  display: "flex", 
+                  alignItems: "center", 
+                  gap: "4px",
+                  fontWeight: 500,
+                  color: "var(--orca-color-text-2)",
+                },
+                title: "基础开销合计",
+              },
+              `= ${formatTokenCount(baseOverheadTokens)} tokens`
+            )
+          )
+        )
+      );
+    }
+
     messages.forEach((m, i) => {
       // 跳过 tool 消息，它们会被合并到 assistant 消息的工具调用区域
       if (m.role === "tool") return;
@@ -1231,6 +1417,7 @@ export default function AiChatPanel({ panelId }: PanelProps) {
           toolResults: m.tool_calls ? toolResultsMap : undefined,
           onSuggestedReply: isLastAi ? (text: string) => handleSend(text) : undefined,
           onGenerateSuggestions: isLastAi && m.content ? createSuggestionGenerator(m.content) : undefined,
+          tokenStats: tokenStatsMap.get(m.id),
         })
       );
     });

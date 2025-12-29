@@ -7,7 +7,7 @@ import type { DbId } from "../orca.d.ts";
 import type { AiModelOption } from "../settings/ai-chat-settings";
 import type { CurrencyType } from "../settings/ai-chat-settings";
 import type { FileRef, VideoProcessMode } from "../services/session-service";
-import { contextStore, addPageById } from "../store/context-store";
+import { contextStore, addPageById, clearHighPriorityContexts } from "../store/context-store";
 import { estimateTokens, formatTokenCount, estimateCost, formatCost } from "../utils/token-utils";
 import {
   uploadFile,
@@ -161,6 +161,8 @@ export default function ChatInput({
       setText("");
       setPendingFiles([]);
       setClearContextPending(false);
+      // 清除拖入的高优先级上下文（发送后自动移除）
+      clearHighPriorityContexts();
       if (textareaRef.current) {
         textareaRef.current.value = "";
       }
