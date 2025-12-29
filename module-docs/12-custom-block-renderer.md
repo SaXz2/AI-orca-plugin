@@ -30,7 +30,7 @@ orca.renderers.registerBlock(
 | `type` | string | 块类型唯一标识符 |
 | `isEditable` | boolean | `true` = 允许 Tab 缩进、拖拽等操作；`false` = 只读块 |
 | `assetFields` | string[] | 包含资源引用的属性名数组 |
-| `useChildren` | boolean | `true` = 允许块有子块 |
+| `useChildren` | boolean | ⚠️ 无效参数 - Orca 不支持自定义块有子块 |
 
 ### 示例
 
@@ -39,8 +39,8 @@ orca.renderers.registerBlock(
   "aichat.conversation",
   true,  // 可编辑，允许缩进
   AiChatBlockRenderer,
-  [],    // 无资源字段
-  true   // 允许子块
+  []     // 无资源字段
+  // 不需要 useChildren，自定义块不支持子块
 );
 ```
 
