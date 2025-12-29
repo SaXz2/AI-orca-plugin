@@ -11,12 +11,16 @@ interface HeaderMenuProps {
   onClearChat: () => void;
   onOpenSettings: () => void;
   onOpenMemoryManager: () => void;
+  onExportMarkdown?: () => void;
+  onSaveToJournal?: () => void;
 }
 
 export default function HeaderMenu({
   onClearChat,
   onOpenSettings,
   onOpenMemoryManager,
+  onExportMarkdown,
+  onSaveToJournal,
 }: HeaderMenuProps) {
   const [isOpen, setIsOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
@@ -106,6 +110,38 @@ export default function HeaderMenu({
           },
           createElement("i", { className: "ti ti-brain" }),
           "记忆管理"
+        ),
+        // Divider
+        createElement("div", {
+          style: {
+            height: "1px",
+            background: "var(--orca-color-border)",
+            margin: "4px 0",
+          },
+        }),
+        // Export as Markdown
+        onExportMarkdown && createElement(
+          "div",
+          {
+            style: menuItemStyle,
+            onClick: () => handleItemClick(onExportMarkdown),
+            onMouseEnter: (e: any) => (e.currentTarget.style.background = "var(--orca-color-bg-2)"),
+            onMouseLeave: (e: any) => (e.currentTarget.style.background = "transparent"),
+          },
+          createElement("i", { className: "ti ti-file-export" }),
+          "导出 Markdown"
+        ),
+        // Save to Journal
+        onSaveToJournal && createElement(
+          "div",
+          {
+            style: menuItemStyle,
+            onClick: () => handleItemClick(onSaveToJournal),
+            onMouseEnter: (e: any) => (e.currentTarget.style.background = "var(--orca-color-bg-2)"),
+            onMouseLeave: (e: any) => (e.currentTarget.style.background = "transparent"),
+          },
+          createElement("i", { className: "ti ti-notebook" }),
+          "保存到日记"
         ),
         // Divider
         createElement("div", {

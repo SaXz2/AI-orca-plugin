@@ -39,6 +39,7 @@ import {
   type Message,
   type FileRef,
 } from "../services/session-service";
+import { exportSessionAsFile, saveSessionToJournal } from "../services/export-service";
 import { sessionStore, updateSessionStore, clearSessionStore } from "../store/session-store";
 import { TOOLS, executeTool } from "../services/ai-tools";
 import { nowId, safeText } from "../utils/text-utils";
@@ -1391,7 +1392,7 @@ export default function AiChatPanel({ panelId }: PanelProps) {
         onToggleFavorite: handleToggleFavorite,
         onRename: handleRenameSession,
       }),
-      // More Menu (Settings, Memory, Clear)
+      // More Menu (Settings, Memory, Clear, Export)
       createElement(HeaderMenu, {
         onClearChat: clear,
         onOpenSettings: () => {
@@ -1400,6 +1401,26 @@ export default function AiChatPanel({ panelId }: PanelProps) {
           }
         },
         onOpenMemoryManager: handleOpenMemoryManager,
+        onExportMarkdown: () => {
+          if (messages.length === 0) {
+            orca.notify("warn", "没有可导出的消息");
+            return;
+          }
+          exportSessionAsFile(currentSession);
+          orca.notify("success", "已导出 Markdown 文件");
+        },
+        onSaveToJournal: async () => {
+          if (messages.length === 0) {
+            orca.notify("warn", "没有可保存的消息");
+            return;
+          }
+          const result = await saveSessionToJournal(currentSession);
+          if (result.success) {
+            orca.notify("success", result.message);
+          } else {
+            orca.notify("error", result.message);
+          }
+        },
       }),
       // Close Button
       createElement(Button, { variant: "plain", onClick: () => closeAiChatPanel(panelId), title: "Close" }, createElement("i", { className: "ti ti-x" }))
