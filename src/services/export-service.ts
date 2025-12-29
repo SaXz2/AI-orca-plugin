@@ -4,6 +4,14 @@
  */
 
 import type { Message, SavedSession } from "./session-service";
+import { getAiChatBlockType } from "../ui/ai-chat-renderer";
+
+/** 简化的消息格式（用于保存到块） */
+interface SimplifiedMessage {
+  role: "user" | "assistant";
+  content: string;
+  createdAt?: number;
+}
 
 /**
  * 将消息转换为 Markdown 格式
@@ -69,12 +77,29 @@ export function exportSessionAsFile(session: SavedSession): void {
 }
 
 /**
- * 保存会话到 Orca 笔记（创建新页面）
+ * 简化消息用于保存
+ */
+function simplifyMessages(messages: Message[]): SimplifiedMessage[] {
+  return messages
+    .filter(m => !m.localOnly && (m.role === "user" || m.role === "assistant"))
+    .map(m => ({
+      role: m.role as "user" | "assistant",
+      content: m.content,
+      createdAt: m.createdAt,
+    }));
+}
+
+/**
+ * 保存会话到 Orca 笔记（使用自定义块渲染器）
  */
 export async function saveSessionToNote(session: SavedSession): Promise<{ success: boolean; blockId?: number; message: string }> {
   try {
     const title = session.title || "AI 对话";
-    const markdown = sessionToMarkdown(session);
+    const simplifiedMessages = simplifyMessages(session.messages);
+    
+    if (simplifiedMessages.length === 0) {
+      return { success: false, message: "没有可保存的消息" };
+    }
     
     // 创建新页面
     const result = await orca.invokeBackend("create-page", title);
@@ -85,20 +110,22 @@ export async function saveSessionToNote(session: SavedSession): Promise<{ succes
     
     const pageId = result;
     
-    // 获取页面块以添加内容
-    const block = await orca.invokeBackend("get-block", pageId);
-    if (!block) {
-      return { success: false, message: "获取页面失败" };
-    }
+    // 使用自定义块类型创建对话块
+    const blockType = getAiChatBlockType();
+    const repr = {
+      type: blockType,
+      title,
+      messages: simplifiedMessages,
+      model: session.model || "",
+      createdAt: session.createdAt,
+    };
     
-    // 将 Markdown 内容转换为块内容
-    // 简化处理：将整个 Markdown 作为文本内容
-    const contentLines = markdown.split("\n").filter(line => !line.startsWith("# "));
-    const contentText = contentLines.join("\n");
-    
-    // 在页面下创建内容块
+    // 在页面下创建自定义块
     await orca.invokeBackend("insert-blocks", pageId, "append", [{
-      text: contentText,
+      text: "",
+      properties: [
+        { name: "_repr", value: repr },
+      ],
     }]);
     
     return { success: true, blockId: pageId, message: `已保存到笔记: ${title}` };
@@ -109,11 +136,16 @@ export async function saveSessionToNote(session: SavedSession): Promise<{ succes
 }
 
 /**
- * 保存会话到今日日记
+ * 保存会话到今日日记（使用自定义块渲染器）
  */
 export async function saveSessionToJournal(session: SavedSession): Promise<{ success: boolean; message: string }> {
   try {
     const title = session.title || "AI 对话";
+    const simplifiedMessages = simplifyMessages(session.messages);
+    
+    if (simplifiedMessages.length === 0) {
+      return { success: false, message: "没有可保存的消息" };
+    }
     
     // 获取今日日记
     const today = new Date();
@@ -125,40 +157,22 @@ export async function saveSessionToJournal(session: SavedSession): Promise<{ suc
     
     const journalId = typeof journalResult === "number" ? journalResult : (journalResult as any).id;
     
-    // 构建简化的对话摘要
-    const userMessages = session.messages.filter(m => m.role === "user" && !m.localOnly);
-    const assistantMessages = session.messages.filter(m => m.role === "assistant" && !m.localOnly);
+    // 使用自定义块类型创建对话块
+    const blockType = getAiChatBlockType();
+    const repr = {
+      type: blockType,
+      title,
+      messages: simplifiedMessages,
+      model: session.model || "",
+      createdAt: session.createdAt,
+    };
     
-    let summary = `## 💬 ${title}\n\n`;
-    
-    // 只取前几轮对话作为摘要
-    const maxRounds = 3;
-    for (let i = 0; i < Math.min(userMessages.length, maxRounds); i++) {
-      const userMsg = userMessages[i];
-      const assistantMsg = assistantMessages[i];
-      
-      if (userMsg) {
-        const userContent = userMsg.content.length > 100 
-          ? userMsg.content.slice(0, 100) + "..." 
-          : userMsg.content;
-        summary += `**Q:** ${userContent}\n\n`;
-      }
-      
-      if (assistantMsg) {
-        const assistantContent = assistantMsg.content.length > 200 
-          ? assistantMsg.content.slice(0, 200) + "..." 
-          : assistantMsg.content;
-        summary += `**A:** ${assistantContent}\n\n`;
-      }
-    }
-    
-    if (userMessages.length > maxRounds) {
-      summary += `*...还有 ${userMessages.length - maxRounds} 轮对话*\n`;
-    }
-    
-    // 在日记中添加内容
+    // 在日记中添加自定义块
     await orca.invokeBackend("insert-blocks", journalId, "append", [{
-      text: summary,
+      text: "",
+      properties: [
+        { name: "_repr", value: repr },
+      ],
     }]);
     
     return { success: true, message: "已保存到今日日记" };
