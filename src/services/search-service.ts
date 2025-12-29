@@ -253,24 +253,51 @@ export async function queryBlocksByTag(
             enhanced.op = "includes";
           }
 
-          // Convert numeric value to string label
-          // AI often passes the numeric value (e.g., 2 for "Done") based on schema options
-          // But Orca query API expects the string label (e.g., "Done")
-          if (typeof filter.value === "number" && (schemaProperty as any).options) {
-            const options = (schemaProperty as any).options as Array<{ label: string; value: number }>;
-            const matchingOption = options.find((opt) => opt.value === filter.value);
-            if (matchingOption) {
-              console.log(
-                `[queryBlocksByTag] Converting numeric value ${filter.value} to string label "${matchingOption.label}" for TextChoices property "${filter.name}"`
+          // Handle value conversion for TextChoices
+          // The value could be: string label ("Canceled"), numeric string ("3"), or number (3)
+          const schemaOptions = (schemaProperty as any).options as Array<{ label: string; value: number }> | undefined;
+          
+          if (schemaOptions && schemaOptions.length > 0) {
+            const filterValue = filter.value;
+            
+            // Check if it's a numeric value (number or numeric string)
+            const numericValue = typeof filterValue === "number" 
+              ? filterValue 
+              : (typeof filterValue === "string" && /^\d+$/.test(filterValue) ? parseInt(filterValue, 10) : null);
+            
+            if (numericValue !== null) {
+              // Convert numeric value to string label
+              const matchingOption = schemaOptions.find((opt) => opt.value === numericValue);
+              if (matchingOption) {
+                console.log(
+                  `[queryBlocksByTag] Converting numeric value ${numericValue} to string label "${matchingOption.label}"`
+                );
+                enhanced.value = matchingOption.label;
+              }
+            } else if (typeof filterValue === "string") {
+              // It's a string label, verify it exists in options (case-insensitive)
+              const matchingOption = schemaOptions.find(
+                (opt) => opt.label.toLowerCase() === filterValue.toLowerCase()
               );
-              enhanced.value = matchingOption.label;
+              if (matchingOption) {
+                // Use exact case from schema
+                enhanced.value = matchingOption.label;
+                console.log(
+                  `[queryBlocksByTag] Using exact label "${matchingOption.label}" for value "${filterValue}"`
+                );
+              } else {
+                console.warn(
+                  `[queryBlocksByTag] Value "${filterValue}" not found in options:`,
+                  schemaOptions.map(o => o.label)
+                );
+              }
             }
           }
         }
 
         return enhanced;
       });
-      console.log("[queryBlocksByTag] Enhanced properties:", enhancedProperties);
+      console.log("[queryBlocksByTag] Enhanced properties:", JSON.stringify(enhancedProperties));
     } catch (schemaError) {
       console.warn(
         "[queryBlocksByTag] Failed to get tag schema, using original properties:",
