@@ -119,6 +119,13 @@ export type AiChatSettings = {
   maxTokens: number;
   maxToolRounds: number;
   currency: CurrencyType;
+  // Token 优化设置
+  maxHistoryMessages: number;        // 最大历史消息数（0=不限制）
+  maxToolResultChars: number;        // 工具结果最大字符数（0=不限制）
+  maxContextChars: number;           // 上下文最大字符数
+  // 动态压缩设置
+  enableCompression: boolean;        // 是否启用压缩
+  compressAfterMessages: number;     // 超过多少条后开始压缩旧消息（5-20）
   // 兼容旧版本的字段（迁移用）
   apiKey?: string;
   apiUrl?: string;
@@ -170,6 +177,13 @@ export const DEFAULT_AI_CHAT_SETTINGS: AiChatSettings = {
   maxTokens: 4096,
   maxToolRounds: 5,
   currency: "USD",
+  // Token 优化默认值
+  maxHistoryMessages: 0,           // 0=不限制（改用动态压缩）
+  maxToolResultChars: 0,           // 0=不限制
+  maxContextChars: 60000,          // 恢复原来的 60000
+  // 动态压缩设置
+  enableCompression: true,         // 默认启用压缩
+  compressAfterMessages: 10,       // 超过 10 条后开始压缩旧消息
 };
 
 
@@ -227,6 +241,12 @@ type StoredConfig = {
   maxTokens: number;
   maxToolRounds: number;
   currency: CurrencyType;
+  // Token 优化设置
+  maxHistoryMessages?: number;
+  maxToolResultChars?: number;
+  maxContextChars?: number;
+  enableCompression?: boolean;
+  compressAfterMessages?: number;
 };
 
 // 内存缓存（避免频繁读取）
@@ -293,11 +313,22 @@ export function getAiChatSettings(pluginName: string): AiChatSettings {
     maxTokens: config?.maxTokens ?? DEFAULT_AI_CHAT_SETTINGS.maxTokens,
     maxToolRounds: config?.maxToolRounds ?? DEFAULT_AI_CHAT_SETTINGS.maxToolRounds,
     currency: config?.currency ?? DEFAULT_AI_CHAT_SETTINGS.currency,
+    // Token 优化设置
+    maxHistoryMessages: config?.maxHistoryMessages ?? DEFAULT_AI_CHAT_SETTINGS.maxHistoryMessages,
+    maxToolResultChars: config?.maxToolResultChars ?? DEFAULT_AI_CHAT_SETTINGS.maxToolResultChars,
+    maxContextChars: config?.maxContextChars ?? DEFAULT_AI_CHAT_SETTINGS.maxContextChars,
+    enableCompression: config?.enableCompression ?? DEFAULT_AI_CHAT_SETTINGS.enableCompression,
+    compressAfterMessages: config?.compressAfterMessages ?? DEFAULT_AI_CHAT_SETTINGS.compressAfterMessages,
   };
 
   merged.temperature = Math.max(0, Math.min(2, merged.temperature));
   merged.maxTokens = Math.max(1, Math.floor(merged.maxTokens));
   merged.maxToolRounds = Math.max(3, Math.min(10, Math.floor(merged.maxToolRounds)));
+  // Token 优化设置范围限制
+  merged.maxHistoryMessages = Math.max(0, Math.floor(merged.maxHistoryMessages));
+  merged.maxToolResultChars = Math.max(0, Math.floor(merged.maxToolResultChars));
+  merged.maxContextChars = Math.max(5000, Math.floor(merged.maxContextChars));
+  merged.compressAfterMessages = Math.max(5, Math.min(20, Math.floor(merged.compressAfterMessages)));
 
   return merged;
 }
@@ -328,6 +359,12 @@ export async function updateAiChatSettings(
     maxTokens: next.maxTokens,
     maxToolRounds: next.maxToolRounds,
     currency: next.currency,
+    // Token 优化设置
+    maxHistoryMessages: next.maxHistoryMessages,
+    maxToolResultChars: next.maxToolResultChars,
+    maxContextChars: next.maxContextChars,
+    enableCompression: next.enableCompression,
+    compressAfterMessages: next.compressAfterMessages,
   };
   
   console.log("[ai-chat-settings] Saving config:", {

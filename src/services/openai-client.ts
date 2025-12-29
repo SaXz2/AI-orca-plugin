@@ -279,10 +279,6 @@ export async function* openAIChatCompletionsStream(
       }
       const chunk = safeDeltaFromEvent(obj);
       if (chunk.content || chunk.tool_calls || chunk.reasoning) {
-        // Debug: 检查是否有重复的 reasoning 数据
-        if (chunk.reasoning) {
-          console.log("[openAI] Reasoning chunk:", JSON.stringify(chunk.reasoning).substring(0, 100));
-        }
         yield chunk;
       }
     }

@@ -45,6 +45,9 @@ export type Message = {
   reasoning?: string; // AI 推理过程（DeepSeek/Claude thinking）
   model?: string; // 使用的模型（用于计费）
   contextRefs?: Array<{ title: string; kind: string; blockId?: number }>; // 消息关联的上下文引用（用于显示和跳转）
+  // 压缩控制
+  pinned?: boolean;    // 标记为重要，不会被压缩
+  noCompress?: boolean; // 不压缩此消息
   tool_calls?: Array<{
     id: string;
     type: "function";

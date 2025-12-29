@@ -14,6 +14,7 @@ import MarkdownMessage from "../components/MarkdownMessage";
 import MessageItem from "./MessageItem";
 import ChatHistoryMenu from "./ChatHistoryMenu";
 import HeaderMenu from "./HeaderMenu";
+import CompressionSettingsModal from "./CompressionSettingsModal";
 import EmptyState from "./EmptyState";
 import LoadingDots from "../components/LoadingDots";
 import MemoryManager from "./MemoryManager";
@@ -131,6 +132,9 @@ export default function AiChatPanel({ panelId }: PanelProps) {
   // Flashcard review state
   const [flashcardMode, setFlashcardMode] = useState(false);
   const [pendingFlashcards, setPendingFlashcards] = useState<Flashcard[]>([]);
+
+  // Compression settings modal state
+  const [showCompressionSettings, setShowCompressionSettings] = useState(false);
 
   const listRef = useRef<HTMLDivElement | null>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -518,7 +522,7 @@ export default function AiChatPanel({ panelId }: PanelProps) {
 	      try {
 	        const contexts = contextStore.selected;
 	        if (contexts.length) {
-	          const result = await buildContextForSend(contexts);
+	          const result = await buildContextForSend(contexts, { maxChars: settings.maxContextChars });
 	          contextText = result.text;
 	        }
 	      } catch {}
@@ -660,7 +664,7 @@ export default function AiChatPanel({ panelId }: PanelProps) {
       try {
         const contexts = contextStore.selected;
         if (contexts.length) {
-          const result = await buildContextForSend(contexts);
+          const result = await buildContextForSend(contexts, { maxChars: settings.maxContextChars });
           contextText = result.text;
           contextAssets = result.assets;
         }
@@ -697,16 +701,21 @@ export default function AiChatPanel({ panelId }: PanelProps) {
       // Uses getFullMemoryText which combines portrait (higher priority) + unextracted memories
       const memoryText = memoryStore.getFullMemoryText();
 
+      // 获取模型特定的 API 配置
+      const apiConfig = getModelApiConfig(settings, model);
+
       const { standard: apiMessages, fallback: apiMessagesFallback } = await buildConversationMessages({
         messages: conversation,
         systemPrompt,
         contextText,
         customMemory: memoryText,
         chatMode: currentChatMode,
+        maxHistoryMessages: settings.maxHistoryMessages,
+        enableCompression: settings.enableCompression,
+        compressAfterMessages: settings.compressAfterMessages,
+        sessionId: currentSession.id,
+        apiConfig: { apiUrl: apiConfig.apiUrl, apiKey: apiConfig.apiKey, model },
       });
-
-      // 获取模型特定的 API 配置
-      const apiConfig = getModelApiConfig(settings, model);
 
       for await (const chunk of streamChatWithRetry(
         {
@@ -923,6 +932,11 @@ export default function AiChatPanel({ panelId }: PanelProps) {
           contextText,
           customMemory: memoryText,
           chatMode: currentChatMode,
+          maxHistoryMessages: settings.maxHistoryMessages,
+          enableCompression: settings.enableCompression,
+          compressAfterMessages: settings.compressAfterMessages,
+          sessionId: currentSession.id,
+          apiConfig: { apiUrl: apiConfig.apiUrl, apiKey: apiConfig.apiKey, model },
         });
 
         // Stream next response with reasoning support
@@ -1291,14 +1305,14 @@ export default function AiChatPanel({ panelId }: PanelProps) {
     cumulativeCost += systemOverheadCost;
     totalInputCost += systemOverheadCost;
     
-    // 过滤掉 tool 消息，获取有效消息列表
-    const validMessages = messages.filter(m => m.role !== "tool");
+    // 过滤掉 tool 消息和 localOnly 消息，获取有效消息列表
+    const validMessages = messages.filter(m => m.role !== "tool" && !m.localOnly);
     // 找到最后一条 AI 消息（总统计只显示在 AI 输出上，不显示在用户输入上）
     const lastAiMessage = [...validMessages].reverse().find(m => m.role === "assistant");
     const lastAiMessageId = lastAiMessage?.id || null;
     
-    messages.forEach((m) => {
-      if (m.role === "tool") return; // 跳过 tool 消息
+    // 遍历有效消息计算 Token（排除 localOnly）
+    validMessages.forEach((m) => {
       const messageTokens = estimateTokens(m.content || "") + 
         (m.reasoning ? estimateTokens(m.reasoning) : 0);
       
@@ -1618,6 +1632,7 @@ export default function AiChatPanel({ panelId }: PanelProps) {
           }
         },
         onOpenMemoryManager: handleOpenMemoryManager,
+        onOpenCompressionSettings: () => setShowCompressionSettings(true),
         onExportMarkdown: () => {
           if (messages.length === 0) {
             orca.notify("warn", "没有可导出的消息");
@@ -1673,6 +1688,11 @@ export default function AiChatPanel({ panelId }: PanelProps) {
       onModelSelect: handleModelSelect,
       onUpdateSettings: handleUpdateSettings,
       currency: settingsForUi.currency,
+    }),
+    // Compression Settings Modal
+    createElement(CompressionSettingsModal, {
+      isOpen: showCompressionSettings,
+      onClose: () => setShowCompressionSettings(false),
     })
   );
 }

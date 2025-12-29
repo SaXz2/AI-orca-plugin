@@ -18,6 +18,13 @@ export interface MessageBuildParams {
   contextText?: string;
   customMemory?: string;
   chatMode?: ChatMode;
+  // Token 优化参数
+  maxHistoryMessages?: number;       // 0=不限制
+  enableCompression?: boolean;       // 是否启用压缩
+  compressAfterMessages?: number;    // 超过多少条后压缩旧消息
+  // 压缩服务参数
+  sessionId?: string;                // 会话 ID（用于缓存摘要）
+  apiConfig?: { apiUrl: string; apiKey: string; model: string }; // API 配置（用于生成摘要）
 }
 
 export interface ConversationBuildParams {
@@ -26,12 +33,98 @@ export interface ConversationBuildParams {
   contextText?: string;
   customMemory?: string;
   chatMode?: ChatMode;
+  // Token 优化参数
+  maxHistoryMessages?: number;       // 0=不限制
+  enableCompression?: boolean;       // 是否启用压缩
+  compressAfterMessages?: number;    // 超过多少条后压缩旧消息
+  // 压缩服务参数
+  sessionId?: string;                // 会话 ID（用于缓存摘要）
+  apiConfig?: { apiUrl: string; apiKey: string; model: string }; // API 配置（用于生成摘要）
 }
 
 export interface ToolResultParams extends MessageBuildParams {
   assistantContent: string;
   toolCalls: any[];
   toolResults: Message[];
+}
+
+import { getOrCreateSummary } from "./compression-service";
+
+/**
+ * 提取不压缩的消息（pinned 或 noCompress 标记）
+ */
+function extractPinnedMessages(messages: Message[]): { pinned: Message[]; rest: Message[] } {
+  const pinned: Message[] = [];
+  const rest: Message[] = [];
+  
+  for (const m of messages) {
+    if ((m as any).pinned || (m as any).noCompress) {
+      pinned.push(m);
+    } else {
+      rest.push(m);
+    }
+  }
+  
+  return { pinned, rest };
+}
+
+/**
+ * Limit history messages, keeping system context intact
+ * Strategy: Keep the most recent N messages, but ensure tool call chains are complete
+ */
+function limitHistoryMessages(messages: Message[], maxMessages: number): Message[] {
+  if (maxMessages <= 0 || messages.length <= maxMessages) {
+    return messages;
+  }
+  
+  // 从后往前取 maxMessages 条
+  const limited = messages.slice(-maxMessages);
+  
+  // 确保工具调用链完整：如果第一条是 tool 消息，需要找到对应的 assistant 消息
+  // 收集 limited 中所有 tool 消息引用的 tool_call_id
+  const toolCallIdsNeeded = new Set<string>();
+  for (const m of limited) {
+    if (m.role === "tool" && m.tool_call_id) {
+      toolCallIdsNeeded.add(m.tool_call_id);
+    }
+  }
+  
+  // 检查 limited 中的 assistant 消息是否提供了这些 tool_call_id
+  const toolCallIdsProvided = new Set<string>();
+  for (const m of limited) {
+    if (m.role === "assistant" && m.tool_calls) {
+      for (const tc of m.tool_calls) {
+        toolCallIdsProvided.add(tc.id);
+      }
+    }
+  }
+  
+  // 找出缺失的 tool_call_id
+  const missingIds = new Set<string>();
+  for (const id of toolCallIdsNeeded) {
+    if (!toolCallIdsProvided.has(id)) {
+      missingIds.add(id);
+    }
+  }
+  
+  // 如果有缺失，从原始消息中找到提供这些 id 的 assistant 消息
+  if (missingIds.size > 0) {
+    const additionalMessages: Message[] = [];
+    for (const m of messages) {
+      if (m.role === "assistant" && m.tool_calls) {
+        for (const tc of m.tool_calls) {
+          if (missingIds.has(tc.id)) {
+            additionalMessages.push(m);
+            break;
+          }
+        }
+      }
+    }
+    // 将缺失的 assistant 消息添加到开头
+    return [...additionalMessages, ...limited];
+  }
+  
+  return limited;
 }
 
 /**
@@ -176,10 +269,49 @@ export async function buildConversationMessages(params: ConversationBuildParams)
   standard: OpenAIChatMessage[];
   fallback: OpenAIChatMessage[];
 }> {
-  const { messages, systemPrompt, contextText, customMemory, chatMode } = params;
+  const { messages, systemPrompt, contextText, customMemory, chatMode, maxHistoryMessages, enableCompression, compressAfterMessages, sessionId, apiConfig } = params;
 
-  const systemContent = buildSystemContent(systemPrompt, contextText, customMemory, chatMode);
-  const filteredMessages = messages.filter((m) => !m.localOnly);
+  let systemContent = buildSystemContent(systemPrompt, contextText, customMemory, chatMode);
+  let filteredMessages = messages.filter((m) => !m.localOnly);
+  
+  // 使用 AI 生成摘要压缩旧消息（仅当启用压缩且有 sessionId 和 apiConfig 时）
+  console.log(`[message-builder] Compression check: enableCompression=${enableCompression}, compressAfterMessages=${compressAfterMessages}, sessionId=${sessionId}, hasApiConfig=${!!apiConfig}, filteredMessages=${filteredMessages.length}`);
+  if (enableCompression && compressAfterMessages && compressAfterMessages > 0 && sessionId && apiConfig) {
+    console.log(`[message-builder] Entering compression path...`);
+    try {
+      const { summary, recentMessages } = await getOrCreateSummary(
+        sessionId,
+        filteredMessages,
+        compressAfterMessages,
+        apiConfig,
+      );
+      
+      if (summary) {
+        // 提取 pinned 消息
+        const oldMessages = filteredMessages.slice(0, -compressAfterMessages);
+        const { pinned } = extractPinnedMessages(oldMessages);
+        
+        // 将摘要添加到系统提示词中
+        const summarySection = `\n\n## 对话历史摘要\n以下是之前对话的摘要，请参考：\n${summary}`;
+        systemContent = (systemContent || "") + summarySection;
+        
+        // 只保留 pinned 消息和最近消息
+        filteredMessages = [...pinned, ...recentMessages];
+        console.log(`[message-builder] Using AI summary, keeping ${filteredMessages.length} messages`);
+      }
+    } catch (error) {
+      console.error("[message-builder] Compression failed, using all messages:", error);
+    }
+  }
+  
+  // 硬限制历史消息数量（如果设置了）
+  if (maxHistoryMessages && maxHistoryMessages > 0) {
+    const originalCount = filteredMessages.length;
+    filteredMessages = limitHistoryMessages(filteredMessages, maxHistoryMessages);
+    if (filteredMessages.length < originalCount) {
+      console.log(`[message-builder] Limited history from ${originalCount} to ${filteredMessages.length} messages`);
+    }
+  }
   
   // 收集所有有效的 tool_call_id（来自 assistant 消息的 tool_calls）
   const validToolCallIds = new Set<string>();

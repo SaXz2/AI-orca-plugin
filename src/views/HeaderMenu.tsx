@@ -11,6 +11,7 @@ interface HeaderMenuProps {
   onClearChat: () => void;
   onOpenSettings: () => void;
   onOpenMemoryManager: () => void;
+  onOpenCompressionSettings?: () => void;
   onExportMarkdown?: () => void;
   onSaveToJournal?: () => void;
 }
@@ -19,6 +20,7 @@ export default function HeaderMenu({
   onClearChat,
   onOpenSettings,
   onOpenMemoryManager,
+  onOpenCompressionSettings,
   onExportMarkdown,
   onSaveToJournal,
 }: HeaderMenuProps) {
@@ -110,6 +112,18 @@ export default function HeaderMenu({
           },
           createElement("i", { className: "ti ti-brain" }),
           "记忆管理"
+        ),
+        // Token Optimization
+        onOpenCompressionSettings && createElement(
+          "div",
+          {
+            style: menuItemStyle,
+            onClick: () => handleItemClick(onOpenCompressionSettings),
+            onMouseEnter: (e: any) => (e.currentTarget.style.background = "var(--orca-color-bg-2)"),
+            onMouseLeave: (e: any) => (e.currentTarget.style.background = "transparent"),
+          },
+          createElement("i", { className: "ti ti-arrows-minimize" }),
+          "Token 优化"
         ),
         // Divider
         createElement("div", {
