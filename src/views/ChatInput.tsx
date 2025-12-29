@@ -294,16 +294,80 @@ export default function ChatInput({
     }
   }, []);
 
-  // 处理拖拽
+  // 处理拖拽（支持文件和 Orca 块）
   const handleDrop = useCallback(async (e: DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
     
-    const files = e.dataTransfer?.files;
-    if (files) {
+    const dataTransfer = e.dataTransfer;
+    if (!dataTransfer) return;
+    
+    // 1. 检查是否是 Orca 块拖拽
+    // Orca 块拖拽通常包含 text/plain 数据，格式可能是 blockId 或 orca-block:xxx
+    const textData = dataTransfer.getData("text/plain");
+    if (textData) {
+      // 尝试解析 blockId
+      const blockIdMatch = textData.match(/^(?:orca-block:|blockid:)?(\d+)$/i);
+      if (blockIdMatch) {
+        const blockId = parseInt(blockIdMatch[1], 10);
+        if (blockId > 0) {
+          // 获取块信息并添加到输入框
+          try {
+            let block = orca.state.blocks[blockId];
+            if (!block) {
+              block = await orca.invokeBackend("get-block", blockId);
+            }
+            if (block) {
+              // 获取块标题
+              let title = "";
+              if (block.aliases && Array.isArray(block.aliases) && block.aliases.length > 0) {
+                title = block.aliases[0];
+              } else {
+                const rawText = block.text || block.content || "";
+                title = typeof rawText === "string" ? rawText.split("\n")[0]?.trim() || "" : "";
+                title = title.replace(/^#+\s*/, "").replace(/^[-*+]\s*/, "").trim();
+              }
+              if (!title) title = `Block ${blockId}`;
+              if (title.length > 30) title = title.substring(0, 30) + "...";
+              
+              // 插入块引用到输入框
+              const blockRef = `[[${title}]](orca-block:${blockId})`;
+              const currentText = textareaRef.current?.value || text;
+              const newText = currentText ? `${currentText} ${blockRef}` : blockRef;
+              setText(newText);
+              if (textareaRef.current) {
+                textareaRef.current.value = newText;
+                textareaRef.current.focus();
+              }
+              return;
+            }
+          } catch (err) {
+            console.warn("[ChatInput] Failed to get block info:", err);
+          }
+        }
+      }
+      
+      // 检查是否是 [[页面名称]] 格式
+      const pageRefMatch = textData.match(/^\[\[([^\]]+)\]\]$/);
+      if (pageRefMatch) {
+        const pageName = pageRefMatch[1];
+        const currentText = textareaRef.current?.value || text;
+        const newText = currentText ? `${currentText} [[${pageName}]]` : `[[${pageName}]]`;
+        setText(newText);
+        if (textareaRef.current) {
+          textareaRef.current.value = newText;
+          textareaRef.current.focus();
+        }
+        return;
+      }
+    }
+    
+    // 2. 处理文件拖拽
+    const files = dataTransfer.files;
+    if (files && files.length > 0) {
       await handleFileSelect(files);
     }
-  }, [handleFileSelect]);
+  }, [handleFileSelect, text]);
 
   const handleDragOver = useCallback((e: DragEvent) => {
     e.preventDefault();
