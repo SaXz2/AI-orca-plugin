@@ -361,8 +361,9 @@ export default function ChatInput({
         if (blockId <= 0) continue;
         
         try {
-          // 使用 addPageById 将块添加为上下文
-          const added = addPageById(blockId);
+          // 使用 addPageById 将块添加为高优先级上下文（priority=1）
+          // 高优先级上下文会排在普通上下文之前，但仍低于记忆和用户印象
+          const added = addPageById(blockId, 1);
           if (added) addedCount++;
         } catch (err) {
           console.warn("[ChatInput] Failed to add block as context:", blockId, err);
