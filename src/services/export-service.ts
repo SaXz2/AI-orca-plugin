@@ -6,11 +6,41 @@
 import type { Message, SavedSession } from "./session-service";
 import { getAiChatBlockType } from "../ui/ai-chat-renderer";
 
-/** 简化的消息格式（用于保存到块） */
-interface SimplifiedMessage {
+/** 完整的消息格式（用于保存到块，与 Message 类型同步） */
+interface SavedMessage {
   role: "user" | "assistant";
   content: string;
   createdAt?: number;
+  // 文件/图片
+  files?: Array<{
+    path: string;
+    name: string;
+    mimeType: string;
+    size?: number;
+    category?: "image" | "video" | "audio" | "document" | "code" | "data" | "other";
+  }>;
+  images?: Array<{
+    path: string;
+    name: string;
+    mimeType: string;
+  }>;
+  // 推理过程
+  reasoning?: string;
+  // 模型
+  model?: string;
+  // 上下文引用
+  contextRefs?: Array<{ title: string; kind: string; blockId?: number }>;
+  // 工具调用
+  tool_calls?: Array<{
+    id: string;
+    type: "function";
+    function: {
+      name: string;
+      arguments: string;
+    };
+  }>;
+  // 重要标记
+  pinned?: boolean;
 }
 
 /**
@@ -77,16 +107,56 @@ export function exportSessionAsFile(session: SavedSession): void {
 }
 
 /**
- * 简化消息用于保存
+ * 转换消息用于保存（保留完整信息）
  */
-function simplifyMessages(messages: Message[]): SimplifiedMessage[] {
+function convertMessages(messages: Message[]): SavedMessage[] {
   return messages
     .filter(m => !m.localOnly && (m.role === "user" || m.role === "assistant"))
-    .map(m => ({
-      role: m.role as "user" | "assistant",
-      content: m.content,
-      createdAt: m.createdAt,
-    }));
+    .map(m => {
+      const saved: SavedMessage = {
+        role: m.role as "user" | "assistant",
+        content: m.content,
+        createdAt: m.createdAt,
+      };
+      // 文件/图片
+      if (m.files && m.files.length > 0) {
+        saved.files = m.files.map(f => ({
+          path: f.path,
+          name: f.name,
+          mimeType: f.mimeType,
+          size: f.size,
+          category: f.category,
+        }));
+      }
+      if (m.images && m.images.length > 0 && !m.files) {
+        saved.images = m.images.map(img => ({
+          path: img.path,
+          name: img.name,
+          mimeType: img.mimeType,
+        }));
+      }
+      // 推理过程
+      if (m.reasoning) {
+        saved.reasoning = m.reasoning;
+      }
+      // 模型
+      if (m.model) {
+        saved.model = m.model;
+      }
+      // 上下文引用
+      if (m.contextRefs && m.contextRefs.length > 0) {
+        saved.contextRefs = m.contextRefs;
+      }
+      // 工具调用
+      if (m.tool_calls && m.tool_calls.length > 0) {
+        saved.tool_calls = m.tool_calls;
+      }
+      // 重要标记
+      if (m.pinned) {
+        saved.pinned = true;
+      }
+      return saved;
+    });
 }
 
 /**
@@ -95,9 +165,9 @@ function simplifyMessages(messages: Message[]): SimplifiedMessage[] {
 export async function saveSessionToNote(session: SavedSession): Promise<{ success: boolean; blockId?: number; message: string }> {
   try {
     const title = session.title || "AI 对话";
-    const simplifiedMessages = simplifyMessages(session.messages);
+    const savedMessages = convertMessages(session.messages);
     
-    if (simplifiedMessages.length === 0) {
+    if (savedMessages.length === 0) {
       return { success: false, message: "没有可保存的消息" };
     }
     
@@ -115,7 +185,7 @@ export async function saveSessionToNote(session: SavedSession): Promise<{ succes
     const repr = {
       type: blockType,
       title,
-      messages: simplifiedMessages,
+      messages: savedMessages,
       model: session.model || "",
       createdAt: session.createdAt,
     };
@@ -139,60 +209,84 @@ export async function saveSessionToNote(session: SavedSession): Promise<{ succes
 export async function saveSessionToJournal(session: SavedSession): Promise<{ success: boolean; message: string }> {
   try {
     const title = session.title || "AI 对话";
-    const simplifiedMessages = simplifyMessages(session.messages);
+    const savedMessages = convertMessages(session.messages);
     
-    console.log("[export-service] saveSessionToJournal called, messages:", simplifiedMessages.length);
+    console.log("[export-service] saveSessionToJournal called, messages:", savedMessages.length);
     
-    if (simplifiedMessages.length === 0) {
+    if (savedMessages.length === 0) {
       return { success: false, message: "没有可保存的消息" };
     }
     
-    // 获取今日日记 - 使用 get-journal-block API
+    // 获取今日日记
     console.log("[export-service] Calling get-journal-block...");
     const journalResult = await orca.invokeBackend("get-journal-block", new Date());
     console.log("[export-service] get-journal-block result:", journalResult);
     
     if (!journalResult) {
-      console.error("[export-service] journalResult is null/undefined");
       return { success: false, message: "获取今日日记失败，请确保已创建今日日记" };
     }
     
-    // 处理可能的包装格式 - Orca 后端可能返回 { result: block } 或直接返回 block
+    // 处理可能的包装格式
     let journalBlock = journalResult;
     if ((journalResult as any)?.result !== undefined) {
       journalBlock = (journalResult as any).result;
     }
     
-    console.log("[export-service] journalBlock:", journalBlock);
-    
     const journalId = typeof journalBlock === "number" ? journalBlock : (journalBlock as any)?.id;
     
     if (!journalId) {
-      console.error("[export-service] Cannot extract journalId from:", journalBlock);
       return { success: false, message: "获取今日日记失败，返回格式异常" };
     }
     
     console.log("[export-service] journalId:", journalId);
     
-    // 使用自定义块类型创建对话块
+    // 检查 orca.commands 是否可用
+    if (!orca.commands || !orca.commands.invokeEditorCommand) {
+      return { success: false, message: "Orca 命令接口不可用" };
+    }
+    
+    // 先导航到日记页面（编辑器命令需要目标页面在编辑器中打开）
+    orca.nav.openInLastPanel("block", { blockId: journalId });
+    await new Promise(resolve => setTimeout(resolve, 100));
+    
+    // 获取日记块对象
+    let journalBlockObj = orca.state.blocks[journalId];
+    if (!journalBlockObj) {
+      journalBlockObj = await orca.invokeBackend("get-block", journalId);
+    }
+    
+    if (!journalBlockObj) {
+      return { success: false, message: "导航后无法获取日记块" };
+    }
+    
+    // 使用自定义块类型
     const blockType = getAiChatBlockType();
     const repr = {
       type: blockType,
       title,
-      messages: simplifiedMessages,
+      messages: savedMessages,
       model: session.model || "",
       createdAt: session.createdAt,
     };
     
-    // 在日记中添加自定义块 - 使用 insert-blocks API，_repr 需要作为属性传递
-    console.log("[export-service] Inserting block to journal with repr:", repr);
-    const insertResult = await orca.invokeBackend("insert-blocks", journalId, "append", [{
-      text: "",
-      repr: repr, // 直接使用 repr 字段而不是 properties
-    }]);
+    console.log("[export-service] Creating block with repr:", repr);
     
-    console.log("[export-service] Insert result:", insertResult);
-    console.log("[export-service] Successfully saved to journal");
+    // 使用 core.editor.insertBlock 创建自定义块
+    const blockId = await orca.commands.invokeEditorCommand(
+      "core.editor.insertBlock",
+      null,           // cursor
+      journalBlockObj, // refBlock
+      "lastChild",    // position
+      [{ t: "t", v: `AI 对话: ${title}` }], // content
+      repr            // repr (自定义块数据)
+    );
+    
+    console.log("[export-service] insertBlock result:", blockId);
+    
+    if (!blockId) {
+      return { success: false, message: "创建块失败" };
+    }
+    
     return { success: true, message: "已保存到今日日记" };
   } catch (err: any) {
     console.error("[export-service] Failed to save to journal:", err);

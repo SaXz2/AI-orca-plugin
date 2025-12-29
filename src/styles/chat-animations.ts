@@ -1015,22 +1015,89 @@ br + .md-block-dot {
 `;
 
 let styleElement: HTMLStyleElement | null = null;
+let refCount = 0;
 
 /**
  * Inject chat animation styles into the document head.
- * Returns a cleanup function to remove the styles.
+ * Uses reference counting to ensure styles are only removed when no longer needed.
+ * Returns a cleanup function to decrement the reference count.
  */
 export function injectChatStyles(): () => void {
+  refCount++;
+  
+  // 检查 DOM 中是否已存在样式元素
+  const existingStyle = document.getElementById("ai-chat-styles");
+  console.log("[chat-styles] injectChatStyles called, refCount:", refCount, "styleElement var:", !!styleElement, "DOM element:", !!existingStyle);
+  
+  // 如果 DOM 中已存在但变量丢失（可能是热更新导致），重新获取引用
+  if (existingStyle && !styleElement) {
+    styleElement = existingStyle as HTMLStyleElement;
+    console.log("[chat-styles] Recovered existing style element from DOM");
+  }
+  
   if (!styleElement) {
     styleElement = document.createElement("style");
+    styleElement.id = "ai-chat-styles";
     styleElement.textContent = chatAnimations;
     document.head.appendChild(styleElement);
+    console.log("[chat-styles] Style element created and appended to head");
   }
 
   return () => {
-    if (styleElement) {
-      document.head.removeChild(styleElement);
-      styleElement = null;
-    }
+    refCount--;
+    console.log("[chat-styles] Cleanup called, refCount:", refCount);
+    // 不再自动移除样式，保持样式始终存在
+    // 因为块渲染器可能在任何时候需要这些样式
   };
+}
+
+/**
+ * 检查样式是否存在，如果不存在则自动注入
+ */
+export function checkStylesExist(): boolean {
+  const domElement = document.getElementById("ai-chat-styles");
+  const exists = !!domElement;
+  console.log("[chat-styles] checkStylesExist:", exists, "refCount:", refCount, "styleElement var:", !!styleElement);
+  
+  // 如果 DOM 中存在但变量丢失，恢复引用
+  if (domElement && !styleElement) {
+    styleElement = domElement as HTMLStyleElement;
+    console.log("[chat-styles] Recovered style element reference");
+  }
+  
+  return exists;
+}
+
+/**
+ * 确保样式存在（用于块渲染器）
+ * 每次调用都会检查 DOM 中是否存在样式，如果不存在则重新注入
+ */
+export function ensureChatStyles(): void {
+  const existingStyle = document.getElementById("ai-chat-styles");
+  
+  if (!existingStyle) {
+    console.log("[chat-styles] ensureChatStyles: Style missing, re-injecting...");
+    // 重新创建样式元素
+    const newStyle = document.createElement("style");
+    newStyle.id = "ai-chat-styles";
+    newStyle.textContent = chatAnimations;
+    document.head.appendChild(newStyle);
+    styleElement = newStyle;
+    console.log("[chat-styles] ensureChatStyles: Style re-injected");
+  } else if (!styleElement) {
+    // DOM 中存在但变量丢失，恢复引用
+    styleElement = existingStyle as HTMLStyleElement;
+  }
+}
+
+/**
+ * 强制移除样式（仅在插件卸载时调用）
+ */
+export function removeChatStyles(): void {
+  console.log("[chat-styles] removeChatStyles called");
+  if (styleElement) {
+    document.head.removeChild(styleElement);
+    styleElement = null;
+  }
+  refCount = 0;
 }

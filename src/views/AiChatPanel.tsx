@@ -308,7 +308,10 @@ export default function AiChatPanel({ panelId }: PanelProps) {
     }
   }, [messages, currentSession]);
 
-  useEffect(() => injectChatStyles(), []);
+  useEffect(() => {
+    // 注入样式，但不返回清理函数，避免面板关闭时影响样式
+    injectChatStyles();
+  }, []);
   useEffect(() => () => { clearSessionStore(); }, []);
   useEffect(() => () => { if (abortRef.current) abortRef.current.abort(); }, []);
 
