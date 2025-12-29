@@ -123,9 +123,7 @@ export async function saveSessionToNote(session: SavedSession): Promise<{ succes
     // 在页面下创建自定义块
     await orca.invokeBackend("insert-blocks", pageId, "append", [{
       text: "",
-      properties: [
-        { name: "_repr", value: repr },
-      ],
+      repr: repr, // 直接使用 repr 字段
     }]);
     
     return { success: true, blockId: pageId, message: `已保存到笔记: ${title}` };
@@ -186,15 +184,14 @@ export async function saveSessionToJournal(session: SavedSession): Promise<{ suc
       createdAt: session.createdAt,
     };
     
-    // 在日记中添加自定义块
-    console.log("[export-service] Inserting block to journal...");
-    await orca.invokeBackend("insert-blocks", journalId, "append", [{
+    // 在日记中添加自定义块 - 使用 insert-blocks API，_repr 需要作为属性传递
+    console.log("[export-service] Inserting block to journal with repr:", repr);
+    const insertResult = await orca.invokeBackend("insert-blocks", journalId, "append", [{
       text: "",
-      properties: [
-        { name: "_repr", value: repr },
-      ],
+      repr: repr, // 直接使用 repr 字段而不是 properties
     }]);
     
+    console.log("[export-service] Insert result:", insertResult);
     console.log("[export-service] Successfully saved to journal");
     return { success: true, message: "已保存到今日日记" };
   } catch (err: any) {

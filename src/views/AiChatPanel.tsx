@@ -1293,7 +1293,9 @@ export default function AiChatPanel({ panelId }: PanelProps) {
     
     // 过滤掉 tool 消息，获取有效消息列表
     const validMessages = messages.filter(m => m.role !== "tool");
-    const lastMessageId = validMessages.length > 0 ? validMessages[validMessages.length - 1].id : null;
+    // 找到最后一条 AI 消息（总统计只显示在 AI 输出上，不显示在用户输入上）
+    const lastAiMessage = [...validMessages].reverse().find(m => m.role === "assistant");
+    const lastAiMessageId = lastAiMessage?.id || null;
     
     messages.forEach((m) => {
       if (m.role === "tool") return; // 跳过 tool 消息
@@ -1321,7 +1323,14 @@ export default function AiChatPanel({ panelId }: PanelProps) {
         totalOutputCost += messageCost;
       }
       
-      const isLast = m.id === lastMessageId;
+      // 只在最后一条 AI 消息上显示总统计
+      const isLastAi = m.id === lastAiMessageId;
+      
+      // 用户消息不显示 token 统计，只有 AI 消息显示
+      if (isInput) {
+        // 用户消息不添加 tokenStats
+        return;
+      }
       
       tokenStatsMap.set(m.id, { 
         messageTokens, 
@@ -1329,8 +1338,8 @@ export default function AiChatPanel({ panelId }: PanelProps) {
         cost: messageCost,
         cumulativeCost,
         currencySymbol,
-        // 只在最后一条消息上附加总计信息
-        ...(isLast ? {
+        // 只在最后一条 AI 消息上附加总计信息
+        ...(isLastAi ? {
           totalInputTokens,
           totalOutputTokens,
           totalInputCost,
