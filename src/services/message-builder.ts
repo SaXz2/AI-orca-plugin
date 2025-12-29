@@ -10,6 +10,7 @@ import type { Message } from "./session-service";
 import type { ChatMode } from "../store/chat-mode-store";
 import { buildImageContent } from "./image-service";
 import { buildFileContentsForApi } from "./file-service";
+import { extractOrcaImagesFromText, hasOrcaImageLinks } from "../utils/orca-image-extractor";
 
 export interface MessageBuildParams {
   messages: Message[];
@@ -183,6 +184,11 @@ function messageToApi(m: Message): OpenAIChatMessage {
 
 /**
  * Convert internal Message to OpenAI API format with image support (async)
+ * 
+ * 支持的图片来源：
+ * 1. m.images - 直接附加的图片（legacy）
+ * 2. m.files - 文件附件（包括图片、视频等）
+ * 3. Orca 图片链接 - [!image(...)](orca-block:xxx) 格式
  */
 async function messageToApiWithImages(m: Message): Promise<OpenAIChatMessage> {
   // Handle messages with images (multimodal) - legacy support
@@ -230,6 +236,45 @@ async function messageToApiWithImages(m: Message): Promise<OpenAIChatMessage> {
         role: "user",
         content: contentParts as any,
       };
+    }
+  }
+
+  // Handle Orca image links in user messages: [!image(...)](orca-block:xxx)
+  if (m.role === "user" && m.content && hasOrcaImageLinks(m.content)) {
+    try {
+      const { images, cleanedText } = await extractOrcaImagesFromText(m.content);
+      
+      if (images.length > 0) {
+        const contentParts: any[] = [];
+        
+        // Add cleaned text content
+        if (cleanedText.trim()) {
+          contentParts.push({ type: "text", text: cleanedText });
+        }
+        
+        // Add extracted images
+        for (const img of images) {
+          if (img.base64) {
+            contentParts.push({
+              type: "image_url",
+              image_url: {
+                url: `data:${img.mimeType};base64,${img.base64}`,
+              },
+            });
+          }
+        }
+        
+        if (contentParts.length > 0) {
+          console.log(`[message-builder] Extracted ${images.length} Orca images from message`);
+          return {
+            role: "user",
+            content: contentParts as any,
+          };
+        }
+      }
+    } catch (error) {
+      console.error("[message-builder] Failed to extract Orca images:", error);
+      // Fall through to standard text message
     }
   }
 

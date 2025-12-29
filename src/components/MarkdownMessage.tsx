@@ -724,8 +724,10 @@ function renderInlineNode(node: MarkdownInlineNode, key: number): any {
       // Relative paths like "./image.avif" are stored relative to the repo's assets folder
       let imageSrc = node.src;
       let imageFilePath = node.src; // Keep original for shell-open
+      
+      // Handle different path formats
       if (node.src.startsWith("./") || node.src.startsWith("../")) {
-        const relativePath = node.src.replace(/^\.\//, "");
+        const relativePath = node.src.replace(/^\.\//, "").replace(/^\.\.\//, "");
         // Build absolute path using repoDir + assets folder
         const repoDir = orca.state.repoDir;
         if (repoDir) {
@@ -733,6 +735,20 @@ function renderInlineNode(node: MarkdownInlineNode, key: number): any {
           imageSrc = `file:///${repoDir.replace(/\\/g, "/")}/assets/${relativePath}`;
           // Keep native path for shell-open
           imageFilePath = `${repoDir}\\assets\\${relativePath}`;
+        }
+      } else if (node.src.startsWith("assets/")) {
+        // Handle "assets/xxx" format
+        const repoDir = orca.state.repoDir;
+        if (repoDir) {
+          imageSrc = `file:///${repoDir.replace(/\\/g, "/")}/${node.src}`;
+          imageFilePath = `${repoDir}\\${node.src.replace(/\//g, "\\")}`;
+        }
+      } else if (!node.src.startsWith("http") && !node.src.startsWith("file://") && !node.src.startsWith("data:")) {
+        // Handle plain filename - assume it's in assets folder
+        const repoDir = orca.state.repoDir;
+        if (repoDir) {
+          imageSrc = `file:///${repoDir.replace(/\\/g, "/")}/assets/${node.src}`;
+          imageFilePath = `${repoDir}\\assets\\${node.src}`;
         }
       }
       
@@ -749,7 +765,8 @@ function renderInlineNode(node: MarkdownInlineNode, key: number): any {
             orca.invokeBackend("shell-open", imageFilePath);
           },
           onError: (e: any) => {
-            console.error("[MarkdownMessage] Image load failed:", imageSrc);
+            // Silently hide failed images, only warn in console
+            console.warn("[MarkdownMessage] Image not found:", node.src);
             e.target.style.display = "none";
           },
         })

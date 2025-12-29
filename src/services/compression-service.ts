@@ -29,6 +29,15 @@
 import type { Message } from "./session-service";
 import { openAIChatCompletionsStream, type OpenAIChatMessage } from "./openai-client";
 import { estimateTokens } from "../utils/token-utils";
+import {
+  type CompressionStrategyConfig,
+  type CompressionStrategyType,
+  getEffectiveConfig,
+  updateStrategyState,
+  autoAdjustStrategy,
+  clearStrategyState,
+  compressionStrategyDebug,
+} from "./compression-strategy";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 类型定义
@@ -83,7 +92,47 @@ const pendingCompressionTasks = new Map<string, Promise<void>>();
 // 配置
 // ═══════════════════════════════════════════════════════════════════════════
 
-const CONFIG = {
+/**
+ * 摘要冗余度类型
+ */
+type SummaryVerbosity = "minimal" | "medium" | "detailed";
+
+/**
+ * 实体映射位置类型
+ */
+type EntityMapPosition = "after_system" | "before_dynamic" | "inline";
+
+/**
+ * 会话配置类型
+ */
+type SessionConfig = {
+  compressionThreshold: number;
+  hardLimitThreshold: number;
+  recentTokenLimit: number;
+  layerTokenTarget: number;
+  summaryMaxTokens: number;
+  summaryMaxTokensCompact: number;
+  middleLayerTokenLimit: number;
+  blockEndMarker: string;
+  tokenAlignUnit: number;
+  enableTokenAlignment: boolean;
+  milestoneThreshold: number;
+  tokenEstimateMargin: number;
+  milestoneDistillThreshold: number;
+  calibrationMissThreshold: number;
+  slidingBufferMargin: number;
+  biasCalibrationMinSamples: number;
+  biasFactorMax: number;
+  biasFactorMin: number;
+  biasSignificanceThreshold: number;
+  summaryVerbosity: SummaryVerbosity;
+  entityMapPosition: EntityMapPosition;
+};
+
+/**
+ * 默认配置（作为回退值，实际使用时会被策略配置覆盖）
+ */
+const DEFAULT_CONFIG: SessionConfig = {
   // 触发压缩的 Token 阈值（生产用）
   compressionThreshold: 4000,
   // 硬截断阈值（留 200 Token 余量应对估算误差）
@@ -102,6 +151,8 @@ const CONFIG = {
   blockEndMarker: "\n<!-- END -->\n",
   // Token 对齐单位（DeepSeek 缓存对齐）
   tokenAlignUnit: 64,
+  // 是否启用 Token 对齐
+  enableTokenAlignment: true,
   // 触发里程碑合并的层数
   milestoneThreshold: 10,
   // Token 估算误差余量
@@ -122,7 +173,66 @@ const CONFIG = {
   biasFactorMin: 0.90,
   // 偏差显著性阈值（偏差超过此比例才触发调整）
   biasSignificanceThreshold: 0.03,
+  // 摘要冗余度
+  summaryVerbosity: "medium",
+  // 实体映射位置
+  entityMapPosition: "after_system",
 };
+
+/**
+ * 会话配置缓存（存储每个会话的有效配置）
+ */
+const sessionConfigCache = new Map<string, {
+  config: SessionConfig;
+  strategy: CompressionStrategyType;
+  modelName: string;
+}>();
+
+/**
+ * 获取会话的有效配置（基于策略动态生成）
+ */
+function getSessionConfig(sessionId: string, modelName: string): SessionConfig & { strategy: CompressionStrategyType } {
+  // 检查缓存
+  const cached = sessionConfigCache.get(sessionId);
+  if (cached && cached.modelName === modelName) {
+    return { ...cached.config, strategy: cached.strategy };
+  }
+  
+  // 获取策略配置
+  const strategyConfig = getEffectiveConfig(sessionId, modelName);
+  
+  // 合并配置
+  const config: SessionConfig = {
+    ...DEFAULT_CONFIG,
+    compressionThreshold: strategyConfig.compressionThreshold,
+    hardLimitThreshold: strategyConfig.hardLimitThreshold,
+    recentTokenLimit: strategyConfig.recentTokenLimit,
+    summaryMaxTokens: strategyConfig.summaryMaxTokens,
+    summaryMaxTokensCompact: strategyConfig.summaryMaxTokensCompact,
+    summaryVerbosity: strategyConfig.summaryVerbosity,
+    enableTokenAlignment: strategyConfig.enableTokenAlignment,
+    tokenAlignUnit: strategyConfig.tokenAlignUnit,
+    milestoneThreshold: strategyConfig.milestoneThreshold,
+    milestoneDistillThreshold: strategyConfig.milestoneDistillThreshold,
+    entityMapPosition: strategyConfig.entityMapPosition,
+    middleLayerTokenLimit: strategyConfig.middleLayerTokenLimit,
+    layerTokenTarget: strategyConfig.layerTokenTarget,
+  };
+  
+  // 更新缓存
+  sessionConfigCache.set(sessionId, {
+    config,
+    strategy: strategyConfig.strategy,
+    modelName,
+  });
+  
+  console.log(`[compression] Session ${sessionId} using ${strategyConfig.strategy} strategy (threshold: ${config.compressionThreshold}, alignment: ${config.enableTokenAlignment})`);
+  
+  return { ...config, strategy: strategyConfig.strategy };
+}
+
+// 保持向后兼容的 CONFIG 引用（使用默认配置）
+const CONFIG = DEFAULT_CONFIG;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 监控统计
@@ -511,17 +621,30 @@ function buildEntityMapText(entityMap: Map<string, EntityInfo>): string {
 }
 
 /**
- * Token 对齐填充（64 Token 边界）
+ * Token 对齐填充（动态配置）
  * 使用 HTML 注释填充，避免空格干扰模型注意力
+ * 
+ * @param text 要对齐的文本
+ * @param enableAlignment 是否启用对齐（REASONING_FIRST 策略禁用）
+ * @param alignUnit Token 对齐单位（默认 64）
  */
-function alignToTokenBoundary(text: string): string {
+function alignToTokenBoundary(
+  text: string, 
+  enableAlignment: boolean = true,
+  alignUnit: number = 64,
+): string {
+  // 如果禁用对齐，直接返回
+  if (!enableAlignment || alignUnit <= 1) {
+    return text;
+  }
+  
   const tokens = estimateTokens(text);
-  const remainder = tokens % CONFIG.tokenAlignUnit;
+  const remainder = tokens % alignUnit;
   
   if (remainder === 0) return text;
   
   // 计算需要填充的 Token 数
-  const paddingTokens = CONFIG.tokenAlignUnit - remainder;
+  const paddingTokens = alignUnit - remainder;
   // 使用 HTML 注释填充，避免空格干扰模型
   // 粗略估计：1 Token ≈ 4 个字符
   const paddingContent = "-".repeat(paddingTokens * 4);
@@ -532,12 +655,21 @@ function alignToTokenBoundary(text: string): string {
 
 /**
  * 格式化摘要输出（带元数据标记和 Token 对齐）
+ * 
+ * @param summary 摘要内容
+ * @param layerIndex 层索引
+ * @param messageRange 消息范围
+ * @param isMilestone 是否为里程碑
+ * @param enableAlignment 是否启用 Token 对齐
+ * @param alignUnit Token 对齐单位
  */
 function formatSummaryOutput(
   summary: string, 
   layerIndex: number,
   messageRange: [number, number],
   isMilestone: boolean = false,
+  enableAlignment: boolean = true,
+  alignUnit: number = 64,
 ): string {
   // 1. 统一换行符
   let cleaned = summary.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
@@ -552,10 +684,10 @@ function formatSummaryOutput(
     : `### 历史摘要 #${layerIndex + 1}`;
   const meta = `<!-- range: ${messageRange[0]}-${messageRange[1]} -->`;
   
-  const formatted = `\n\n${label}\n${meta}\n${cleaned}${CONFIG.blockEndMarker}`;
+  const formatted = `\n\n${label}\n${meta}\n${cleaned}${DEFAULT_CONFIG.blockEndMarker}`;
   
-  // 5. Token 对齐
-  return alignToTokenBoundary(formatted);
+  // 5. Token 对齐（使用传入的配置）
+  return alignToTokenBoundary(formatted, enableAlignment, alignUnit);
 }
 
 /**
@@ -700,6 +832,7 @@ async function generateSummary(
 async function mergeLayers(
   layers: SummaryLayer[],
   apiConfig: { apiUrl: string; apiKey: string; model: string },
+  alignmentConfig?: { enableAlignment: boolean; alignUnit: number },
 ): Promise<SummaryLayer | null> {
   if (layers.length === 0) return null;
 
@@ -739,6 +872,8 @@ async function mergeLayers(
     0, // 里程碑索引单独计算
     messageRange,
     true,
+    alignmentConfig?.enableAlignment ?? true,
+    alignmentConfig?.alignUnit ?? 64,
   );
 
   return {
@@ -760,6 +895,7 @@ async function mergeLayers(
 async function distillMilestones(
   milestones: SummaryLayer[],
   apiConfig: { apiUrl: string; apiKey: string; model: string },
+  alignmentConfig?: { enableAlignment: boolean; alignUnit: number },
 ): Promise<SummaryLayer | null> {
   if (milestones.length < 2) return null;
 
@@ -800,6 +936,8 @@ async function distillMilestones(
     0,
     messageRange,
     true,
+    alignmentConfig?.enableAlignment ?? true,
+    alignmentConfig?.alignUnit ?? 64,
   );
 
   return {
@@ -920,7 +1058,7 @@ function alignToTokenBoundaryWithCalibration(text: string, calibrationOffset: nu
 }
 
 /**
- * 缓存友好的上下文压缩（三明治架构 v2）
+ * 缓存友好的上下文压缩（三明治架构 v2 + 动态策略）
  */
 export async function compressContext(
   sessionId: string,
@@ -939,13 +1077,17 @@ export async function compressContext(
     compressed: boolean;
     entities: string[];
     pendingCompression: boolean;
+    strategy: CompressionStrategyType;  // 当前使用的策略
   };
 }> {
+  // 获取动态配置（基于模型自动选择策略）
+  const sessionConfig = getSessionConfig(sessionId, apiConfig.model);
+  
   const validMessages = messages.filter(m => !m.localOnly);
   const totalTokens = calculateTokens(validMessages);
 
-  // 不需要压缩
-  if (totalTokens <= CONFIG.compressionThreshold) {
+  // 不需要压缩（使用动态阈值）
+  if (totalTokens <= sessionConfig.compressionThreshold) {
     return {
       summaryText: null,
       entityMapText: "",
@@ -959,6 +1101,7 @@ export async function compressContext(
         compressed: false,
         entities: [],
         pendingCompression: false,
+        strategy: sessionConfig.strategy,
       },
     };
   }
@@ -987,9 +1130,19 @@ export async function compressContext(
   const metrics = getOrCreateMetrics(sessionId);
   const hadCachedLayers = cache.layers.length > 0 || cache.milestones.length > 0;
   recordCacheHit(sessionId, hadCachedLayers);
+  
+  // 更新策略状态（用于自动调整）
+  const currentHitRate = metrics.totalRequests > 0 ? metrics.cacheHits / metrics.totalRequests : 1.0;
+  updateStrategyState(sessionId, { cacheHitRate: currentHitRate });
+  
+  // 尝试自动调整策略
+  if (autoAdjustStrategy(sessionId)) {
+    // 策略已调整，清除配置缓存以获取新配置
+    sessionConfigCache.delete(sessionId);
+  }
 
-  // 使用滑动缓冲区找出最近消息（确保完整问答对）
-  const recentStartIdx = findSafeRecentBoundary(validMessages, CONFIG.recentTokenLimit);
+  // 使用滑动缓冲区找出最近消息（确保完整问答对，使用动态配置）
+  const recentStartIdx = findSafeRecentBoundary(validMessages, sessionConfig.recentTokenLimit);
   const recentMessages = validMessages.slice(recentStartIdx);
   const recentTokens = calculateTokens(recentMessages);
   const oldMessages = validMessages.slice(0, recentStartIdx);
@@ -1005,20 +1158,20 @@ export async function compressContext(
     // 语义断点检测
     const isBreakPoint = isSemanticBreakPoint(lastMessage);
     
-    // 硬截断检测：超过硬限制必须压缩（留余量应对估算误差）
-    const isHardLimit = totalTokens >= CONFIG.hardLimitThreshold;
+    // 硬截断检测：超过硬限制必须压缩（使用动态阈值）
+    const isHardLimit = totalTokens >= sessionConfig.hardLimitThreshold;
     
     if (isHardLimit) {
       recordHardLimitTrigger(sessionId);
     }
     
-    // 触发条件：Token 足够多 且 (处于语义断点 或 硬截断)
-    const shouldCompress = (newTokens >= CONFIG.layerTokenTarget || newMessageCount >= 10);
+    // 触发条件：Token 足够多 且 (处于语义断点 或 硬截断)（使用动态配置）
+    const shouldCompress = (newTokens >= sessionConfig.layerTokenTarget || newMessageCount >= 10);
     
     if (shouldCompress) {
       // 硬截断：无论是否断点都必须压缩
       if (isHardLimit) {
-        console.log(`[compression] Hard limit reached (${totalTokens} tokens), forcing compression`);
+        console.log(`[compression] Hard limit reached (${totalTokens} tokens, threshold: ${sessionConfig.hardLimitThreshold}), forcing compression`);
         cache.pendingCompression = false;
       } else if (!isBreakPoint) {
         // 标记待压缩，延迟到下一个断点
@@ -1040,6 +1193,12 @@ export async function compressContext(
             // 动态计算摘要最大 Token
             const dynamicMaxTokens = getDynamicSummaryMaxTokens(cache);
             
+            // 对齐配置
+            const alignmentConfig = {
+              enableAlignment: sessionConfig.enableTokenAlignment,
+              alignUnit: sessionConfig.tokenAlignUnit,
+            };
+            
             const { summary, entities, decisions } = await generateSummary(
               newMessages, 
               apiConfig,
@@ -1054,6 +1213,9 @@ export async function compressContext(
                 summary, 
                 cache.layers.length,
                 messageRange,
+                false,
+                alignmentConfig.enableAlignment,
+                alignmentConfig.alignUnit,
               );
               
               // 更新实体映射
@@ -1078,26 +1240,26 @@ export async function compressContext(
               recordLayerCreation(sessionId);
               console.log(`[compression] Layer #${cache.layers.length} created`);
               
-              // 检查是否需要里程碑合并
-              if (cache.layers.length >= CONFIG.milestoneThreshold) {
-                console.log(`[compression] Triggering milestone merge for ${cache.layers.length} layers`);
-                const milestone = await mergeLayers(cache.layers, apiConfig);
+              // 检查是否需要里程碑合并（使用动态配置）
+              if (cache.layers.length >= sessionConfig.milestoneThreshold) {
+                console.log(`[compression] Triggering milestone merge for ${cache.layers.length} layers (threshold: ${sessionConfig.milestoneThreshold})`);
+                const milestone = await mergeLayers(cache.layers, apiConfig, alignmentConfig);
                 if (milestone) {
                   cache.milestones.push(milestone);
                   cache.layers = []; // 清空已合并的层
                   recordMilestoneCreation(sessionId);
                   console.log(`[compression] Milestone #${cache.milestones.length} created, hit rate before: ${(metrics.cacheHits / metrics.totalRequests * 100).toFixed(1)}%`);
                   
-                  // 检查是否需要里程碑再蒸馏
-                  if (cache.milestones.length >= CONFIG.milestoneDistillThreshold) {
+                  // 检查是否需要里程碑再蒸馏（使用动态配置）
+                  if (cache.milestones.length >= sessionConfig.milestoneDistillThreshold) {
                     console.log(`[compression] Triggering milestone distillation for ${cache.milestones.length} milestones`);
-                    const distilled = await distillMilestones(cache.milestones, apiConfig);
+                    const distilled = await distillMilestones(cache.milestones, apiConfig, alignmentConfig);
                     if (distilled) {
                       // 保留最新的里程碑，用蒸馏结果替换旧的
                       const latestMilestone = cache.milestones[cache.milestones.length - 1];
                       cache.milestones = [distilled, latestMilestone];
                       recordMilestoneDistillation(sessionId);
-                      console.log(`[compression] Milestones distilled: ${CONFIG.milestoneDistillThreshold} -> 2`);
+                      console.log(`[compression] Milestones distilled: ${sessionConfig.milestoneDistillThreshold} -> 2`);
                     }
                   }
                 }
@@ -1146,6 +1308,7 @@ export async function compressContext(
       compressed: parts.length > 0,
       entities: [...new Set(allEntities)],
       pendingCompression: cache.pendingCompression,
+      strategy: sessionConfig.strategy,
     },
   };
 }
@@ -1155,6 +1318,8 @@ export async function compressContext(
  */
 export function clearSummaryCache(sessionId: string): void {
   sessionCache.delete(sessionId);
+  sessionConfigCache.delete(sessionId);
+  clearStrategyState(sessionId);
   console.log(`[compression] Cache cleared for session: ${sessionId}`);
 }
 
@@ -1164,6 +1329,7 @@ export function clearSummaryCache(sessionId: string): void {
 export function clearAllSummaryCache(): void {
   const count = sessionCache.size;
   sessionCache.clear();
+  sessionConfigCache.clear();
   console.log(`[compression] All caches cleared (${count} sessions)`);
 }
 
@@ -1179,6 +1345,13 @@ export function getCacheStats(sessionId: string): {
   entityMapSize: number;
   lastUpdateAt: number | null;
   pendingCompression: boolean;
+  // 策略信息
+  strategy: {
+    type: CompressionStrategyType;
+    compressionThreshold: number;
+    enableTokenAlignment: boolean;
+    milestoneThreshold: number;
+  } | null;
   // Token 偏差校准信息
   tokenBias: {
     factor: number;           // 当前偏差因子
@@ -1199,6 +1372,7 @@ export function getCacheStats(sessionId: string): {
   if (!cache) return null;
   
   const metrics = getOrCreateMetrics(sessionId);
+  const configCache = sessionConfigCache.get(sessionId);
   
   // 计算平均偏差百分比
   const averageBias = cache.biasCalibrationSamples > 0
@@ -1216,6 +1390,12 @@ export function getCacheStats(sessionId: string): {
     entityMapSize: cache.entityMap.size,
     lastUpdateAt: cache.lastUpdateAt,
     pendingCompression: cache.pendingCompression,
+    strategy: configCache ? {
+      type: configCache.strategy,
+      compressionThreshold: configCache.config.compressionThreshold,
+      enableTokenAlignment: configCache.config.enableTokenAlignment,
+      milestoneThreshold: configCache.config.milestoneThreshold,
+    } : null,
     tokenBias: {
       factor: cache.tokenBiasFactor,
       samples: cache.biasCalibrationSamples,
@@ -1504,4 +1684,37 @@ export function prewarmMilestonesOnly(
   
   sessionCache.set(sessionId, cache);
   console.log(`[compression] Milestones prewarmed for session ${sessionId}: ${milestones.length} milestones`);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 策略相关导出
+// ═══════════════════════════════════════════════════════════════════════════
+
+// 重新导出策略模块的类型和函数
+export type { CompressionStrategyType, CompressionStrategyConfig } from "./compression-strategy";
+export {
+  detectStrategy,
+  getStrategyConfig,
+  getAllStrategySummary,
+  setSessionStrategy,
+} from "./compression-strategy";
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 调试接口
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** 暴露给浏览器控制台的调试接口 */
+export const compressionServiceDebug = {
+  getCacheStats,
+  getGlobalCompressionMetrics,
+  clearSummaryCache,
+  clearAllSummaryCache,
+  exportCache,
+  // 策略相关
+  ...compressionStrategyDebug,
+};
+
+// 挂载到 window（如果在浏览器环境）
+if (typeof window !== "undefined") {
+  (window as any).compressionService = compressionServiceDebug;
 }

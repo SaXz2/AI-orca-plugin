@@ -2,7 +2,47 @@
 
 ## 概述
 
-`compression-service.ts` 实现了一套基于"三明治缓存架构"的对话历史压缩系统，专门针对 DeepSeek 等支持 KV Cache 的大模型进行优化。核心设计原则是**"稳定性比简洁更值钱"**——宁可多保留 500 Token 冗余以保持前缀一致，也不要为了精简导致 50k 缓存重新计算。
+`compression-service.ts` 实现了一套基于"三明治缓存架构"的对话历史压缩系统，支持**动态策略组**，能够根据模型特性自动选择最优的压缩配置。
+
+## 动态策略组
+
+### 策略类型
+
+系统支持三种压缩策略，根据模型名称自动检测：
+
+| 配置项 | CACHE_FIRST (DeepSeek) | REASONING_FIRST (Gemini/Claude) | GENERAL (通用) |
+|--------|------------------------|--------------------------------|----------------|
+| 压缩触发阈值 | 4,000 Tokens | 12,000 - 18,000 Tokens | 6,000 Tokens |
+| Token 对齐 | 启用 (64单位) | 禁用 | 禁用 |
+| 摘要冗余度 | 极低 (追求精简) | 中等 (保留更多细节) | 中等 |
+| 实体映射位置 | System Prompt 之后 | Dynamic Context 之前 | System Prompt 之后 |
+| 里程碑合并间隔 | 10 层 | 20 层 | 12 层 |
+| 最近对话保留 | 2,500 Tokens | 4,000 Tokens | 3,000 Tokens |
+
+### 自动检测规则
+
+```typescript
+// 模型名称 -> 策略映射（按优先级）
+CACHE_FIRST:
+  - deepseek-chat, deepseek-coder, deepseek-v2/v3
+
+REASONING_FIRST:
+  - gemini-2.5-pro, gemini-3-pro, gemini-exp
+  - claude-3-5-sonnet, claude-3-opus
+  - o1, o1-preview, o1-mini, o3
+
+GENERAL:
+  - gpt-4o, gpt-4-turbo, gpt-3.5
+  - gemini-pro, gemini-flash
+  - llama, mistral, qwen, yi
+```
+
+### 运行时自动调整
+
+系统会根据缓存命中率自动调整策略：
+- CACHE_FIRST 命中率持续低于 60% → 降级到 GENERAL
+- GENERAL 命中率持续高于 85% → 升级到 CACHE_FIRST
+- REASONING_FIRST 不自动调整（保持稳定）
 
 ## 设计背景
 
@@ -49,66 +89,56 @@
 │ │ - 共识：下周一提交初稿                                   │ │
 │ │ <!-- END -->                                            │ │
 │ └─────────────────────────────────────────────────────────┘ │
-│                           ↓                                 │
-│ ┌─────────────────────────────────────────────────────────┐ │
-│ │ ### 历史摘要 #2                                         │ │
-│ │ <!-- range: 55-60 -->                                   │ │
-│ │ - 待办：确认配色方案                                     │ │
-│ │ <!-- END -->                                            │ │
-│ └─────────────────────────────────────────────────────────┘ │
 │                                                             │
 │ 每层独立，新摘要追加到末尾，已有层永不改动                    │
-│ 每 10 层触发一次"里程碑合并"                                │
+│ 里程碑合并间隔由策略决定（10-20 层）                         │
 ├─────────────────────────────────────────────────────────────┤
 │ 顶层 (Dynamic Context) - 频繁更新                            │
-│ 最近 2-3 轮原始对话（约 2500 tokens）                        │
+│ 最近 2-4 轮原始对话（由策略决定 Token 上限）                  │
 │ 保证 AI 的"短期记忆"不失真                                  │
 └─────────────────────────────────────────────────────────────┘
 ```
 
 ## 配置参数
 
+配置参数现在由动态策略系统管理，以下是默认值（GENERAL 策略）：
+
 ```typescript
-const CONFIG = {
-  // 触发压缩的 Token 阈值
+// 策略配置类型
+type CompressionStrategyConfig = {
+  compressionThreshold: number;      // 触发压缩的 Token 阈值
+  hardLimitThreshold: number;        // 硬截断阈值
+  recentTokenLimit: number;          // 最近对话保留的 Token 上限
+  summaryMaxTokens: number;          // 摘要输出的最大 Token
+  summaryMaxTokensCompact: number;   // 高密度摘要的最大 Token
+  summaryVerbosity: "minimal" | "medium" | "detailed";
+  enableTokenAlignment: boolean;     // 是否启用 Token 对齐
+  tokenAlignUnit: number;            // Token 对齐单位
+  milestoneThreshold: number;        // 触发里程碑合并的层数
+  milestoneDistillThreshold: number; // 触发里程碑再蒸馏的数量
+  entityMapPosition: "after_system" | "before_dynamic" | "inline";
+  middleLayerTokenLimit: number;     // 中层 Token 上限
+  layerTokenTarget: number;          // 每层摘要的目标 Token 数
+};
+
+// 默认配置（内部使用）
+const DEFAULT_CONFIG = {
   compressionThreshold: 4000,
-  
-  // 硬截断阈值（留 200 Token 余量应对估算误差）
   hardLimitThreshold: 5800,
-  
-  // 最近对话保留的 Token 上限（动态块）
   recentTokenLimit: 2500,
-  
-  // 每层摘要的目标 Token 数
   layerTokenTarget: 1500,
-  
-  // 摘要输出的最大 Token（基础值）
   summaryMaxTokens: 500,
-  
-  // 高密度摘要的最大 Token（中层过长时使用）
   summaryMaxTokensCompact: 300,
-  
-  // 中层 Token 上限（超过此值启用高密度模式）
   middleLayerTokenLimit: 1500,
-  
-  // Token 对齐单位（DeepSeek 缓存对齐）
   tokenAlignUnit: 64,
-  
-  // 触发里程碑合并的层数
+  enableTokenAlignment: true,
   milestoneThreshold: 10,
-  
-  // Token 估算误差余量
-  tokenEstimateMargin: 200,
-  
-  // === v2.1 新增 ===
-  // 触发里程碑再蒸馏的里程碑数量
   milestoneDistillThreshold: 3,
-  
-  // 缓存校准：连续未命中次数阈值
-  calibrationMissThreshold: 3,
-  
-  // 滑动缓冲区：确保完整问答对的额外 Token 余量
-  slidingBufferMargin: 200,
+  // Token 偏差校准配置
+  biasCalibrationMinSamples: 3,
+  biasFactorMax: 1.15,
+  biasFactorMin: 0.90,
+  biasSignificanceThreshold: 0.03,
 };
 ```
 
@@ -315,7 +345,7 @@ type SessionCache = {
 ### 主要函数
 
 ```typescript
-// 核心压缩函数
+// 核心压缩函数（自动选择策略）
 export async function compressContext(
   sessionId: string,
   messages: Message[],
@@ -324,7 +354,17 @@ export async function compressContext(
   summaryText: string | null;
   entityMapText: string;
   recentMessages: Message[];
-  stats: { ... };
+  stats: {
+    totalTokens: number;
+    summaryTokens: number;
+    recentTokens: number;
+    layerCount: number;
+    milestoneCount: number;
+    compressed: boolean;
+    entities: string[];
+    pendingCompression: boolean;
+    strategy: CompressionStrategyType;  // 当前使用的策略
+  };
 }>
 
 // 兼容旧接口（message-builder 调用）
@@ -343,8 +383,20 @@ export async function getOrCreateSummary(
 export function clearSummaryCache(sessionId: string): void
 export function clearAllSummaryCache(): void
 
-// 获取统计信息
-export function getCacheStats(sessionId: string): { ... } | null
+// 获取统计信息（包含策略信息）
+export function getCacheStats(sessionId: string): {
+  layerCount: number;
+  milestoneCount: number;
+  totalTokens: number;
+  strategy: {
+    type: CompressionStrategyType;
+    compressionThreshold: number;
+    enableTokenAlignment: boolean;
+    milestoneThreshold: number;
+  } | null;
+  // ... 其他字段
+} | null
+
 export function getGlobalCompressionMetrics(): { ... }
 
 // 根据消息索引查找摘要层
@@ -358,9 +410,24 @@ export async function waitForAsyncCompression(sessionId: string): Promise<void>
 export function prewarmCache(sessionId: string, data: SerializedCache): void
 export function prewarmMilestonesOnly(sessionId: string, milestones: SummaryLayer[], processedCount: number): void
 
-// === v2.1 新增 ===
 // Token 校准
 export function calibrateTokenOffset(sessionId: string, promptCacheHitTokens: number | undefined, expectedCacheTokens: number): void
+
+// === 策略相关 ===
+// 检测模型对应的策略
+export function detectStrategy(modelName: string): { 
+  strategy: CompressionStrategyType; 
+  confidence: number;
+}
+
+// 获取策略配置
+export function getStrategyConfig(strategy: CompressionStrategyType): CompressionStrategyConfig
+
+// 手动设置会话策略（覆盖自动检测）
+export function setSessionStrategy(sessionId: string, strategy: CompressionStrategyType): void
+
+// 获取所有策略摘要
+export function getAllStrategySummary(): Record<CompressionStrategyType, {...}>
 ```
 
 ### 调试接口
@@ -371,7 +438,17 @@ window.compressionService.getGlobalCompressionMetrics()
 // => { sessionCount: 1, totalLayers: 3, totalMilestones: 0, averageHitRate: 0.85 }
 
 window.compressionService.getCacheStats('session-id')
-// => { layerCount: 3, milestoneCount: 0, totalTokens: 450, ... }
+// => { layerCount: 3, milestoneCount: 0, totalTokens: 450, strategy: { type: 'CACHE_FIRST', ... }, ... }
+
+// 策略相关
+window.compressionService.detectStrategy('deepseek-chat')
+// => { strategy: 'CACHE_FIRST', confidence: 0.95, matchedRule: 'deepseek[-_]?chat' }
+
+window.compressionService.getAllStrategySummary()
+// => { CACHE_FIRST: {...}, REASONING_FIRST: {...}, GENERAL: {...} }
+
+window.compressionService.setSessionStrategy('session-id', 'REASONING_FIRST')
+// 手动覆盖策略
 ```
 
 ## 集成方式
@@ -443,6 +520,7 @@ type CompressionMetrics = {
 ## 文件位置
 
 - 主服务：`src/services/compression-service.ts`
+- 策略模块：`src/services/compression-strategy.ts`
 - 集成点：`src/services/message-builder.ts`
 - 设置 UI：`src/views/CompressionSettingsModal.tsx`
 - 菜单入口：`src/views/HeaderMenu.tsx`
