@@ -388,7 +388,7 @@ export default function AiChatPanel({ panelId }: PanelProps) {
 4. 对比项要一一对应，便于比较`;
 	    }
 
-	    // /localgraph - 链接关系图谱（直接调用工具，不走 AI）
+	    // /localgraph - 链接关系图谱（直接渲染图谱，不走 AI）
 	    if (content.includes("/localgraph")) {
 	      const graphQuery = processedContent.replace(/\/localgraph/g, "").trim();
 	      const cleanedQuery = graphQuery.replace(/^(显示|查看|分析|的)?\s*/g, "").replace(/\s*(的)?(链接)?(关系)?(图谱)?$/g, "").trim();
@@ -402,18 +402,27 @@ export default function AiChatPanel({ panelId }: PanelProps) {
 	      };
 	      setMessages((prev) => [...prev, userMsg]);
 	      
-	      // 直接调用 executeTool 生成图谱
-	      import("../services/ai-tools").then(async ({ executeTool }) => {
-	        let toolArgs: any = {};
+	      // 直接获取 blockId 并渲染图谱
+	      (async () => {
+	        let blockId: number | null = null;
+	        let pageName: string | null = null;
 	        
 	        if (cleanedQuery) {
 	          // 检查是否是 blockId 格式：纯数字、blockid 123、blockid:123
 	          const blockIdMatch = cleanedQuery.match(/^(?:blockid[:\s]*)?(\d+)$/i);
 	          if (blockIdMatch) {
-	            toolArgs = { blockId: parseInt(blockIdMatch[1], 10) };
+	            blockId = parseInt(blockIdMatch[1], 10);
 	          } else {
-	            // 否则当作页面名称
-	            toolArgs = { pageName: cleanedQuery };
+	            // 否则当作页面名称，需要查找对应的 blockId
+	            pageName = cleanedQuery;
+	            try {
+	              const block = await orca.invokeBackend("get-block-by-alias", cleanedQuery);
+	              if (block && block.id) {
+	                blockId = block.id;
+	              }
+	            } catch (err) {
+	              console.warn("[/localgraph] Failed to find page:", cleanedQuery, err);
+	            }
 	          }
 	        } else {
 	          // 使用当前打开的页面
@@ -422,33 +431,37 @@ export default function AiChatPanel({ panelId }: PanelProps) {
 	            if (activePanel && activePanel !== uiStore.aiChatPanelId) {
 	              const vp = orca.nav.findViewPanel(activePanel, orca.state.panels);
 	              if (vp?.view === "block" && vp.viewArgs?.blockId) {
-	                toolArgs = { blockId: vp.viewArgs.blockId };
+	                blockId = vp.viewArgs.blockId;
 	              }
 	            }
 	          } catch {}
 	        }
 	        
-	        if (!toolArgs.pageName && !toolArgs.blockId) {
+	        if (!blockId) {
+	          const errorMsg = pageName 
+	            ? `找不到页面「${pageName}」，请检查名称是否正确`
+	            : "请先选择一个页面，或指定页面名称，例如：/localgraph 阿拉丁";
 	          const assistantMsg: Message = {
 	            id: nowId(),
 	            role: "assistant",
-	            content: "请先选择一个页面，或指定页面名称，例如：/localgraph 阿拉丁",
+	            content: errorMsg,
 	            createdAt: Date.now(),
 	          };
 	          setMessages((prev) => [...prev, assistantMsg]);
 	          return;
 	        }
 	        
-	        const result = await executeTool("getBlockLinks", toolArgs);
+	        // 直接输出 localgraph 代码块格式，让 MarkdownMessage 渲染图谱
+	        const graphContent = "```localgraph\n" + blockId + "\n```";
 	        const assistantMsg: Message = {
 	          id: nowId(),
 	          role: "assistant",
-	          content: result,
+	          content: graphContent,
 	          createdAt: Date.now(),
 	        };
 	        setMessages((prev) => [...prev, assistantMsg]);
 	        queueMicrotask(scrollToBottom);
-	      });
+	      })();
 	      
 	      return; // 直接返回，不走 AI
 	    }
@@ -1381,7 +1394,11 @@ export default function AiChatPanel({ panelId }: PanelProps) {
       // More Menu (Settings, Memory, Clear)
       createElement(HeaderMenu, {
         onClearChat: clear,
-        onOpenSettings: () => void orca.commands.invokeCommand("core.openSettings"),
+        onOpenSettings: () => {
+          if (orca.commands?.invokeCommand) {
+            orca.commands.invokeCommand("core.openSettings");
+          }
+        },
         onOpenMemoryManager: handleOpenMemoryManager,
       }),
       // Close Button

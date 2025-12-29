@@ -160,7 +160,11 @@ export const TOOLS: OpenAITool[] = [
     type: "function",
     function: {
       name: "query_blocks",
-      description: "组合多种条件进行复杂搜索。支持标签、文本、任务状态、日记范围等条件的 AND/OR 组合。这是最强大的搜索工具。",
+      description: `组合多种条件进行复杂搜索。支持标签、文本、任务状态、日记范围等条件的 AND/OR 组合。
+⚠️ 重要限制：
+- journal 条件仅返回块引用列表，不包含完整内容
+- 如需查看日记的完整内容（包括图片、文字等），请使用 getRecentJournals 或 getTodayJournal
+❌ 不要用于：查看日记内容、查找日记中的图片/记录等场景`,
       parameters: {
         type: "object",
         properties: {
@@ -202,14 +206,16 @@ export const TOOLS: OpenAITool[] = [
     type: "function",
     function: {
       name: "getRecentJournals",
-      description: `获取最近几天的日记条目。当你需要了解用户最近的动态、计划或记录时使用。
-⚠️ 如果只需要今天的日记，请使用 getTodayJournal（更高效）`,
+      description: `获取最近几天的日记完整内容（包括文字、图片、链接等）。
+✅ 用于：查看日记内容、查找日记中的图片/记录、了解用户最近动态
+⚠️ 如果只需要今天的日记，请使用 getTodayJournal（更高效）
+❌ 不要用 query_blocks 的 journal 条件查看日记内容（它只返回引用）`,
       parameters: {
         type: "object",
         properties: {
           days: {
             type: "number",
-            description: "追溯的天数（默认 7）",
+            description: "追溯的天数（默认 7，如查昨天用 1）",
           },
           includeChildren: {
             type: "boolean",
