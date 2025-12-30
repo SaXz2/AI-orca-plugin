@@ -126,41 +126,93 @@ const journalExportCache = new Map<string, { rangeLabel: string; entries: any[] 
 // Helper component for Journal Export Button
 function JournalExportBlock({ content }: { content: string }) {
   const [exporting, setExporting] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [data, setData] = useState(null as { rangeLabel: string; entries: any[] } | null);
 
-  // 尝试解析数据：先检查缓存，再尝试解析 JSON
-  const getData = () => {
+  // 解析缓存 ID 中的日期信息
+  // 格式：cache:year-2025-timestamp 或 cache:month-2025-01-timestamp
+  const parseCacheId = (cacheId: string) => {
+    const yearMatch = cacheId.match(/^year-(\d{4})-/);
+    if (yearMatch) {
+      return { type: "year" as const, value: yearMatch[1] };
+    }
+    const monthMatch = cacheId.match(/^month-(\d{4}-\d{2})-/);
+    if (monthMatch) {
+      return { type: "month" as const, value: monthMatch[1] };
+    }
+    return null;
+  };
+
+  // 初始化时尝试获取数据
+  React.useEffect(() => {
     const trimmed = content.trim();
     
-    // 检查是否是缓存 ID（格式：cache:xxx）
+    // 检查是否是缓存 ID
     if (trimmed.startsWith("cache:")) {
       const cacheId = trimmed.substring(6);
       const cached = journalExportCache.get(cacheId);
       if (cached) {
         console.log("[JournalExportBlock] Found cached data:", cacheId);
-        return cached;
+        setData(cached);
+        return;
       }
-      console.warn("[JournalExportBlock] Cache miss:", cacheId);
-      return null;
+      
+      // 缓存丢失，尝试重新获取
+      console.log("[JournalExportBlock] Cache miss, re-fetching:", cacheId);
+      const parsed = parseCacheId(cacheId);
+      if (parsed) {
+        setLoading(true);
+        (async () => {
+          try {
+            const { getJournalsByDateRange } = await import("../services/search-service");
+            const results = await getJournalsByDateRange(
+              parsed.type,
+              parsed.value,
+              undefined,
+              true,
+              parsed.type === "year" ? 366 : 31
+            );
+            
+            const exportData = results
+              .map((r: any) => ({
+                date: r.title || "",
+                content: (r.fullContent || r.content || "").trim(),
+                blockId: r.id,
+              }))
+              .filter((entry: any) => entry.content.length > 0);
+            
+            const rangeLabel = parsed.type === "year" 
+              ? `${parsed.value}年`
+              : (() => {
+                  const m = parsed.value.match(/^(\d{4})-(\d{2})$/);
+                  return m ? `${m[1]}年${parseInt(m[2])}月` : parsed.value;
+                })();
+            
+            const newData = { rangeLabel, entries: exportData };
+            journalExportCache.set(cacheId, newData);
+            setData(newData);
+          } catch (err) {
+            console.error("[JournalExportBlock] Failed to re-fetch:", err);
+          } finally {
+            setLoading(false);
+          }
+        })();
+      }
+      return;
     }
     
     // 尝试解析 JSON
     try {
-      console.log("[JournalExportBlock] Parsing JSON, length:", trimmed.length);
-      return JSON.parse(trimmed);
+      setData(JSON.parse(trimmed));
     } catch (err) {
       console.error("[JournalExportBlock] JSON parse error:", err);
-      console.error("[JournalExportBlock] Content preview:", trimmed.substring(0, 500));
-      return null;
     }
-  };
+  }, [content]);
 
   const handleExport = async () => {
+    if (!data) return;
     try {
       setExporting(true);
-      const data = getData();
-      if (!data) {
-        throw new Error("无法解析日记数据");
-      }
       const { exportJournalsAsFile } = await import("../services/export-service");
       exportJournalsAsFile(data.entries, data.rangeLabel);
     } catch (err) {
@@ -171,7 +223,6 @@ function JournalExportBlock({ content }: { content: string }) {
     }
   };
 
-  const data = getData();
   const entryCount = data?.entries?.length || 0;
   const rangeLabel = data?.rangeLabel || "";
 
@@ -199,32 +250,32 @@ function JournalExportBlock({ content }: { content: string }) {
           color: "var(--orca-color-text-2)",
         },
       },
-      createElement("i", { className: "ti ti-file-export", style: { fontSize: "20px" } }),
-      createElement("span", null, `${rangeLabel} - 共 ${entryCount} 篇日记`)
+      createElement("i", { className: loading ? "ti ti-loader" : "ti ti-file-export", style: { fontSize: "20px" } }),
+      createElement("span", null, loading ? "加载中..." : `${rangeLabel} - 共 ${entryCount} 篇日记`)
     ),
     createElement(
       "button",
       {
         onClick: handleExport,
-        disabled: exporting || entryCount === 0,
+        disabled: exporting || loading || entryCount === 0,
         style: {
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
           gap: "8px",
           padding: "10px 20px",
-          background: exporting || entryCount === 0 ? "var(--orca-color-bg-3)" : "#2563eb",
-          color: exporting || entryCount === 0 ? "var(--orca-color-text-3)" : "#ffffff",
+          background: exporting || loading || entryCount === 0 ? "var(--orca-color-bg-3)" : "#2563eb",
+          color: exporting || loading || entryCount === 0 ? "var(--orca-color-text-3)" : "#ffffff",
           border: "none",
           borderRadius: "6px",
-          cursor: exporting || entryCount === 0 ? "not-allowed" : "pointer",
+          cursor: exporting || loading || entryCount === 0 ? "not-allowed" : "pointer",
           fontSize: "14px",
           fontWeight: 500,
           transition: "all 0.2s",
         },
       },
       createElement("i", { className: exporting ? "ti ti-loader" : "ti ti-download" }),
-      exporting ? "导出中..." : entryCount === 0 ? "无数据可导出" : "导出为 Markdown 文件"
+      exporting ? "导出中..." : loading ? "加载中..." : entryCount === 0 ? "无数据可导出" : "导出为 Markdown 文件"
     ),
     createElement(
       "div",

@@ -676,6 +676,59 @@ export default function MessageItem({
         ))
       ),
 
+      // Block References (显示用户消息引用的块)
+      isUser && message.blockRefs && message.blockRefs.length > 0 && createElement(
+        "div",
+        {
+          style: {
+            display: "flex",
+            flexWrap: "wrap",
+            gap: "6px",
+            marginBottom: "8px",
+          },
+        },
+        ...message.blockRefs.map((blockRef, idx) => createElement(
+          "span",
+          {
+            key: `block-${idx}`,
+            style: {
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "4px",
+              fontSize: "12px",
+              color: "var(--orca-color-primary)",
+              background: "var(--orca-color-bg-3)",
+              padding: "4px 10px",
+              borderRadius: "6px",
+              border: "1px solid var(--orca-color-border)",
+              cursor: "pointer",
+              maxWidth: "200px",
+            },
+            onClick: (e: any) => {
+              e.preventDefault();
+              e.stopPropagation();
+              try {
+                orca.nav.openInLastPanel("block", { blockId: blockRef.blockId });
+              } catch (error) {
+                console.error("[MessageItem] Block navigation failed:", error);
+              }
+            },
+            title: `点击跳转: ${blockRef.title}`,
+          },
+          createElement("i", {
+            className: blockRef.hasMedia ? "ti ti-photo" : "ti ti-note",
+            style: { fontSize: "14px", flexShrink: 0 },
+          }),
+          createElement("span", {
+            style: {
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            },
+          }, blockRef.title)
+        ))
+      ),
+
       // Content
       createElement(MarkdownMessage, { content: message.content || "", role: message.role }),
 

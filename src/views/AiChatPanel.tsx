@@ -42,6 +42,7 @@ import {
   type SavedSession,
   type Message,
   type FileRef,
+  type BlockRef,
 } from "../services/session-service";
 import { exportSessionAsFile, saveSessionToJournal, saveMessagesToJournal } from "../services/export-service";
 import { sessionStore, updateSessionStore, clearSessionStore } from "../store/session-store";
@@ -503,8 +504,8 @@ export default function AiChatPanel({ panelId }: PanelProps) {
   // Chat Send Logic
   // ─────────────────────────────────────────────────────────────────────────
 
-  async function handleSend(content: string, files?: FileRef[], historyOverride?: Message[]) {
-    if ((!content && (!files || files.length === 0)) || sending) return;
+  async function handleSend(content: string, files?: FileRef[], blockRefs?: BlockRef[], historyOverride?: Message[]) {
+    if ((!content && (!files || files.length === 0) && (!blockRefs || blockRefs.length === 0)) || sending) return;
 
 	    const pluginName = getAiChatPluginName();
 	    const settings = getAiChatSettings(pluginName);
@@ -1017,6 +1018,7 @@ cache:${cacheId}
       content, 
       createdAt: Date.now(),
       files: files && files.length > 0 ? files : undefined,
+      blockRefs: blockRefs && blockRefs.length > 0 ? blockRefs : undefined,
       contextRefs: highPriorityContexts.length > 0 ? highPriorityContexts : undefined,
     };
 
@@ -1639,7 +1641,7 @@ cache:${cacheId}
         const content = lastUserMsg.content || "";
         const historyBeforeUser = messages.slice(0, lastUserIdx);
         // Resend using the history BEFORE the last user message, and re-using the last user content.
-        handleSend(content, lastUserMsg.files, historyBeforeUser);
+        handleSend(content, lastUserMsg.files, lastUserMsg.blockRefs, historyBeforeUser);
     }
   }, [messages, sending]);
 
@@ -2297,10 +2299,10 @@ cache:${cacheId}
     }),
     // Chat Input
     createElement(ChatInput, {
-      onSend: (text: string, files?: FileRef[], clearContext?: boolean) => {
+      onSend: (text: string, files?: FileRef[], blockRefs?: BlockRef[], clearContext?: boolean) => {
         // clearContext=true 时，传递空历史给 handleSend，但不清空显示的消息
         // 这样 AI 会把这条消息当作新对话的开始，但用户仍能看到之前的消息
-        handleSend(text, files, clearContext ? [] : undefined);
+        handleSend(text, files, blockRefs, clearContext ? [] : undefined);
       },
       onStop: stop,
       disabled: sending,

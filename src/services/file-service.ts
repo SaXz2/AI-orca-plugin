@@ -507,7 +507,9 @@ export async function fileToBase64(fileRef: FileRef): Promise<string | null> {
     }
 
     const response = await fetch(`file:///${fullPath.replace(/\\/g, "/")}`);
-    if (!response.ok) return null;
+    if (!response.ok) {
+      return null;
+    }
 
     const blob = await response.blob();
     
@@ -596,7 +598,10 @@ export async function buildFileContentsForApi(
   fileRef: FileRef
 ): Promise<Array<{ type: string; [key: string]: any }>> {
   const config = getFileTypeConfig(fileRef.name, fileRef.mimeType);
-  if (!config) return [];
+  if (!config) {
+    console.warn(`[file-service] Unknown file type: ${fileRef.name} (${fileRef.mimeType})`);
+    return [];
+  }
 
   // 视频类型 - 抽帧 + 音频识别
   if (config.category === "video" || isVideoFile(fileRef)) {

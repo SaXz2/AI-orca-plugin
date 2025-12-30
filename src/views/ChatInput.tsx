@@ -5,8 +5,8 @@
 
 import type { DbId } from "../orca.d.ts";
 import type { AiChatSettings, CurrencyType } from "../settings/ai-chat-settings";
-import type { FileRef, VideoProcessMode } from "../services/session-service";
-import { contextStore, addPageById, clearHighPriorityContexts } from "../store/context-store";
+import type { FileRef, VideoProcessMode, BlockRef } from "../services/session-service";
+import { contextStore, clearHighPriorityContexts } from "../store/context-store";
 import { estimateTokens, formatTokenCount, estimateCost, formatCost } from "../utils/token-utils";
 import {
   uploadFile,
@@ -15,13 +15,14 @@ import {
   getSupportedExtensions,
   isSupportedFile,
 } from "../services/file-service";
+import { extractBlockContent } from "../services/context-builder";
+import { safeText } from "../utils/text-utils";
 import ContextChips from "./ContextChips";
 import ContextPicker from "./ContextPicker";
 import { ModelSelectorButton, InjectionModeSelector, ModeSelectorButton } from "./chat-input";
 import { loadFromStorage } from "../store/chat-mode-store";
 import { textareaStyle, sendButtonStyle } from "./chat-input";
 import { MultiModelToggleButton } from "../components/MultiModelSelector";
-import { multiModelStore } from "../store/multi-model-store";
 
 const React = window.React as unknown as {
   createElement: typeof window.React.createElement;
@@ -51,7 +52,7 @@ const { useSnapshot } = (window as any).Valtio as {
 const { Button, CompositionTextArea } = orca.components;
 
 type Props = {
-  onSend: (message: string, files?: FileRef[], clearContext?: boolean) => void | Promise<void>;
+  onSend: (message: string, files?: FileRef[], blockRefs?: BlockRef[], clearContext?: boolean) => void | Promise<void>;
   onStop?: () => void;
   disabled?: boolean;
   currentPageId: DbId | null;
@@ -109,6 +110,7 @@ export default function ChatInput({
   const [slashMenuOpen, setSlashMenuOpen] = useState(false);
   const [slashMenuIndex, setSlashMenuIndex] = useState(0);
   const [pendingFiles, setPendingFiles] = useState<FileRef[]>([]);
+  const [pendingBlocks, setPendingBlocks] = useState<BlockRef[]>([]);
   const [isUploading, setIsUploading] = useState(false);
   const [clearContextPending, setClearContextPending] = useState(false);
   const [isSending, setIsSending] = useState(false);
@@ -163,18 +165,25 @@ export default function ChatInput({
     loadFromStorage();
   }, []);
 
-  const canSend = (text.trim().length > 0 || pendingFiles.length > 0) && !disabled && !isSending;
+  const canSend = (text.trim().length > 0 || pendingFiles.length > 0 || pendingBlocks.length > 0) && !disabled && !isSending;
 
   const handleSend = useCallback(async () => {
     const val = textareaRef.current?.value || text;
     const trimmed = val.trim();
-    if ((!trimmed && pendingFiles.length === 0) || disabled || isSending) return;
+    if ((!trimmed && pendingFiles.length === 0 && pendingBlocks.length === 0) || disabled || isSending) return;
 
     setIsSending(true);
     try {
-      await onSend(trimmed, pendingFiles.length > 0 ? pendingFiles : undefined, clearContextPending);
+      // 传递块引用，由 AiChatPanel 在发送给 AI 时提取内容
+      await onSend(
+        trimmed, 
+        pendingFiles.length > 0 ? pendingFiles : undefined, 
+        pendingBlocks.length > 0 ? pendingBlocks : undefined,
+        clearContextPending
+      );
       setText("");
       setPendingFiles([]);
+      setPendingBlocks([]);
       setClearContextPending(false);
       // 清除拖入的高优先级上下文（发送后自动移除）
       clearHighPriorityContexts();
@@ -184,7 +193,7 @@ export default function ChatInput({
     } finally {
       setIsSending(false);
     }
-  }, [disabled, onSend, text, pendingFiles, clearContextPending, isSending]);
+  }, [disabled, onSend, text, pendingFiles, pendingBlocks, clearContextPending, isSending]);
 
   // 处理清除上下文按钮点击
   const handleClearContextClick = useCallback(() => {
@@ -293,6 +302,11 @@ export default function ChatInput({
     setPendingFiles(prev => prev.filter((_, i) => i !== index));
   }, []);
 
+  // 移除待发送的块
+  const handleRemoveBlock = useCallback((index: number) => {
+    setPendingBlocks(prev => prev.filter((_, i) => i !== index));
+  }, []);
+
   // 设置视频处理模式
   const handleSetVideoMode = useCallback((index: number, mode: VideoProcessMode) => {
     setPendingFiles(prev => prev.map((file, i) => {
@@ -370,25 +384,35 @@ export default function ChatInput({
       }
     }
     
-    // 处理找到的块 - 添加为上下文而不是插入文本
+    // 处理找到的块 - 添加为待发送块预览
     if (blockIds.length > 0) {
-      let addedCount = 0;
+      const newBlocks: BlockRef[] = [];
       
       for (const blockId of blockIds) {
         if (blockId <= 0) continue;
+        // 检查是否已添加
+        if (pendingBlocks.some(b => b.blockId === blockId)) continue;
         
         try {
-          // 使用 addPageById 将块添加为高优先级上下文（priority=1）
-          // 高优先级上下文会排在普通上下文之前，但仍低于记忆和用户印象
-          const added = addPageById(blockId, 1);
-          if (added) addedCount++;
+          const block = (orca.state.blocks as any)?.[blockId];
+          const title = safeText(block) || `Block ${blockId}`;
+          // 检查块是否包含媒体（简单检查 _repr）
+          const hasMedia = block?.properties?.some((p: any) => 
+            p.name === "_repr" && p.value && ["image", "video", "audio"].includes(p.value.type)
+          );
+          
+          newBlocks.push({
+            blockId: blockId as DbId,
+            title: title.length > 50 ? title.slice(0, 47) + "..." : title,
+            hasMedia,
+          });
         } catch (err) {
-          console.warn("[ChatInput] Failed to add block as context:", blockId, err);
+          console.warn("[ChatInput] Failed to get block info:", blockId, err);
         }
       }
       
-      if (addedCount > 0) {
-        // 聚焦输入框
+      if (newBlocks.length > 0) {
+        setPendingBlocks(prev => [...prev, ...newBlocks]);
         textareaRef.current?.focus();
         return;
       }
@@ -747,6 +771,83 @@ export default function ChatInput({
           createElement("i", { className: "ti ti-loader", style: { animation: "spin 1s linear infinite" } })
         )
       ),
+
+      // 块预览区域
+      pendingBlocks.length > 0 &&
+        createElement(
+          "div",
+          {
+            style: {
+              display: "flex",
+              flexWrap: "wrap",
+              gap: "8px",
+              marginBottom: "8px",
+            },
+          },
+          ...pendingBlocks.map((blockRef, index) =>
+            createElement(
+              "div",
+              {
+                key: `block-${blockRef.blockId}-${index}`,
+                style: {
+                  position: "relative",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "6px",
+                  padding: "6px 10px",
+                  paddingRight: "28px",
+                  borderRadius: "8px",
+                  border: "1px solid var(--orca-color-border)",
+                  background: "var(--orca-color-bg-3)",
+                  maxWidth: "200px",
+                },
+                title: blockRef.title,
+              },
+              createElement("i", {
+                className: blockRef.hasMedia ? "ti ti-photo" : "ti ti-note",
+                style: { fontSize: "14px", color: "var(--orca-color-primary)", flexShrink: 0 },
+              }),
+              createElement(
+                "span",
+                {
+                  style: {
+                    fontSize: "12px",
+                    color: "var(--orca-color-text-1)",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  },
+                },
+                blockRef.title
+              ),
+              createElement(
+                "button",
+                {
+                  onClick: () => handleRemoveBlock(index),
+                  style: {
+                    position: "absolute",
+                    top: "50%",
+                    right: "4px",
+                    transform: "translateY(-50%)",
+                    width: "18px",
+                    height: "18px",
+                    borderRadius: "50%",
+                    background: "var(--orca-color-bg-1)",
+                    color: "var(--orca-color-text-3)",
+                    border: "1px solid var(--orca-color-border)",
+                    cursor: "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    fontSize: "10px",
+                  },
+                  title: "移除块",
+                },
+                createElement("i", { className: "ti ti-x" })
+              )
+            )
+          )
+        ),
 
       // 清除上下文提示标签
       clearContextPending && createElement(
