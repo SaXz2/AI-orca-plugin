@@ -1,7 +1,6 @@
 import { getAiChatPluginName } from "../ui/ai-chat-ui";
 import { getAiChatSettings } from "../settings/ai-chat-settings";
 import type { ContextRef } from "../store/context-store";
-import type { DbId } from "../orca.d.ts";
 
 /**
  * Image reference for messages (stores path, not base64)
@@ -33,15 +32,6 @@ export type FileRef = {
 };
 
 /**
- * Block reference for dragged blocks (stores blockId, content extracted on send)
- */
-export type BlockRef = {
-  blockId: DbId;
-  title: string; // 块标题（用于预览显示）
-  hasMedia?: boolean; // 是否包含图片/视频等媒体
-};
-
-/**
  * Message type (same as AiChatPanel)
  */
 export type Message = {
@@ -52,7 +42,6 @@ export type Message = {
   localOnly?: boolean;
   images?: ImageRef[]; // 图片引用（存路径）- 兼容旧版
   files?: FileRef[]; // 文件引用（存路径）- 新版，支持多种文件类型
-  blockRefs?: BlockRef[]; // 块引用（拖入的块，发送时提取内容）
   reasoning?: string; // AI 推理过程（DeepSeek/Claude thinking）
   model?: string; // 使用的模型（用于计费）
   contextRefs?: Array<{ title: string; kind: string; blockId?: number }>; // 消息关联的上下文引用（用于显示和跳转）

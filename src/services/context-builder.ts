@@ -369,61 +369,6 @@ async function buildResolverFromTree(
 }
 
 /**
- * Extract content from a single block for direct input (not as context)
- * Returns text content and any assets (images, videos, etc.)
- */
-export async function extractBlockContent(
-  blockId: DbId,
-  opts?: { maxBlocks?: number; maxDepth?: number; maxAssets?: number }
-): Promise<{ text: string; assets: FileRef[] }> {
-  const options = {
-    maxBlocks: opts?.maxBlocks ?? 50,
-    maxChars: 30000,
-    maxDepth: opts?.maxDepth ?? 5,
-    maxTagRoots: 10,
-    maxAssets: opts?.maxAssets ?? 10,
-  };
-
-  try {
-    const tree = await getBlockTree(blockId);
-    const resolveById = await buildResolverFromTree(tree, options);
-    
-    // 使用 resolveById 获取完整的块数据（包含 properties）
-    const block = resolveById(blockId) || (orca.state.blocks as any)?.[blockId];
-    
-    const lines: string[] = [];
-    const state = { blocks: 0, depth: 0, hitLimit: false, assets: [] as BlockAssetInfo[] };
-    
-    // Process root block
-    const rootAsset = extractAssetFromBlock(block);
-    if (rootAsset) {
-      state.assets.push(rootAsset);
-    } else {
-      const rootText = safeTextFromBlockLike(block);
-      if (rootText) lines.push(rootText);
-    }
-    state.blocks = 1;
-    
-    // Process children
-    const children = treeChildren(tree);
-    for (const child of children) {
-      if (state.blocks >= options.maxBlocks) break;
-      blockTreeToLines(child, options, state, lines, resolveById);
-    }
-    
-    const assets = state.assets.slice(0, options.maxAssets).map(assetToFileRef);
-    
-    return {
-      text: lines.join("\n"),
-      assets,
-    };
-  } catch (err) {
-    console.error("[context-builder] Failed to extract block content:", err);
-    return { text: "", assets: [] };
-  }
-}
-
-/**
  * Build context text for sending to AI
  * Only supports page and tag types
  * Returns both text and extracted assets (images, videos, etc.)
@@ -450,7 +395,8 @@ export async function buildContextForSend(
           ctx.title ??
           safeTextFromBlockLike((orca.state.blocks as any)?.[ctx.rootBlockId]) ??
           `Page ${ctx.rootBlockId}`;
-        sections.push(`## Page: ${title}`);
+        // 包含块 ID，让 AI 知道这是精确的块引用，无需再搜索
+        sections.push(`## Page: ${title} (blockId: ${ctx.rootBlockId})`);
 
         const tree = await getBlockTree(ctx.rootBlockId);
         const resolveById = await buildResolverFromTree(tree, options);

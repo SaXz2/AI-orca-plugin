@@ -11,7 +11,6 @@ import type { ChatMode } from "../store/chat-mode-store";
 import { buildImageContent } from "./image-service";
 import { buildFileContentsForApi } from "./file-service";
 import { extractOrcaImagesFromText, hasOrcaImageLinks } from "../utils/orca-image-extractor";
-import { extractBlockContent } from "./context-builder";
 
 export interface MessageBuildParams {
   messages: Message[];
@@ -53,16 +52,14 @@ export interface ToolResultParams extends MessageBuildParams {
 import { getOrCreateSummary } from "./compression-service";
 
 /**
- * 提取不压缩的消息（pinned、noCompress 标记，或带有图片/文件的消息）
+ * 提取不压缩的消息（pinned 或 noCompress 标记）
  */
 function extractPinnedMessages(messages: Message[]): { pinned: Message[]; rest: Message[] } {
   const pinned: Message[] = [];
   const rest: Message[] = [];
   
   for (const m of messages) {
-    // 带图片或文件的消息不压缩（图片信息会丢失）
-    const hasMedia = (m.images && m.images.length > 0) || (m.files && m.files.length > 0);
-    if ((m as any).pinned || (m as any).noCompress || hasMedia) {
+    if ((m as any).pinned || (m as any).noCompress) {
       pinned.push(m);
     } else {
       rest.push(m);
@@ -191,57 +188,54 @@ function messageToApi(m: Message): OpenAIChatMessage {
  * 支持的图片来源：
  * 1. m.images - 直接附加的图片（legacy）
  * 2. m.files - 文件附件（包括图片、视频等）
- * 3. m.blockRefs - 块引用（提取内容和资源）
- * 4. Orca 图片链接 - [!image(...)](orca-block:xxx) 格式
+ * 3. Orca 图片链接 - [!image(...)](orca-block:xxx) 格式
  */
 async function messageToApiWithImages(m: Message): Promise<OpenAIChatMessage> {
-  // 收集所有内容部分
-  const contentParts: any[] = [];
-  let hasMultimodal = false;
-
-  // Add text content if present
-  if (m.content) {
-    contentParts.push({ type: "text", text: m.content });
-  }
-
   // Handle messages with images (multimodal) - legacy support
   if (m.images && m.images.length > 0 && m.role === "user") {
+    const contentParts: any[] = [];
+    
+    // Add text content if present
+    if (m.content) {
+      contentParts.push({ type: "text", text: m.content });
+    }
+    
+    // Add image content
     for (const img of m.images) {
       const imageContent = await buildImageContent(img);
       if (imageContent) {
         contentParts.push(imageContent);
-        hasMultimodal = true;
       }
+    }
+    
+    if (contentParts.length > 0) {
+      return {
+        role: "user",
+        content: contentParts as any,
+      };
     }
   }
 
   // Handle messages with files (new format - supports all file types including video)
   if (m.files && m.files.length > 0 && m.role === "user") {
+    const contentParts: any[] = [];
+
+    // Add text content if present
+    if (m.content) {
+      contentParts.push({ type: "text", text: m.content });
+    }
+
+    // Add file content (may return multiple items for video)
     for (const file of m.files) {
       const fileContents = await buildFileContentsForApi(file);
       contentParts.push(...fileContents);
-      if (fileContents.length > 0) hasMultimodal = true;
     }
-  }
 
-  // Handle block references - extract content and assets
-  if (m.blockRefs && m.blockRefs.length > 0 && m.role === "user") {
-    for (const blockRef of m.blockRefs) {
-      try {
-        const { text, assets } = await extractBlockContent(blockRef.blockId);
-        // Add block text content
-        if (text) {
-          contentParts.push({ type: "text", text: `[引用块: ${blockRef.title}]\n${text}` });
-        }
-        // Add block assets (images, videos, etc.)
-        for (const asset of assets) {
-          const assetContents = await buildFileContentsForApi(asset);
-          contentParts.push(...assetContents);
-          if (assetContents.length > 0) hasMultimodal = true;
-        }
-      } catch (err) {
-        console.error("[message-builder] Failed to extract block content:", blockRef.blockId, err);
-      }
+    if (contentParts.length > 0) {
+      return {
+        role: "user",
+        content: contentParts as any,
+      };
     }
   }
 
@@ -251,12 +245,11 @@ async function messageToApiWithImages(m: Message): Promise<OpenAIChatMessage> {
       const { images, cleanedText } = await extractOrcaImagesFromText(m.content);
       
       if (images.length > 0) {
-        // Replace text content with cleaned text
-        const textIndex = contentParts.findIndex(p => p.type === "text" && p.text === m.content);
-        if (textIndex >= 0 && cleanedText.trim()) {
-          contentParts[textIndex] = { type: "text", text: cleanedText };
-        } else if (textIndex >= 0 && !cleanedText.trim()) {
-          contentParts.splice(textIndex, 1);
+        const contentParts: any[] = [];
+        
+        // Add cleaned text content
+        if (cleanedText.trim()) {
+          contentParts.push({ type: "text", text: cleanedText });
         }
         
         // Add extracted images
@@ -268,28 +261,24 @@ async function messageToApiWithImages(m: Message): Promise<OpenAIChatMessage> {
                 url: `data:${img.mimeType};base64,${img.base64}`,
               },
             });
-            hasMultimodal = true;
           }
+        }
+        
+        if (contentParts.length > 0) {
+          console.log(`[message-builder] Extracted ${images.length} Orca images from message`);
+          return {
+            role: "user",
+            content: contentParts as any,
+          };
         }
       }
     } catch (error) {
       console.error("[message-builder] Failed to extract Orca images:", error);
+      // Fall through to standard text message
     }
   }
 
-  // Return multimodal message if we have images/files/blocks
-  if (hasMultimodal && m.role === "user" && contentParts.length > 0) {
-    return {
-      role: "user",
-      content: contentParts as any,
-    };
-  }
-
   // Standard text message
-  return messageToApi(m);
-}
-
-/**  // Standard text message
   return messageToApi(m);
 }
 
@@ -305,7 +294,10 @@ function buildSystemContent(
   const parts: string[] = [];
   if (systemPrompt?.trim()) parts.push(systemPrompt.trim());
   if (customMemory?.trim()) parts.push(`用户信息:\n${customMemory.trim()}`);
-  if (contextText?.trim()) parts.push(`Context:\n${contextText.trim()}`);
+  if (contextText?.trim()) {
+    // 添加明确提示：上下文中的块已经是精确引用，无需再搜索
+    parts.push(`用户提供的上下文（已包含完整内容和块ID，请直接使用，无需调用搜索工具查找这些内容）:\n${contextText.trim()}`);
+  }
   
   // Append Ask mode instruction when in Ask mode
   if (chatMode === 'ask') {
@@ -331,7 +323,9 @@ export async function buildConversationMessages(params: ConversationBuildParams)
   let filteredMessages = messages.filter((m) => !m.localOnly);
   
   // 使用 AI 生成摘要压缩旧消息（仅当启用压缩且有 sessionId 和 apiConfig 时）
+  console.log(`[message-builder] Compression check: enableCompression=${enableCompression}, compressAfterMessages=${compressAfterMessages}, sessionId=${sessionId}, hasApiConfig=${!!apiConfig}, filteredMessages=${filteredMessages.length}`);
   if (enableCompression && compressAfterMessages && compressAfterMessages > 0 && sessionId && apiConfig) {
+    console.log(`[message-builder] Entering compression path...`);
     try {
       const { summary, recentMessages } = await getOrCreateSummary(
         sessionId,
@@ -351,6 +345,7 @@ export async function buildConversationMessages(params: ConversationBuildParams)
         
         // 只保留 pinned 消息和最近消息
         filteredMessages = [...pinned, ...recentMessages];
+        console.log(`[message-builder] Using AI summary, keeping ${filteredMessages.length} messages`);
       }
     } catch (error) {
       console.error("[message-builder] Compression failed, using all messages:", error);
@@ -359,7 +354,11 @@ export async function buildConversationMessages(params: ConversationBuildParams)
   
   // 硬限制历史消息数量（如果设置了）
   if (maxHistoryMessages && maxHistoryMessages > 0) {
+    const originalCount = filteredMessages.length;
     filteredMessages = limitHistoryMessages(filteredMessages, maxHistoryMessages);
+    if (filteredMessages.length < originalCount) {
+      console.log(`[message-builder] Limited history from ${originalCount} to ${filteredMessages.length} messages`);
+    }
   }
   
   // 收集所有有效的 tool_call_id（来自 assistant 消息的 tool_calls）
@@ -385,6 +384,7 @@ export async function buildConversationMessages(params: ConversationBuildParams)
       const hasToolCalls = m.tool_calls && m.tool_calls.length > 0;
       // API 要求：必须有 content 或 tool_calls（reasoning 不算）
       if (!hasContent && !hasToolCalls) {
+        console.log("[message-builder] Filtering out invalid assistant message (no content/tool_calls):", m.id);
         return false;
       }
     }
@@ -410,10 +410,8 @@ export async function buildConversationMessages(params: ConversationBuildParams)
     ...filteredHistory,
   ];
 
-  // Build fallback format (async, with images support)
-  // 注意：fallback 格式也需要支持图片，否则重试时图片会丢失
-  const fallbackHistory = await Promise.all(validMessages.map(messageToApiWithImages));
-  
+  // Build fallback format (sync, no images)
+  const fallbackHistory = validMessages.map(messageToApi);
   const fallback: OpenAIChatMessage[] = [
     ...(systemContent ? [{ role: "system" as const, content: systemContent }] : []),
     ...fallbackHistory.flatMap((m) => {
@@ -422,7 +420,7 @@ export async function buildConversationMessages(params: ConversationBuildParams)
         return [
           {
             role: "user" as const,
-            content: `Tool Result [${toolName}]:\n${typeof m.content === 'string' ? m.content : JSON.stringify(m.content) ?? ""}`,
+            content: `Tool Result [${toolName}]:\n${m.content ?? ""}`,
           },
         ];
       }
@@ -440,7 +438,7 @@ export async function buildConversationMessages(params: ConversationBuildParams)
         return [rest as OpenAIChatMessage];
       }
 
-      // user/system messages (保留图片内容)
+      // user/system messages
       return [m];
     }),
   ];
