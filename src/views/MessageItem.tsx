@@ -40,6 +40,8 @@ const React = window.React as unknown as {
 };
 const { createElement, useState, useCallback, useMemo, useEffect, Fragment } = React;
 
+const { ContextMenu, Menu, MenuText } = orca.components;
+
 // 格式化消息时间
 function formatMessageTime(timestamp: number): string {
   const date = new Date(timestamp);
@@ -453,6 +455,25 @@ export default function MessageItem({
     }
   }, [message.content]);
 
+  // 复制选中的文本
+  const handleCopySelection = useCallback(() => {
+    const selection = window.getSelection();
+    const selectedText = selection?.toString();
+    if (selectedText) {
+      navigator.clipboard.writeText(selectedText).then(() => {
+        if (typeof orca !== "undefined" && orca.notify) {
+          orca.notify("success", "已复制选中内容");
+        }
+      });
+    }
+  }, []);
+
+  // 检查是否有选中的文本
+  const hasSelection = useCallback(() => {
+    const selection = window.getSelection();
+    return selection && selection.toString().length > 0;
+  }, []);
+
   // Check if any tool calls are still loading
   const toolCallsLoading = useMemo(() => {
     if (!message.tool_calls || !toolResults) return true;
@@ -503,10 +524,37 @@ export default function MessageItem({
       })
     ),
     createElement(
-      "div",
+      ContextMenu as any,
       {
-        style: messageBubbleStyle(message.role),
+        menu: (close: () => void) => createElement(
+          Menu as any,
+          null,
+          // 复制选中内容（仅当有选中时显示）
+          hasSelection() && createElement(MenuText as any, {
+            preIcon: "ti ti-copy",
+            title: "复制选中内容",
+            onClick: () => {
+              handleCopySelection();
+              close();
+            },
+          }),
+          // 复制全部内容
+          message.content && createElement(MenuText as any, {
+            preIcon: "ti ti-clipboard",
+            title: "复制全部内容",
+            onClick: () => {
+              handleCopy();
+              close();
+            },
+          })
+        ),
       },
+      (open: (e: any) => void) => createElement(
+        "div",
+        {
+          style: messageBubbleStyle(message.role),
+          onContextMenu: open,
+        },
       // 文件显示（图片和其他文件）
       message.files &&
         message.files.length > 0 &&
@@ -952,6 +1000,7 @@ export default function MessageItem({
             createElement("i", { className: "ti ti-refresh" })
           )
       )
+    )
     )
   );
 }

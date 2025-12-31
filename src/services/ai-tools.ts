@@ -1563,7 +1563,8 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
       }
     } else if (toolName === "createBlock") {
       try {
-        let refBlockIdRaw = args.refBlockId ?? args.ref_block_id ?? args.blockId ?? args.block_id;
+        // 兼容多种参数名格式
+        let refBlockIdRaw = args.refBlockId ?? args.ref_block_id ?? args.referenceBlockId ?? args.reference_block_id ?? args.blockId ?? args.block_id;
 
         if (typeof refBlockIdRaw === "string") {
           const match = refBlockIdRaw.match(/^orca-block:(\d+)$/);

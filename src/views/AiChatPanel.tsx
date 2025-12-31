@@ -283,6 +283,41 @@ export default function AiChatPanel({ panelId }: PanelProps) {
   }, [scrollToBottom]);
 
   // ─────────────────────────────────────────────────────────────────────────
+  // Panel Metadata for orca-tabs-plugin compatibility
+  // ─────────────────────────────────────────────────────────────────────────
+
+  useEffect(() => {
+    // Set panel metadata attributes for orca-tabs-plugin to detect this view panel
+    // 使用延迟确保 DOM 已经完全渲染
+    const setMetadata = () => {
+      const panelElement = document.querySelector(
+        `.orca-panel[data-panel-id="${panelId}"]`
+      );
+      
+      if (panelElement) {
+        console.log('[AiChatPanel] Setting panel metadata for panelId:', panelId);
+        panelElement.setAttribute('data-panel-title', 'AI Chat');
+        panelElement.setAttribute('data-panel-icon', '🤖');
+        panelElement.setAttribute('data-panel-type', 'view');
+        console.log('[AiChatPanel] Panel metadata set successfully');
+      } else {
+        console.warn('[AiChatPanel] Could not find panel element for panelId:', panelId);
+        // 列出所有面板元素帮助调试
+        const allPanels = document.querySelectorAll('.orca-panel');
+        console.log('[AiChatPanel] Available panels:', Array.from(allPanels).map(p => p.getAttribute('data-panel-id')));
+      }
+    };
+
+    // 立即尝试设置
+    setMetadata();
+    
+    // 延迟再次尝试，确保 DOM 完全就绪
+    const timeoutId = setTimeout(setMetadata, 100);
+    
+    return () => clearTimeout(timeoutId);
+  }, [panelId]);
+
+  // ─────────────────────────────────────────────────────────────────────────
   // Session Management
   // ─────────────────────────────────────────────────────────────────────────
 
@@ -321,9 +356,17 @@ export default function AiChatPanel({ panelId }: PanelProps) {
             }
           }
           // 恢复滚动位置
-          queueMicrotask(() => {
-            restoreScrollPosition(listRef.current, active.scrollPosition);
-          });
+          // 使用 setTimeout 确保 DOM 渲染完成后再滚动
+          setTimeout(() => {
+            if (listRef.current) {
+              if (active.scrollPosition !== undefined && active.scrollPosition > 0) {
+                listRef.current.scrollTop = active.scrollPosition;
+              } else {
+                // 没有保存位置或位置为0，滚动到底部显示最新消息
+                listRef.current.scrollTop = listRef.current.scrollHeight;
+              }
+            }
+          }, 50);
         }
       }
       setSessionsLoaded(true);
@@ -409,9 +452,18 @@ export default function AiChatPanel({ panelId }: PanelProps) {
     }
 
     // 恢复目标会话的滚动位置
-    queueMicrotask(() => {
-      restoreScrollPosition(listRef.current, session.scrollPosition);
-    });
+    // 使用 setTimeout 确保 DOM 渲染完成后再滚动
+    // 如果没有保存的滚动位置，默认滚动到底部显示最新消息
+    setTimeout(() => {
+      if (listRef.current) {
+        if (session.scrollPosition !== undefined && session.scrollPosition > 0) {
+          listRef.current.scrollTop = session.scrollPosition;
+        } else {
+          // 没有保存位置或位置为0，滚动到底部
+          listRef.current.scrollTop = listRef.current.scrollHeight;
+        }
+      }
+    }, 50);
   }, [sessions, currentSession.id]);
 
   const handleDeleteSession = useCallback(async (sessionId: string) => {
