@@ -13,6 +13,22 @@ export const chatAnimations = `
     0%, 80%, 100% { transform: scale(0); opacity: 0.3; }
     40% { transform: scale(1); opacity: 1; }
 }
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Typing Indicator Animation (Bouncing Dots)
+   Three dots with sequential bouncing pattern, 200ms delay between dots
+   **Feature: chat-ui-enhancement**
+   **Validates: Requirements 2.1, 2.2**
+   ─────────────────────────────────────────────────────────────────────────── */
+
+@keyframes typingBounce {
+    0%, 60%, 100% {
+        transform: translateY(0);
+    }
+    30% {
+        transform: translateY(-8px);
+    }
+}
 @keyframes messageSlideIn {
     from {
         opacity: 0;
@@ -22,6 +38,86 @@ export const chatAnimations = `
         opacity: 1;
         transform: translateY(0);
     }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Message Entrance Animation (Enhanced)
+   Fade-in + slide-up effect for message bubbles
+   **Feature: chat-ui-enhancement**
+   **Validates: Requirements 1.3**
+   ─────────────────────────────────────────────────────────────────────────── */
+
+@keyframes messageFadeSlideIn {
+    from {
+        opacity: 0;
+        transform: translateY(12px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Empty State Staggered Fade-In Animation
+   Staggered entrance effect for empty state content
+   **Feature: chat-ui-enhancement**
+   **Validates: Requirements 3.3**
+   ─────────────────────────────────────────────────────────────────────────── */
+
+@keyframes emptyStateFadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(16px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* Staggered animation classes for empty state elements */
+.empty-state-stagger-1 {
+    animation: emptyStateFadeIn 0.4s ease-out forwards;
+    animation-delay: 0ms;
+    opacity: 0;
+}
+
+.empty-state-stagger-2 {
+    animation: emptyStateFadeIn 0.4s ease-out forwards;
+    animation-delay: 100ms;
+    opacity: 0;
+}
+
+.empty-state-stagger-3 {
+    animation: emptyStateFadeIn 0.4s ease-out forwards;
+    animation-delay: 200ms;
+    opacity: 0;
+}
+
+/* Suggestion card staggered animations */
+.suggestion-card-stagger-0 {
+    animation: emptyStateFadeIn 0.4s ease-out forwards;
+    animation-delay: 200ms;
+    opacity: 0;
+}
+
+.suggestion-card-stagger-1 {
+    animation: emptyStateFadeIn 0.4s ease-out forwards;
+    animation-delay: 280ms;
+    opacity: 0;
+}
+
+.suggestion-card-stagger-2 {
+    animation: emptyStateFadeIn 0.4s ease-out forwards;
+    animation-delay: 360ms;
+    opacity: 0;
+}
+
+.suggestion-card-stagger-3 {
+    animation: emptyStateFadeIn 0.4s ease-out forwards;
+    animation-delay: 440ms;
+    opacity: 0;
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -70,6 +166,22 @@ export const chatAnimations = `
     0% { opacity: 0.6; }
     50% { opacity: 1; }
     100% { opacity: 0.6; }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Skeleton Loading Animation
+   Shimmer effect for skeleton placeholders
+   **Feature: chat-ui-enhancement**
+   **Validates: Requirements 11.1**
+   ─────────────────────────────────────────────────────────────────────────── */
+
+@keyframes skeletonShimmer {
+    0% {
+        background-position: -200% 0;
+    }
+    100% {
+        background-position: 200% 0;
+    }
 }
 
 /* Spin Animation for Loading States */

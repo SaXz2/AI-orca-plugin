@@ -9,14 +9,18 @@ import { getMode } from "../store/chat-mode-store";
 import { findViewPanelById } from "../utils/panel-tree";
 import { generateSuggestedReplies } from "../services/suggestion-service";
 import { estimateTokens, formatTokenCount } from "../utils/token-utils";
+import { isSameDay, formatDateSeparator, getTimeGreeting } from "../utils/chat-ui-utils";
 import ChatInput from "./ChatInput";
 import MarkdownMessage from "../components/MarkdownMessage";
 import MessageItem from "./MessageItem";
+import DateSeparator from "../components/DateSeparator";
+import ScrollToBottomButton from "../components/ScrollToBottomButton";
+import ErrorMessage from "../components/ErrorMessage";
 import ChatHistoryMenu from "./ChatHistoryMenu";
 import HeaderMenu from "./HeaderMenu";
 import CompressionSettingsModal from "./CompressionSettingsModal";
 import EmptyState from "./EmptyState";
-import LoadingDots from "../components/LoadingDots";
+import TypingIndicator from "../components/TypingIndicator";
 import MemoryManager from "./MemoryManager";
 import ChatNavigation from "../components/ChatNavigation";
 import FlashcardReview, { type Flashcard } from "../components/FlashcardReview";
@@ -237,6 +241,14 @@ export default function AiChatPanel({ panelId }: PanelProps) {
   const [sending, setSending] = useState(false);
   const [streamingMessageId, setStreamingMessageId] = useState<string | null>(null);
 
+  // Network error state for retry functionality
+  // **Feature: chat-ui-enhancement**
+  // **Validates: Requirements 11.3**
+  const [lastError, setLastError] = useState<{
+    message: string;
+    retryData?: { content: string; files?: any[]; historyOverride?: Message[] };
+  } | null>(null);
+
   // Session management state
   const [currentSession, setCurrentSession] = useState<SavedSession>(() => {
     const pluginName = getAiChatPluginName();
@@ -269,6 +281,11 @@ export default function AiChatPanel({ panelId }: PanelProps) {
   // Message selection mode state (for batch save)
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedMessageIds, setSelectedMessageIds] = useState<Set<string>>(new Set());
+
+  // Scroll to bottom button state
+  // **Feature: chat-ui-enhancement**
+  // **Validates: Requirements 4.2, 4.3**
+  const [showScrollToBottom, setShowScrollToBottom] = useState(false);
 
   const listRef = useRef<HTMLDivElement | null>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -385,7 +402,7 @@ export default function AiChatPanel({ panelId }: PanelProps) {
       {
         id: nowId(),
         role: "assistant",
-        content: "新对话已开始，有什么可以帮你的吗？",
+        content: `${getTimeGreeting()}，新对话已开始，有什么可以帮你的吗？`,
         createdAt: Date.now(),
         localOnly: true,
       },
@@ -564,6 +581,31 @@ export default function AiChatPanel({ panelId }: PanelProps) {
   }, []);
   useEffect(() => () => { clearSessionStore(); }, []);
   useEffect(() => () => { if (abortRef.current) abortRef.current.abort(); }, []);
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Scroll to Bottom Button Detection
+  // **Feature: chat-ui-enhancement**
+  // **Validates: Requirements 4.2, 4.3**
+  // ─────────────────────────────────────────────────────────────────────────
+
+  useEffect(() => {
+    const listEl = listRef.current;
+    if (!listEl) return;
+
+    const handleScroll = () => {
+      // Show button when user scrolls up more than 200px from bottom
+      const distanceFromBottom = listEl.scrollHeight - listEl.scrollTop - listEl.clientHeight;
+      setShowScrollToBottom(distanceFromBottom > 200);
+    };
+
+    listEl.addEventListener("scroll", handleScroll, { passive: true });
+    return () => listEl.removeEventListener("scroll", handleScroll);
+  }, []);
+
+  const handleScrollToBottom = useCallback(() => {
+    smoothScrollToBottom(listRef.current);
+    setShowScrollToBottom(false);
+  }, []);
 
   // ─────────────────────────────────────────────────────────────────────────
   // Memory Manager View Switching
@@ -1632,10 +1674,23 @@ export default function AiChatPanel({ panelId }: PanelProps) {
           break;
         }
       }
+      // Clear error state on successful completion
+      // **Feature: chat-ui-enhancement**
+      // **Validates: Requirements 11.3**
+      setLastError(null);
     } catch (err: any) {
       const isAbort = String(err?.name ?? "") === "AbortError";
       const msg = String(err?.message ?? err ?? "unknown error");
-      if (!isAbort) orca.notify("error", msg);
+      if (!isAbort) {
+        orca.notify("error", msg);
+        // Save error state for retry functionality
+        // **Feature: chat-ui-enhancement**
+        // **Validates: Requirements 11.3**
+        setLastError({
+          message: msg,
+          retryData: { content, files, historyOverride },
+        });
+      }
 
       setMessages((prev) => {
         const lastIdx = prev.findIndex((m, i) => m.role === "assistant" && i === prev.length - 1);
@@ -1675,10 +1730,35 @@ export default function AiChatPanel({ panelId }: PanelProps) {
     }
   }, [messages, sending]);
 
+  /**
+   * Retry the last failed request
+   * **Feature: chat-ui-enhancement**
+   * **Validates: Requirements 11.3**
+   */
+  const handleRetry = useCallback(() => {
+    if (sending || !lastError?.retryData) return;
+    
+    const { content, files, historyOverride } = lastError.retryData;
+    // Clear error before retrying
+    setLastError(null);
+    // Remove the last error message from the messages list
+    setMessages((prev) => {
+      // Find and remove the last assistant message that contains error
+      const lastAssistantIdx = prev.findLastIndex((m) => m.role === "assistant");
+      if (lastAssistantIdx >= 0 && prev[lastAssistantIdx].content?.includes("(error)")) {
+        return prev.slice(0, lastAssistantIdx);
+      }
+      return prev;
+    });
+    // Retry the request
+    handleSend(content, files, historyOverride);
+  }, [sending, lastError]);
+
 
   function clear() {
     if (abortRef.current) abortRef.current.abort();
     setMessages([]);
+    setLastError(null);
   }
 
   function stop() {
@@ -1979,6 +2059,24 @@ export default function AiChatPanel({ panelId }: PanelProps) {
       // 跳过 tool 消息，它们会被合并到 assistant 消息的工具调用区域
       if (m.role === "tool") return;
 
+      // 添加日期分隔符（如果是新的一天）
+      // **Feature: chat-ui-enhancement**
+      // **Validates: Requirements 4.1**
+      const currentDate = new Date(m.createdAt);
+      const prevNonToolMessage = messages.slice(0, i).reverse().find(pm => pm.role !== "tool");
+      const prevDate = prevNonToolMessage ? new Date(prevNonToolMessage.createdAt) : null;
+      
+      // 如果是第一条消息或者与前一条消息不是同一天，添加日期分隔符
+      if (!prevDate || !isSameDay(currentDate, prevDate)) {
+        messageElements.push(
+          createElement(DateSeparator, {
+            key: `date-sep-${m.id}`,
+            date: currentDate,
+            label: formatDateSeparator(currentDate),
+          })
+        );
+      }
+
       // Determine if this is the last message that should offer regeneration (Last AI message)
       const isLastAi = m.role === "assistant" && i === messages.length - 1;
 
@@ -2060,7 +2158,7 @@ export default function AiChatPanel({ panelId }: PanelProps) {
                   },
                 },
                 "AI 正在思考",
-                createElement(LoadingDots)
+                createElement(TypingIndicator)
               )
             )
           )
@@ -2069,6 +2167,31 @@ export default function AiChatPanel({ panelId }: PanelProps) {
     }
 
     messageListContent = messageElements;
+
+    // Show error message with retry button if there's a network error
+    // **Feature: chat-ui-enhancement**
+    // **Validates: Requirements 11.3**
+    if (lastError && !sending) {
+      messageElements.push(
+        createElement(
+          "div",
+          {
+            key: "error-message",
+            style: {
+              width: "100%",
+              display: "flex",
+              justifyContent: "flex-start",
+              marginBottom: "12px",
+            },
+          },
+          createElement(ErrorMessage, {
+            message: lastError.message,
+            onRetry: handleRetry,
+            isRetrying: sending,
+          })
+        )
+      );
+    }
 
     // 如果在闪卡模式，在消息列表末尾添加闪卡组件
     if (flashcardMode && pendingFlashcards.length > 0) {
@@ -2367,14 +2490,27 @@ export default function AiChatPanel({ panelId }: PanelProps) {
       // Close Button
       createElement(Button, { variant: "plain", onClick: () => closeAiChatPanel(panelId), title: "Close" }, createElement("i", { className: "ti ti-x" }))
     ),
-    // Message List or Empty State
+    // Message List or Empty State (wrapped in relative container for ScrollToBottomButton)
     createElement(
       "div",
       {
-        ref: listRef as any,
-        style: messageListStyle,
+        style: { position: "relative", flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" },
       },
-      ...(Array.isArray(messageListContent) ? messageListContent : [messageListContent])
+      createElement(
+        "div",
+        {
+          ref: listRef as any,
+          style: messageListStyle,
+        },
+        ...(Array.isArray(messageListContent) ? messageListContent : [messageListContent])
+      ),
+      // Scroll to Bottom Button
+      // **Feature: chat-ui-enhancement**
+      // **Validates: Requirements 4.2, 4.3**
+      createElement(ScrollToBottomButton, {
+        visible: showScrollToBottom && messages.length > 0,
+        onClick: handleScrollToBottom,
+      })
     ),
     // Chat Navigation (floating button)
     createElement(ChatNavigation, {
