@@ -2547,7 +2547,7 @@ export default function AiChatPanel({ panelId }: PanelProps) {
         handleSend(text, files, clearContext ? [] : undefined);
       },
       onStop: stop,
-      disabled: false, // 允许在生成时输入，发送时会自动停止当前生成
+      disabled: sending, // 生成时显示停止按钮
       currentPageId: rootBlockId,
       currentPageTitle,
       settings: settingsForUi,
