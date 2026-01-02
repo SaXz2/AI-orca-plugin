@@ -663,8 +663,39 @@ export async function getRecentJournals(
 }
 
 /**
+ * Parse date string into Date object.
+ * Supports: YYYY-MM-DD format and basic relative dates (today, yesterday)
+ * @param dateStr - Date string
+ * @returns Parsed Date object or null if invalid
+ */
+function parseNaturalDate(dateStr: string): Date | null {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const normalized = dateStr.toLowerCase().trim();
+
+  // today / yesterday
+  if (normalized === "today" || normalized === "今天") {
+    return today;
+  }
+  if (normalized === "yesterday" || normalized === "昨天") {
+    const date = new Date(today);
+    date.setDate(date.getDate() - 1);
+    return date;
+  }
+
+  // Try standard date parsing (YYYY-MM-DD)
+  const parsed = new Date(dateStr);
+  if (!isNaN(parsed.getTime())) {
+    return parsed;
+  }
+
+  return null;
+}
+
+/**
  * Get journal for a specific date.
- * @param date - The target date (Date object or string like "2024-12-25")
+ * @param date - The target date (Date object or string like "2024-12-25", "yesterday", "today")
  * @param includeChildren - Whether to include child blocks (default: true)
  * @returns Journal entry as SearchResult, or null if not found
  */
@@ -672,9 +703,15 @@ export async function getJournalByDate(
   date: Date | string,
   includeChildren: boolean = true
 ): Promise<SearchResult | null> {
-  const targetDate = typeof date === "string" ? new Date(date) : date;
-  
-  if (isNaN(targetDate.getTime())) {
+  let targetDate: Date | null;
+
+  if (typeof date === "string") {
+    targetDate = parseNaturalDate(date);
+  } else {
+    targetDate = date;
+  }
+
+  if (!targetDate || isNaN(targetDate.getTime())) {
     console.error("[getJournalByDate] Invalid date:", date);
     return null;
   }

@@ -250,15 +250,14 @@ export const TOOLS: OpenAITool[] = [
     type: "function",
     function: {
       name: "getJournalByDate",
-      description: `获取指定日期的日记完整内容。
-✅ 用于：查看特定日期的日记，如"12月25日的日记"、"上周一的日记"
-⚠️ 日期格式支持：YYYY-MM-DD（如 2024-12-25）或自然语言描述`,
+      description:
+        "获取指定日期的日记完整内容。日期格式必须为 YYYY-MM-DD（如 2026-01-01）或 today/yesterday。",
       parameters: {
         type: "object",
         properties: {
           date: {
             type: "string",
-            description: "目标日期，格式 YYYY-MM-DD（如 2024-12-25）",
+            description: "目标日期，格式 YYYY-MM-DD 或 today/yesterday",
           },
           includeChildren: {
             type: "boolean",
