@@ -29,8 +29,44 @@ import type {
 } from "../utils/query-types";
 import { uiStore } from "../store/ui-store";
 
+type JournalExportCacheEntry = {
+  rangeLabel: string;
+  entries: any[];
+  cachedAt: number;
+};
+
+const JOURNAL_EXPORT_CACHE_TTL = 30 * 60 * 1000;
+const JOURNAL_EXPORT_CACHE_MAX = 5;
+
 // 全局缓存：存储大型日记导出数据（供前端使用）
-export const journalExportDataCache = new Map<string, { rangeLabel: string; entries: any[] }>();
+export const journalExportDataCache = new Map<string, JournalExportCacheEntry>();
+
+function pruneJournalExportCache(now: number): void {
+  for (const [key, entry] of journalExportDataCache.entries()) {
+    if (now - entry.cachedAt > JOURNAL_EXPORT_CACHE_TTL) {
+      journalExportDataCache.delete(key);
+    }
+  }
+}
+
+function setJournalExportCache(cacheId: string, rangeLabel: string, entries: any[]): void {
+  const now = Date.now();
+  pruneJournalExportCache(now);
+
+  journalExportDataCache.set(cacheId, { rangeLabel, entries, cachedAt: now });
+
+  if (journalExportDataCache.size <= JOURNAL_EXPORT_CACHE_MAX) {
+    return;
+  }
+
+  const sorted = Array.from(journalExportDataCache.entries()).sort(
+    (a, b) => a[1].cachedAt - b[1].cachedAt
+  );
+  const excess = sorted.length - JOURNAL_EXPORT_CACHE_MAX;
+  for (let i = 0; i < excess; i++) {
+    journalExportDataCache.delete(sorted[i][0]);
+  }
+}
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
@@ -1133,7 +1169,7 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
           
           // 存入缓存，返回缓存 ID
           const cacheId = `year-${value}-${Date.now()}`;
-          journalExportDataCache.set(cacheId, { rangeLabel, entries: exportData });
+          setJournalExportCache(cacheId, rangeLabel, exportData);
           console.log(`[Tool] Cached ${exportData.length} entries with id: ${cacheId}`);
 
           // 返回特殊标记，前端会检测并显示导出按钮
@@ -1173,7 +1209,7 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
 
           // 存入缓存，返回缓存 ID
           const cacheId = `month-${value}-${Date.now()}`;
-          journalExportDataCache.set(cacheId, { rangeLabel, entries: exportData });
+          setJournalExportCache(cacheId, rangeLabel, exportData);
           console.log(`[Tool] Cached ${exportData.length} entries with id: ${cacheId}`);
 
           // 返回特殊标记，前端会检测并显示导出按钮

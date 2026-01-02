@@ -6,9 +6,10 @@
  */
 
 export interface ParsedReference {
-  type: 'block' | 'page';
+  type: 'block' | 'page' | 'tag';
   id?: number;           // 块ID
   name?: string;         // 页面名称
+  tag?: string;          // 标签名称（不带 #）
   originalText: string;  // 原始引用文本
 }
 

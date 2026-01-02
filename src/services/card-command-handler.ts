@@ -85,8 +85,8 @@ function contextItemToReference(item: ContextItem): ParsedReference | null {
   }
   if (item.kind === 'tag' && item.tag) {
     return {
-      type: 'page',
-      name: item.tag,
+      type: 'tag',
+      tag: item.tag,
       originalText: `#${item.tag}`
     };
   }

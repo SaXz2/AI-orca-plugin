@@ -51,6 +51,7 @@ import {
   deleteSession,
   clearAllSessions,
   createNewSession,
+  generateSessionTitle,
   toggleSessionPinned,
   toggleSessionFavorited,
   renameSession,
@@ -310,6 +311,16 @@ export default function AiChatPanel({ panelId }: PanelProps) {
     setMessages((prev) => prev.map((m) => (m.id === id ? { ...m, ...updates } : m)));
     queueMicrotask(scrollToBottom);
   }, [scrollToBottom]);
+
+  const displaySessionTitle = useMemo(() => {
+    const title = (currentSession.title || "").trim();
+    if (title) return title;
+    const hasRealMessages = messages.some((m) => !m.localOnly);
+    if (hasRealMessages) {
+      return generateSessionTitle(messages);
+    }
+    return "新对话";
+  }, [currentSession.title, messages]);
 
   // ─────────────────────────────────────────────────────────────────────────
   // Panel Metadata for orca-tabs-plugin compatibility
@@ -2444,7 +2455,7 @@ export default function AiChatPanel({ panelId }: PanelProps) {
       },
       // Editable session title
       createElement(EditableTitle, {
-        title: currentSession.title || "新对话",
+        title: displaySessionTitle,
         onSave: (newTitle: string) => {
           if (currentSession.id) {
             handleRenameSession(currentSession.id, newTitle);

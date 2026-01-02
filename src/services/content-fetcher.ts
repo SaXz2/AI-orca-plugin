@@ -13,6 +13,7 @@ export const CONTENT_LIMITS = {
   minContentLength: 50,         // 最小内容长度
   maxBlockDepth: 5,             // 最大块层级深度
   maxChildBlocks: 100,          // 最大子块数量
+  maxTagBlocks: 20,             // 标签查询的最大块数量
 };
 
 export interface FetchedContent {
@@ -60,6 +61,7 @@ export interface ContentAPI {
   getBlock(id: number): Promise<BlockData | null>;
   getPageByName(name: string): Promise<PageData | null>;
   searchPages(query: string): Promise<string[]>;
+  searchBlocksByTag?(tag: string, maxResults?: number): Promise<number[]>;
 }
 
 
@@ -284,6 +286,49 @@ export async function fetchContent(
       }
       if (result.error) {
         errors.push(result.error);
+      }
+    } else if (ref.type === 'tag' && ref.tag) {
+      if (!api.searchBlocksByTag) {
+        errors.push({
+          reference: ref,
+          error: `标签查询未启用: #${ref.tag}`
+        });
+        continue;
+      }
+
+      let blockIds: number[] = [];
+      try {
+        blockIds = await api.searchBlocksByTag(ref.tag, CONTENT_LIMITS.maxTagBlocks);
+      } catch (err) {
+        errors.push({
+          reference: ref,
+          error: `标签查询失败 #${ref.tag}: ${err instanceof Error ? err.message : String(err)}`
+        });
+        continue;
+      }
+
+      if (blockIds.length === 0) {
+        errors.push({
+          reference: ref,
+          error: `未找到标签 #${ref.tag} 的内容`
+        });
+        continue;
+      }
+
+      const limitedBlockIds = blockIds.slice(0, CONTENT_LIMITS.maxTagBlocks);
+      for (const blockId of limitedBlockIds) {
+        if (seenBlockIds.has(blockId)) {
+          continue;
+        }
+        seenBlockIds.add(blockId);
+
+        const result = await fetchBlockContent(blockId, api);
+        if (result.content) {
+          contents.push(result.content);
+        }
+        if (result.error) {
+          errors.push(result.error);
+        }
       }
     }
   }

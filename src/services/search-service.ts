@@ -140,6 +140,34 @@ export async function searchBlocksByTag(
     const normalizedTag = normalizeTagForSearch(tagName);
     console.log("[searchBlocksByTag] Normalized tag:", normalizedTag);
 
+    const safeMaxResults = Math.min(Math.max(1, maxResults), 200);
+
+    try {
+      const description = buildQueryDescription({
+        tagName: normalizedTag,
+        maxResults: safeMaxResults,
+        sort: [["_modified", "DESC"]],
+      });
+      const runQuery = async (desc: any) => {
+        const result = await orca.invokeBackend("query", desc);
+        const payload = unwrapBackendResult<any>(result);
+        throwIfBackendError(payload, "query");
+        return unwrapBlocks(payload);
+      };
+      const blocks = await executeQueryWithFallback(runQuery, description, normalizedTag);
+
+      if (!Array.isArray(blocks)) {
+        console.warn("[searchBlocksByTag] Query result is not an array:", blocks);
+        return [];
+      }
+
+      const limitedBlocks = blocks.slice(0, safeMaxResults);
+      const trees = await fetchBlockTrees(limitedBlocks);
+      return transformToSearchResults(trees, { includeProperties: true });
+    } catch (queryErr) {
+      console.warn("[searchBlocksByTag] Query failed, falling back to tag search:", queryErr);
+    }
+
     const result = await orca.invokeBackend("get-blocks-with-tags", [normalizedTag]);
     const blocks = unwrapBlocks(result);
 
@@ -148,7 +176,7 @@ export async function searchBlocksByTag(
       return [];
     }
 
-    const sortedBlocks = sortAndLimitBlocks(blocks, maxResults);
+    const sortedBlocks = sortAndLimitBlocks(blocks, safeMaxResults);
     const trees = await fetchBlockTrees(sortedBlocks);
     return transformToSearchResults(trees, { includeProperties: true });
   } catch (error: any) {
@@ -177,6 +205,31 @@ export async function searchBlocksByText(
       return [];
     }
 
+    const safeMaxResults = Math.min(Math.max(1, maxResults), 200);
+
+    try {
+      const description = buildAdvancedQuery({
+        conditions: [{ type: "text", text: searchText }],
+        sort: [["_modified", "DESC"]],
+        pageSize: safeMaxResults,
+      });
+      const result = await orca.invokeBackend("query", description);
+      const payload = unwrapBackendResult<any>(result);
+      throwIfBackendError(payload, "query");
+      const blocks = unwrapBlocks(payload);
+
+      if (!Array.isArray(blocks)) {
+        console.warn("[searchBlocksByText] Query result is not an array:", blocks);
+        return [];
+      }
+
+      const limitedBlocks = blocks.slice(0, safeMaxResults);
+      const trees = await fetchBlockTrees(limitedBlocks);
+      return transformToSearchResults(trees, { includeProperties: false });
+    } catch (queryErr) {
+      console.warn("[searchBlocksByText] Query failed, falling back to text search:", queryErr);
+    }
+
     const result = await orca.invokeBackend(
       "search-blocks-by-text",
       searchText
@@ -188,7 +241,7 @@ export async function searchBlocksByText(
       return [];
     }
 
-    const sortedBlocks = sortAndLimitBlocks(blocks, maxResults);
+    const sortedBlocks = sortAndLimitBlocks(blocks, safeMaxResults);
     const trees = await fetchBlockTrees(sortedBlocks);
     return transformToSearchResults(trees, { includeProperties: false });
   } catch (error: any) {
