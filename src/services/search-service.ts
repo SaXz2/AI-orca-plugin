@@ -210,6 +210,7 @@ export async function searchBlocksByText(
     try {
       const description = buildAdvancedQuery({
         conditions: [{ type: "text", text: searchText }],
+        combineMode: "and",
         sort: [["_modified", "DESC"]],
         pageSize: safeMaxResults,
       });
