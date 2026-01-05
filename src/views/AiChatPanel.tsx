@@ -1027,8 +1027,9 @@ export default function AiChatPanel({ panelId }: PanelProps) {
 	      try {
 	        let toolCallResult: any = null;
 	        let textContent = "";
+	        let mergedToolCalls: ToolCallInfo[] = [];
 	        
-	        // 使用工具调用模式
+	        // Stream tool calls and content, then process the final tool args.
 	        for await (const chunk of streamChatWithRetry(
 	          {
 	            apiUrl: apiConfig.apiUrl,
@@ -1045,20 +1046,29 @@ export default function AiChatPanel({ panelId }: PanelProps) {
 	          if (chunk.type === "content") {
 	            textContent += chunk.content;
 	          } else if (chunk.type === "tool_calls" && chunk.toolCalls) {
-	            // 找到 generateFlashcards 工具调用
-	            for (const tc of chunk.toolCalls) {
-	              if (tc.function.name === "generateFlashcards") {
-	                console.log("[Flashcard] Tool call received:", tc.function.name);
-	                try {
-	                  const args = typeof tc.function.arguments === "string" 
-	                    ? JSON.parse(tc.function.arguments) 
-	                    : tc.function.arguments;
-	                  // 执行工具
-	                  const resultStr = await executeTool("generateFlashcards", args);
-	                  toolCallResult = JSON.parse(resultStr);
-	                } catch (e) {
-	                  console.error("[Flashcard] Tool execution error:", e);
-	                }
+	            mergedToolCalls = chunk.toolCalls;
+	          } else if (chunk.type === "done") {
+	            if (!textContent && chunk.result.content) {
+	              textContent = chunk.result.content;
+	            }
+	            if (chunk.result.toolCalls?.length) {
+	              mergedToolCalls = chunk.result.toolCalls;
+	            }
+	          }
+	        }
+	        
+	        if (!toolCallResult && mergedToolCalls.length > 0) {
+	          for (const tc of mergedToolCalls) {
+	            if (tc.function.name === "generateFlashcards") {
+	              console.log("[Flashcard] Tool call received:", tc.function.name);
+	              try {
+	                const args = typeof tc.function.arguments === "string"
+	                  ? JSON.parse(tc.function.arguments)
+	                  : tc.function.arguments;
+	                const resultStr = await executeTool("generateFlashcards", args);
+	                toolCallResult = JSON.parse(resultStr);
+	              } catch (e) {
+	                console.error("[Flashcard] Tool execution error:", e);
 	              }
 	            }
 	          }
