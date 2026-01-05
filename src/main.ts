@@ -3,6 +3,7 @@ import { registerAiChatUI, unregisterAiChatUI } from "./ui/ai-chat-ui";
 import { registerAiChatRenderer, unregisterAiChatRenderer } from "./ui/ai-chat-renderer";
 import { loadMemoryStore } from "./store/memory-store";
 import * as compressionService from "./services/compression-service";
+import { AiChatPluginAPI } from "./services/plugin-api";
 
 let pluginName: string;
 
@@ -21,6 +22,9 @@ export async function load(_name: string) {
 
   // 挂载调试接口到 window（开发用）
   (window as any).compressionService = compressionService;
+
+  // 挂载 Plugin API 到全局，供外部插件调用
+  (window as any).AiChatPluginAPI = AiChatPluginAPI;
 
   console.log(`${pluginName} loaded.`);
 }
