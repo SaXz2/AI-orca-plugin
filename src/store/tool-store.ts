@@ -98,11 +98,14 @@ interface ToolStore {
   toolStatus: Record<string, ToolStatus>;
   /** 是否显示工具面板 */
   showPanel: boolean;
+  /** 联网搜索开关 */
+  webSearchEnabled: boolean;
 }
 
 export const toolStore = proxy<ToolStore>({
   toolStatus: {},
   showPanel: false,
+  webSearchEnabled: false,
 });
 
 /**
@@ -148,11 +151,38 @@ export function closeToolPanel(): void {
 }
 
 /**
+ * 切换联网搜索开关
+ */
+export function toggleWebSearch(): void {
+  toolStore.webSearchEnabled = !toolStore.webSearchEnabled;
+  saveToolSettings();
+}
+
+/**
+ * 设置联网搜索状态
+ */
+export function setWebSearchEnabled(enabled: boolean): void {
+  toolStore.webSearchEnabled = enabled;
+  saveToolSettings();
+}
+
+/**
+ * 获取联网搜索状态
+ */
+export function isWebSearchEnabled(): boolean {
+  return toolStore.webSearchEnabled;
+}
+
+/**
  * 保存工具设置到本地存储
  */
 function saveToolSettings(): void {
   try {
-    localStorage.setItem("ai-chat-tool-settings", JSON.stringify(toolStore.toolStatus));
+    const settings = {
+      toolStatus: toolStore.toolStatus,
+      webSearchEnabled: toolStore.webSearchEnabled,
+    };
+    localStorage.setItem("ai-chat-tool-settings", JSON.stringify(settings));
   } catch (e) {
     console.warn("[ToolStore] Failed to save settings:", e);
   }
@@ -167,7 +197,14 @@ export function loadToolSettings(): void {
     if (saved) {
       const parsed = JSON.parse(saved);
       if (typeof parsed === "object" && parsed !== null) {
-        toolStore.toolStatus = parsed;
+        // 兼容旧格式（直接存储 toolStatus）
+        if (parsed.toolStatus) {
+          toolStore.toolStatus = parsed.toolStatus;
+          toolStore.webSearchEnabled = parsed.webSearchEnabled ?? false;
+        } else {
+          // 旧格式：直接是 toolStatus 对象
+          toolStore.toolStatus = parsed;
+        }
       }
     }
   } catch (e) {

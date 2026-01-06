@@ -19,6 +19,7 @@ import ErrorMessage from "../components/ErrorMessage";
 import ChatHistoryMenu from "./ChatHistoryMenu";
 import HeaderMenu from "./HeaderMenu";
 import CompressionSettingsModal from "./CompressionSettingsModal";
+import WebSearchSettingsModal from "./WebSearchSettingsModal";
 import EmptyState from "./EmptyState";
 import TypingIndicator from "../components/TypingIndicator";
 import MemoryManager from "./MemoryManager";
@@ -62,7 +63,7 @@ import {
 } from "../services/session-service";
 import { exportSessionAsFile, saveSessionToJournal, saveMessagesToJournal } from "../services/export-service";
 import { sessionStore, updateSessionStore, clearSessionStore } from "../store/session-store";
-import { TOOLS, FLASHCARD_TOOL, executeTool, getToolsForDraggedContext } from "../services/ai-tools";
+import { TOOLS, FLASHCARD_TOOL, executeTool, getToolsForDraggedContext, getTools } from "../services/ai-tools";
 import { getToolStatus, isToolDisabled, shouldAskForTool } from "../store/tool-store";
 import { nowId, safeText } from "../utils/text-utils";
 import { buildConversationMessages } from "../services/message-builder";
@@ -290,6 +291,9 @@ export default function AiChatPanel({ panelId }: PanelProps) {
 
   // Compression settings modal state
   const [showCompressionSettings, setShowCompressionSettings] = useState(false);
+
+  // Web search settings modal state
+  const [showWebSearchSettings, setShowWebSearchSettings] = useState(false);
 
   // Message selection mode state (for batch save)
   const [selectionMode, setSelectionMode] = useState(false);
@@ -1371,7 +1375,8 @@ graph TD
       // 有拖入块时禁用搜索类工具，强制 AI 使用已提供的上下文
       const hasHighPriorityContext = highPriorityContexts.length > 0;
       // 根据用户工具设置过滤工具列表（排除禁用的工具）
-      const baseTools = hasHighPriorityContext ? getToolsForDraggedContext() : TOOLS;
+      // 使用 getTools() 动态获取工具列表（包含联网搜索工具，如果已启用）
+      const baseTools = hasHighPriorityContext ? getToolsForDraggedContext() : getTools();
       const filteredTools = baseTools.filter(tool => !isToolDisabled(tool.function.name));
       const toolsToUse = includeTools && filteredTools.length > 0 ? filteredTools : undefined;
 
@@ -2581,6 +2586,7 @@ graph TD
         },
         onOpenMemoryManager: handleOpenMemoryManager,
         onOpenCompressionSettings: () => setShowCompressionSettings(true),
+        onOpenWebSearchSettings: () => setShowWebSearchSettings(true),
         onExportMarkdown: () => {
           if (messages.length === 0) {
             orca.notify("warn", "没有可导出的消息");
@@ -2658,6 +2664,11 @@ graph TD
     createElement(CompressionSettingsModal, {
       isOpen: showCompressionSettings,
       onClose: () => setShowCompressionSettings(false),
+    }),
+    // Web Search Settings Modal
+    createElement(WebSearchSettingsModal, {
+      isOpen: showWebSearchSettings,
+      onClose: () => setShowWebSearchSettings(false),
     })
   );
 }

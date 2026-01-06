@@ -1217,7 +1217,7 @@ function renderInlineNode(node: MarkdownInlineNode, key: number): any {
           )
         );
       }
-      // Normal external link
+      // Normal external link - open in system default browser
       return createElement(
         "a",
         {
@@ -1228,7 +1228,9 @@ function renderInlineNode(node: MarkdownInlineNode, key: number): any {
           title: node.url,
           style: linkStyle,
           onClick: (e: any) => {
-            // Allow default behavior for external links
+            e.preventDefault();
+            // Open in system default browser instead of internal webview
+            orca.invokeBackend("shell-open", node.url);
           },
         },
         ...node.children.map((child, i) => renderInlineNode(child, i)),

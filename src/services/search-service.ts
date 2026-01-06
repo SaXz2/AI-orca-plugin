@@ -43,6 +43,7 @@ export interface SearchResult {
   modified?: Date;
   tags?: string[];
   propertyValues?: Record<string, any>;
+  rawTree?: any;  // 原始块树数据（用于导出时提取子块信息）
 }
 
 interface TransformOptions {
@@ -104,6 +105,7 @@ function transformToSearchResults(
       created: block.created ? new Date(block.created) : undefined,
       modified: block.modified ? new Date(block.modified) : undefined,
       tags: block.aliases || [],
+      rawTree: tree,  // 保留原始树数据
     };
   });
 }

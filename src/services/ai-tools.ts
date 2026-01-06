@@ -28,6 +28,8 @@ import type {
   QueryCombineMode 
 } from "../utils/query-types";
 import { uiStore } from "../store/ui-store";
+import { searchWeb, formatSearchResults, type SearchConfig } from "./web-search-service";
+import { isWebSearchEnabled } from "../store/tool-store";
 
 type JournalExportCacheEntry = {
   rangeLabel: string;
@@ -66,6 +68,78 @@ function setJournalExportCache(cacheId: string, rangeLabel: string, entries: any
   for (let i = 0; i < excess; i++) {
     journalExportDataCache.delete(sorted[i][0]);
   }
+}
+
+/**
+ * 从块树中提取每个块的详细信息（包括时间）
+ */
+type BlockInfo = {
+  id: number;
+  content: string;
+  created?: string;
+  modified?: string;
+  depth: number;
+};
+
+function extractBlocksFromTree(tree: any, depth: number = 0, maxBlocks: number = 200): BlockInfo[] {
+  const blocks: BlockInfo[] = [];
+  
+  function traverse(node: any, currentDepth: number): void {
+    if (!node || blocks.length >= maxBlocks) return;
+    
+    if (Array.isArray(node)) {
+      for (const item of node) {
+        traverse(item, currentDepth);
+        if (blocks.length >= maxBlocks) break;
+      }
+      return;
+    }
+    
+    // 处理数字 ID（引用）
+    if (typeof node === "number") {
+      const block = (orca.state.blocks as any)?.[node];
+      if (block) traverse(block, currentDepth);
+      return;
+    }
+    
+    // 获取实际的块对象
+    const block = node?.block && typeof node.block === "object" ? node.block : node;
+    if (!block || !block.id) return;
+    
+    // 提取文本内容
+    let content = "";
+    if (block.content) {
+      if (typeof block.content === "string") {
+        content = block.content;
+      } else if (Array.isArray(block.content)) {
+        content = block.content.map((f: any) => {
+          if (typeof f?.v === "string") return f.v;
+          if (typeof f?.v === "number") return String(f.v);
+          return "";
+        }).join("");
+      }
+    }
+    
+    blocks.push({
+      id: block.id,
+      content: content.trim(),
+      created: block.created ? new Date(block.created).toISOString() : undefined,
+      modified: block.modified ? new Date(block.modified).toISOString() : undefined,
+      depth: currentDepth,
+    });
+    
+    // 处理子块
+    const children = node?.children || node?.tree?.children || block?.children;
+    if (Array.isArray(children)) {
+      for (const child of children) {
+        traverse(child, currentDepth + 1);
+        if (blocks.length >= maxBlocks) break;
+      }
+    }
+  }
+  
+  traverse(tree, depth);
+  return blocks;
 }
 
 /**
@@ -649,6 +723,60 @@ export const TOOLS: OpenAITool[] = [
 ];
 
 /**
+ * 联网搜索工具 - 仅在用户开启联网搜索时添加
+ */
+export const WEB_SEARCH_TOOL: OpenAITool = {
+  type: "function",
+  function: {
+    name: "webSearch",
+    description: `联网搜索获取实时信息。
+
+【何时使用】
+- 用户问最新的新闻、事件、数据
+- 需要实时信息（天气、股价、比赛结果等）
+- 笔记库中没有的外部知识
+- 用户明确要求搜索网络
+
+【参数】
+- query: 搜索关键词，用英文效果更好
+- maxResults: 返回结果数，默认5
+
+【注意】
+- 优先使用笔记库工具查找用户自己的内容
+- 只在需要外部信息时使用此工具`,
+    parameters: {
+      type: "object",
+      properties: {
+        query: {
+          type: "string",
+          description: "搜索关键词",
+        },
+        maxResults: {
+          type: "number",
+          description: "最大结果数，默认5，最大20",
+        },
+      },
+      required: ["query"],
+    },
+  },
+};
+
+/**
+ * 获取工具列表（根据联网搜索开关动态添加）
+ */
+export function getTools(webSearchEnabled?: boolean): OpenAITool[] {
+  const tools = [...TOOLS];
+  
+  // 如果联网搜索已开启，添加 webSearch 工具
+  // API Key 检查在执行时进行，这里只检查开关状态
+  if (webSearchEnabled ?? isWebSearchEnabled()) {
+    tools.push(WEB_SEARCH_TOOL);
+  }
+  
+  return tools;
+}
+
+/**
  * 闪卡生成工具 - 仅供 /card 命令使用，不包含在普通对话工具列表中
  */
 export const FLASHCARD_TOOL: OpenAITool = {
@@ -1191,13 +1319,26 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
             return `${value}年没有找到任何日记。`;
           }
           
-          // 过滤掉没有内容的日记
+          // 过滤掉没有内容的日记，并添加元数据
           const exportData = results
-            .map((r: any) => ({
-              date: r.title || "",
-              content: (r.fullContent || r.content || "").trim(),
-              blockId: r.id,
-            }))
+            .map((r: any) => {
+              const content = (r.fullContent || r.content || "").trim();
+              return {
+                date: r.title || "",
+                content,
+                blockId: r.id,
+                // 元数据
+                created: r.created ? (r.created instanceof Date ? r.created.toISOString() : r.created) : undefined,
+                modified: r.modified ? (r.modified instanceof Date ? r.modified.toISOString() : r.modified) : undefined,
+                wordCount: content.length,
+                tags: r.tags || [],
+                hasImages: /!\[.*?\]\(.*?\)/.test(content) || content.includes("orca-file:"),
+                hasLinks: /\[\[.*?\]\]/.test(content) || /\[.*?\]\(orca-block:/.test(content),
+                childCount: r.childCount || 0,
+                // 子块详情（每个块的内容和时间）
+                blocks: r.rawTree ? extractBlocksFromTree(r.rawTree) : undefined,
+              };
+            })
             .filter((entry: any) => entry.content.length > 0);
           
           if (exportData.length === 0) {
@@ -1229,13 +1370,26 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
 
         // 月份查询：只显示统计 + 导出按钮，不显示完整内容
         if (rangeType === "month") {
-          // 过滤掉没有内容的日记
+          // 过滤掉没有内容的日记，并添加元数据
           const exportData = results
-            .map((r: any) => ({
-              date: r.title || "",
-              content: (r.fullContent || r.content || "").trim(),
-              blockId: r.id,
-            }))
+            .map((r: any) => {
+              const content = (r.fullContent || r.content || "").trim();
+              return {
+                date: r.title || "",
+                content,
+                blockId: r.id,
+                // 元数据
+                created: r.created ? (r.created instanceof Date ? r.created.toISOString() : r.created) : undefined,
+                modified: r.modified ? (r.modified instanceof Date ? r.modified.toISOString() : r.modified) : undefined,
+                wordCount: content.length,
+                tags: r.tags || [],
+                hasImages: /!\[.*?\]\(.*?\)/.test(content) || content.includes("orca-file:"),
+                hasLinks: /\[\[.*?\]\]/.test(content) || /\[.*?\]\(orca-block:/.test(content),
+                childCount: r.childCount || 0,
+                // 子块详情（每个块的内容和时间）
+                blocks: r.rawTree ? extractBlocksFromTree(r.rawTree) : undefined,
+              };
+            })
             .filter((entry: any) => entry.content.length > 0);
           
           // 解析月份标签
@@ -1260,11 +1414,24 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
         if (rangeType === "range" && lastDaysMatch) {
           const days = parseInt(lastDaysMatch[1], 10);
           const exportData = results
-            .map((r: any) => ({
-              date: r.title || "",
-              content: (r.fullContent || r.content || "").trim(),
-              blockId: r.id,
-            }))
+            .map((r: any) => {
+              const content = (r.fullContent || r.content || "").trim();
+              return {
+                date: r.title || "",
+                content,
+                blockId: r.id,
+                // 元数据
+                created: r.created ? (r.created instanceof Date ? r.created.toISOString() : r.created) : undefined,
+                modified: r.modified ? (r.modified instanceof Date ? r.modified.toISOString() : r.modified) : undefined,
+                wordCount: content.length,
+                tags: r.tags || [],
+                hasImages: /!\[.*?\]\(.*?\)/.test(content) || content.includes("orca-file:"),
+                hasLinks: /\[\[.*?\]\]/.test(content) || /\[.*?\]\(orca-block:/.test(content),
+                childCount: r.childCount || 0,
+                // 子块详情（每个块的内容和时间）
+                blocks: r.rawTree ? extractBlocksFromTree(r.rawTree) : undefined,
+              };
+            })
             .filter((entry: any) => entry.content.length > 0);
           
           const rangeLabel = `最近${days}天`;
@@ -1970,6 +2137,60 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
         return parts.join("\n");
       } catch (err: any) {
         return `Error getting saved AI conversations: ${err.message}`;
+      }
+    } else if (toolName === "webSearch") {
+      // 联网搜索工具 - 支持多引擎故障转移
+      try {
+        const query = args.query;
+        if (!query) {
+          return "Error: Missing query parameter for web search.";
+        }
+        
+        const { getAiChatPluginName } = await import("../ui/ai-chat-ui");
+        const { getAiChatSettings } = await import("../settings/ai-chat-settings");
+        const { searchWithFallback } = await import("./web-search-service");
+        
+        const pluginName = getAiChatPluginName();
+        const settings = getAiChatSettings(pluginName);
+        const webConfig = settings.webSearch;
+        
+        if (!webConfig) {
+          return "Error: 联网搜索未配置。请在设置中配置搜索引擎。";
+        }
+        
+        const maxResults = Math.min(args.maxResults || webConfig.maxResults || 5, 20);
+        
+        // 检查是否有配置的搜索引擎实例
+        const instances = webConfig.instances || [];
+        
+        if (instances.length === 0) {
+          // 兼容旧版配置：如果没有 instances，尝试从旧字段构建
+          if (webConfig.tavilyApiKey) {
+            instances.push({
+              id: "legacy-tavily",
+              provider: "tavily",
+              enabled: true,
+              name: "Tavily",
+              tavilyApiKey: webConfig.tavilyApiKey,
+              tavilySearchDepth: webConfig.tavilySearchDepth,
+              tavilyIncludeAnswer: webConfig.tavilyIncludeAnswer,
+              tavilyIncludeDomains: webConfig.tavilyIncludeDomains,
+              tavilyExcludeDomains: webConfig.tavilyExcludeDomains,
+            });
+          }
+          if (instances.length === 0) {
+            return "Error: 没有配置搜索引擎。请在联网搜索设置中添加至少一个搜索引擎。";
+          }
+        }
+        
+        console.log(`[Tool] webSearch: "${query}" (instances=${instances.length}, maxResults=${maxResults})`);
+        
+        // 使用故障转移搜索
+        const response = await searchWithFallback(query, instances, maxResults);
+        return formatSearchResults(response);
+      } catch (err: any) {
+        console.error("[Tool] Error in webSearch:", err);
+        return `Error searching web: ${err.message}`;
       }
     } else if (toolName === "generateFlashcards") {
       // 闪卡生成工具 - 返回结构化数据供前端处理

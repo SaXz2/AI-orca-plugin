@@ -23,7 +23,7 @@ import { textareaStyle, sendButtonStyle } from "./chat-input";
 import { MultiModelToggleButton } from "../components/MultiModelSelector";
 import { multiModelStore } from "../store/multi-model-store";
 import ToolPanel from "../components/ToolPanel";
-import { loadToolSettings } from "../store/tool-store";
+import { loadToolSettings, toolStore, toggleWebSearch } from "../store/tool-store";
 
 const React = window.React as unknown as {
   createElement: typeof window.React.createElement;
@@ -159,6 +159,7 @@ export default function ChatInput({
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const slashMenuRef = useRef<HTMLDivElement | null>(null);
   const contextSnap = useSnapshot(contextStore);
+  const toolSnap = useSnapshot(toolStore);
 
   // 自动调整 textarea 高度
   const adjustTextareaHeight = useCallback(() => {
@@ -1203,6 +1204,22 @@ export default function ChatInput({
           }),
           createElement(InjectionModeSelector, null),
           createElement(ModeSelectorButton, null),
+          // 联网搜索开关
+          createElement(
+            Button,
+            {
+              variant: "plain",
+              onClick: toggleWebSearch,
+              title: toolSnap.webSearchEnabled ? "关闭联网搜索" : "开启联网搜索",
+              style: { 
+                padding: "4px",
+                color: toolSnap.webSearchEnabled ? "var(--orca-color-primary, #007bff)" : undefined,
+                background: toolSnap.webSearchEnabled ? "var(--orca-color-primary-bg, rgba(0, 123, 255, 0.1))" : undefined,
+                borderRadius: "4px",
+              },
+            },
+            createElement("i", { className: "ti ti-world-search" })
+          ),
           // Token 预估显示
           tokenEstimate.inputTokens > 0 && createElement(
             "div",

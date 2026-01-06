@@ -107,12 +107,33 @@ export function exportSessionAsFile(session: SavedSession): void {
 }
 
 /**
+ * 子块信息接口
+ */
+export interface BlockInfo {
+  id: number;
+  content: string;
+  created?: string;
+  modified?: string;
+  depth: number;        // 嵌套深度，0 为顶级
+}
+
+/**
  * 日记条目接口
  */
 export interface JournalEntry {
   date: string;
   content: string;
   blockId?: number;
+  // 元数据
+  created?: string;      // 创建时间 ISO 格式
+  modified?: string;     // 修改时间 ISO 格式
+  wordCount?: number;    // 字数统计
+  tags?: string[];       // 标签列表
+  hasImages?: boolean;   // 是否包含图片
+  hasLinks?: boolean;    // 是否包含链接
+  childCount?: number;   // 子块数量
+  // 子块详情（包含每个块的时间信息）
+  blocks?: BlockInfo[];
 }
 
 /**
@@ -151,14 +172,44 @@ export function exportJournalsAsFile(entries: JournalEntry[], rangeLabel: string
  * @param rangeLabel - 范围标签（如 "2024年" 或 "2024年5月"）
  */
 export function exportJournalsAsJson(entries: JournalEntry[], rangeLabel: string): void {
+  // 计算统计信息
+  const totalWords = entries.reduce((sum, e) => sum + (e.wordCount || 0), 0);
+  const totalBlocks = entries.reduce((sum, e) => sum + (e.blocks?.length || 0), 0);
+  const entriesWithImages = entries.filter(e => e.hasImages).length;
+  const entriesWithLinks = entries.filter(e => e.hasLinks).length;
+  const allTags = [...new Set(entries.flatMap(e => e.tags || []))];
+  
   const exportData = {
     exportTime: new Date().toISOString(),
     rangeLabel,
-    totalEntries: entries.length,
+    // 统计信息
+    statistics: {
+      totalEntries: entries.length,
+      totalBlocks,
+      totalWords,
+      entriesWithImages,
+      entriesWithLinks,
+      uniqueTags: allTags.length,
+      allTags,
+    },
+    // 日记条目
     entries: entries.map(entry => ({
       date: entry.date,
-      content: entry.content,
       blockId: entry.blockId,
+      // 元数据
+      meta: {
+        created: entry.created,
+        modified: entry.modified,
+        wordCount: entry.wordCount,
+        childCount: entry.childCount,
+        hasImages: entry.hasImages,
+        hasLinks: entry.hasLinks,
+        tags: entry.tags,
+      },
+      // 子块详情（每个块的内容和时间）
+      blocks: entry.blocks,
+      // 完整内容（纯文本）
+      content: entry.content,
     })),
   };
   

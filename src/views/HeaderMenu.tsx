@@ -14,6 +14,7 @@ interface HeaderMenuProps {
   onOpenSettings: () => void;
   onOpenMemoryManager: () => void;
   onOpenCompressionSettings?: () => void;
+  onOpenWebSearchSettings?: () => void;
   onExportMarkdown?: () => void;
   onSaveToJournal?: () => void;
   onToggleSelectionMode?: () => void;
@@ -27,6 +28,7 @@ export default function HeaderMenu({
   onOpenSettings,
   onOpenMemoryManager,
   onOpenCompressionSettings,
+  onOpenWebSearchSettings,
   onExportMarkdown,
   onSaveToJournal,
   onToggleSelectionMode,
@@ -172,6 +174,18 @@ export default function HeaderMenu({
           },
           createElement("i", { className: "ti ti-arrows-minimize" }),
           "Token 优化"
+        ),
+        // Web Search Settings
+        onOpenWebSearchSettings && createElement(
+          "div",
+          {
+            style: menuItemStyle,
+            onClick: () => handleItemClick(onOpenWebSearchSettings),
+            onMouseEnter: (e: any) => (e.currentTarget.style.background = "var(--orca-color-bg-2)"),
+            onMouseLeave: (e: any) => (e.currentTarget.style.background = "transparent"),
+          },
+          createElement("i", { className: "ti ti-world" }),
+          "联网搜索"
         ),
         // Divider
         createElement("div", {
