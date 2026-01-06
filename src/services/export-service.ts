@@ -146,6 +146,40 @@ export function exportJournalsAsFile(entries: JournalEntry[], rangeLabel: string
 }
 
 /**
+ * 导出日记为 JSON 文件
+ * @param entries - 日记条目数组
+ * @param rangeLabel - 范围标签（如 "2024年" 或 "2024年5月"）
+ */
+export function exportJournalsAsJson(entries: JournalEntry[], rangeLabel: string): void {
+  const exportData = {
+    exportTime: new Date().toISOString(),
+    rangeLabel,
+    totalEntries: entries.length,
+    entries: entries.map(entry => ({
+      date: entry.date,
+      content: entry.content,
+      blockId: entry.blockId,
+    })),
+  };
+  
+  const json = JSON.stringify(exportData, null, 2);
+  const filename = `日记_${rangeLabel.replace(/[\\/:*?"<>|]/g, "_")}.json`;
+  
+  const blob = new Blob([json], { type: "application/json;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  
+  orca.notify("success", `已导出 ${entries.length} 篇日记到 ${filename}`);
+}
+
+/**
  * 转换消息用于保存（保留完整信息）
  */
 function convertMessages(messages: Message[]): SavedMessage[] {

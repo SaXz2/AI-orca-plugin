@@ -78,26 +78,29 @@ export const TOOLS: OpenAITool[] = [
     type: "function",
     function: {
       name: "searchBlocksByTag",
-      description: `根据标签精准搜索笔记。支持搜索单个标签（如 #TODO）或多个标签（如 #TODO #Project）。这是获取结构化数据的最佳方式。
-⚠️ 仅用于简单标签搜索，不涉及属性过滤。如需过滤属性值（如 Status=xxx），请用 query_blocks_by_tag`,
+      description: `按标签搜索笔记。
+
+【何时使用】用户提到 #标签名，或要查找带特定标签的笔记
+【参数】tag_query必填，格式"#标签名"，多标签用空格如"#TODO #重要"
+【注意】不支持属性过滤，如需Status=Done这种条件用query_blocks_by_tag`,
       parameters: {
         type: "object",
         properties: {
           tag_query: {
             type: "string",
-            description: "标签查询字符串，如 '#tag1' 或 '#tag1 #tag2'",
+            description: "标签查询，必须带#号，如'#TODO'或'#TODO #Project'",
           },
           maxResults: {
             type: "number",
-            description: "返回的最大结果数（默认 20，最大 50）",
+            description: "最大结果数，默认20，最大50",
           },
           countOnly: {
             type: "boolean",
-            description: "仅返回总数统计，不返回内容（用于回答'有多少条'类问题）",
+            description: "true=只返回数量，用于'有多少条'类问题",
           },
           briefMode: {
             type: "boolean",
-            description: "简洁模式：返回标题+摘要，不返回完整内容（用于列表概览）",
+            description: "true=只返回标题+摘要",
           },
           sortBy: {
             type: "string",
@@ -118,26 +121,29 @@ export const TOOLS: OpenAITool[] = [
     type: "function",
     function: {
       name: "searchBlocksByText",
-      description: `全文搜索笔记。当你需要查找包含特定内容、短语或关键词的笔记时使用。适合进行模糊搜索或查找具体文本。
-⚠️ 如果用户明确提到标签（如 #xxx），应优先使用 searchBlocksByTag`,
+      description: `全文搜索笔记内容。
+
+【何时使用】查找包含某些文字的笔记，模糊搜索
+【参数】query必填，搜索关键词
+【注意】如果用户明确提到#标签，优先用searchBlocksByTag`,
       parameters: {
         type: "object",
         properties: {
           query: {
             type: "string",
-            description: "搜索关键词或短语",
+            description: "搜索关键词",
           },
           maxResults: {
             type: "number",
-            description: "返回的最大结果数（默认 20，最大 50）",
+            description: "最大结果数，默认20，最大50",
           },
           countOnly: {
             type: "boolean",
-            description: "仅返回总数统计（用于回答'有多少条'类问题）",
+            description: "true=只返回数量",
           },
           briefMode: {
             type: "boolean",
-            description: "简洁模式：返回标题+摘要（用于列表概览）",
+            description: "true=只返回标题+摘要",
           },
           sortBy: {
             type: "string",
@@ -158,19 +164,23 @@ export const TOOLS: OpenAITool[] = [
     type: "function",
     function: {
       name: "query_blocks_by_tag",
-      description: `使用标签和属性过滤器搜索笔记（高级搜索）。当你需要查找具有特定属性值的标签笔记时使用。
-例如：查找 #Task 标签且 Status 属性为 'Canceled' 的笔记。
-⚠️ value 直接用文本值（如 "Canceled"、"Done"），不要用数字编码`,
+      description: `按标签+属性条件搜索。
+
+【何时使用】需要过滤标签属性值，如"#Task中Status=Done的"
+【参数】
+- tagName: 标签名，不带#号！如"Task"
+- filters: [{name:"Status", op:"==", value:"Done"}]
+【注意】value用文本如"Done"，不要用数字编码`,
       parameters: {
         type: "object",
         properties: {
           tagName: {
             type: "string",
-            description: "标签名称（不带 #）",
+            description: "标签名，不带#号，如'Task'",
           },
           filters: {
             type: "array",
-            description: "属性过滤器列表",
+            description: "属性过滤条件",
             items: {
               type: "object",
               properties: {
@@ -201,11 +211,15 @@ export const TOOLS: OpenAITool[] = [
     type: "function",
     function: {
       name: "query_blocks",
-      description: `组合多种条件进行复杂搜索。支持标签、文本、任务状态、日记范围等条件的 AND/OR 组合。
-⚠️ 重要限制：
-- journal 条件仅返回块引用列表，不包含完整内容
-- 如需查看日记的完整内容（包括图片、文字等），请使用 getRecentJournals 或 getTodayJournal
-❌ 不要用于：查看日记内容、查找日记中的图片/记录等场景`,
+      description: `组合多条件复杂搜索（AND/OR）。
+
+【条件类型】
+- tag: 按标签，需name字段
+- text: 按文本，需text字段  
+- task: 按任务状态，需completed字段(true/false)
+- journal: 按日记范围，需startOffset/endOffset（负数=过去天数）
+
+【注意】journal条件只返回引用，要看日记内容用getTodayJournal/getRecentJournals`,
       parameters: {
         type: "object",
         properties: {
@@ -218,13 +232,13 @@ export const TOOLS: OpenAITool[] = [
                   type: "string", 
                   enum: ["tag", "text", "task", "journal", "ref", "block", "blockMatch"] 
                 },
-                name: { type: "string", description: "标签名 (用于 type: tag)" },
-                text: { type: "string", description: "关键词 (用于 type: text)" },
-                completed: { type: "boolean", description: "任务完成状态 (用于 type: task)" },
-                startOffset: { type: "number", description: "相对今天的起始天数，如 -7 表示 7 天前 (用于 type: journal)" },
-                endOffset: { type: "number", description: "相对今天的结束天数，0 表示今天 (用于 type: journal)" },
-                blockId: { type: "number", description: "目标块 ID (用于 type: ref/blockMatch)" },
-                hasTags: { type: "boolean", description: "是否必须有标签 (用于 type: block)" },
+                name: { type: "string", description: "标签名（type=tag时）" },
+                text: { type: "string", description: "关键词（type=text时）" },
+                completed: { type: "boolean", description: "完成状态（type=task时）" },
+                startOffset: { type: "number", description: "起始天数，如-7=7天前（type=journal时）" },
+                endOffset: { type: "number", description: "结束天数，0=今天（type=journal时）" },
+                blockId: { type: "number", description: "块ID（type=ref时）" },
+                hasTags: { type: "boolean", description: "是否有标签（type=block时）" },
               },
               required: ["type"],
             },
@@ -232,11 +246,11 @@ export const TOOLS: OpenAITool[] = [
           combineMode: {
             type: "string",
             enum: ["and", "or"],
-            description: "条件组合方式，默认 'and'",
+            description: "组合方式，默认and",
           },
           maxResults: {
             type: "number",
-            description: "返回的最大结果数（默认 20，最大 50）",
+            description: "最大结果数，默认20，最大50",
           },
         },
         required: ["conditions"],
@@ -247,20 +261,21 @@ export const TOOLS: OpenAITool[] = [
     type: "function",
     function: {
       name: "getRecentJournals",
-      description: `获取最近几天的日记完整内容。
-✅ 用于：查看最近 1-7 天的日记
-⚠️ days 参数最大为 7，超过 7 天请使用 getJournalsByDateRange
-❌ 不要用于查询整月/整年日记`,
+      description: `获取最近几天日记的完整内容（文字、图片等）。
+
+【何时使用】"最近几天的日记"、"这周写了什么"
+【参数】days: 天数，默认7，最大7
+【注意】超过7天用getJournalsByDateRange，只要今天用getTodayJournal`,
       parameters: {
         type: "object",
         properties: {
           days: {
             type: "number",
-            description: "追溯的天数（默认 7，最大 7）",
+            description: "天数，默认7，最大7",
           },
           includeChildren: {
             type: "boolean",
-            description: "是否包含日记条目的子块（默认 true）",
+            description: "包含子块，默认true",
           },
         },
       },
@@ -270,13 +285,15 @@ export const TOOLS: OpenAITool[] = [
     type: "function",
     function: {
       name: "getTodayJournal",
-      description: "获取今日日记的完整内容。当你需要了解用户今天的计划、记录或待办事项时使用。这是最常用的日记查询工具。",
+      description: `获取今天日记的完整内容。
+
+【何时使用】"今天写了什么"、"今天的日记"、"今天的计划"`,
       parameters: {
         type: "object",
         properties: {
           includeChildren: {
             type: "boolean",
-            description: "是否包含日记条目的子块（默认 true）",
+            description: "包含子块，默认true",
           },
         },
       },
@@ -286,18 +303,20 @@ export const TOOLS: OpenAITool[] = [
     type: "function",
     function: {
       name: "getJournalByDate",
-      description:
-        "获取指定日期的日记完整内容。日期格式必须为 YYYY-MM-DD（如 2026-01-01）或 today/yesterday。",
+      description: `获取指定日期的日记完整内容。
+
+【何时使用】"昨天的日记"、"1月5号写了什么"
+【参数】date: 格式YYYY-MM-DD如"2026-01-05"，或"today"/"yesterday"`,
       parameters: {
         type: "object",
         properties: {
           date: {
             type: "string",
-            description: "目标日期，格式 YYYY-MM-DD 或 today/yesterday",
+            description: "日期，格式YYYY-MM-DD或today/yesterday",
           },
           includeChildren: {
             type: "boolean",
-            description: "是否包含日记条目的子块（默认 true）",
+            description: "包含子块，默认true",
           },
         },
         required: ["date"],
@@ -308,38 +327,37 @@ export const TOOLS: OpenAITool[] = [
     type: "function",
     function: {
       name: "getJournalsByDateRange",
-      description: `按日期范围获取日记。支持按年、月、周或自定义范围查询。
-✅ 用于：
-- 某月的日记：rangeType="month", value="2024-05"
-- 本周日记：rangeType="week", value="this-week"
-- 上周日记：rangeType="week", value="last-week"
-- ISO周：rangeType="week", value="2024-W20"
-- 日期范围：rangeType="range", value="2024-05-01", endValue="2024-05-15"
-- 某年的日记：rangeType="year", value="2024"（建议设置 maxResults 限制数量）
-⚠️ 年份查询数据量大，建议设置 maxResults=30 或使用月份查询`,
+      description: `按日期范围获取日记。
+
+【用法】
+- 最近N天: rangeType="range", value="last-7-days"/"last-30-days"/"last-90-days"
+- 某月: rangeType="month", value="2024-05"
+- 某周: rangeType="week", value="this-week"/"last-week"
+- 某年: rangeType="year", value="2024"（建议maxResults=30）
+- 自定义: rangeType="range", value="2024-05-01", endValue="2024-05-15"`,
       parameters: {
         type: "object",
         properties: {
           rangeType: {
             type: "string",
             enum: ["year", "month", "week", "range"],
-            description: "范围类型：year(年), month(月), week(周), range(自定义范围)",
+            description: "范围类型",
           },
           value: {
             type: "string",
-            description: "范围值：年份(2024)、月份(2024-05)、周(this-week/last-week/2024-W20)、或开始日期(2024-05-01)",
+            description: "范围值，见上方说明",
           },
           endValue: {
             type: "string",
-            description: "结束日期，仅 rangeType=range 时需要，格式 YYYY-MM-DD",
+            description: "结束日期，仅自定义范围时需要",
           },
           includeChildren: {
             type: "boolean",
-            description: "是否包含日记条目的子块（默认 true）",
+            description: "包含子块，默认true",
           },
           maxResults: {
             type: "number",
-            description: "最大结果数（默认 31，最大 366）。年份查询建议设置为 30",
+            description: "最大结果数，默认31，最大366",
           },
         },
         required: ["rangeType", "value"],
@@ -350,15 +368,16 @@ export const TOOLS: OpenAITool[] = [
     type: "function",
     function: {
       name: "get_tag_schema",
-      description: `获取特定标签的架构定义，包括其所有可用属性的名称、类型和选项值。
-⚠️ 仅在用户明确要求查看标签结构时使用
-❌ 不要在查询前调用此工具，直接用 query_blocks_by_tag 查询即可`,
+      description: `获取标签的属性定义（属性名、类型、选项值）。
+
+【何时使用】用户问"#Task有哪些属性"、"#book的结构"
+【注意】不要在查询前调用，直接用query_blocks_by_tag查询即可`,
       parameters: {
         type: "object",
         properties: {
           tagName: {
             type: "string",
-            description: "标签名称（不带 #）",
+            description: "标签名，不带#号",
           },
         },
         required: ["tagName"],
@@ -369,25 +388,28 @@ export const TOOLS: OpenAITool[] = [
     type: "function",
     function: {
       name: "searchBlocksByReference",
-      description: "搜索引用了特定页面的所有笔记（反向链接）。这有助于发现不同笔记之间的关联。输入参数为页面标题或文件名。",
+      description: `搜索引用了某页面的所有笔记（反向链接）。
+
+【何时使用】"哪些笔记提到了[[某页面]]"、"某页面被引用了多少次"
+【参数】pageName: 页面名称，不带[[]]`,
       parameters: {
         type: "object",
         properties: {
           pageName: {
             type: "string",
-            description: "引用的页面名称（不带 [[ ]]）",
+            description: "页面名称，不带[[]]",
           },
           maxResults: {
             type: "number",
-            description: "返回的最大结果数（默认 20，最大 50）",
+            description: "最大结果数，默认20，最大50",
           },
           countOnly: {
             type: "boolean",
-            description: "仅返回总数统计",
+            description: "只返回数量",
           },
           briefMode: {
             type: "boolean",
-            description: "简洁模式：返回标题+摘要",
+            description: "只返回标题+摘要",
           },
         },
         required: ["pageName"],
@@ -398,7 +420,10 @@ export const TOOLS: OpenAITool[] = [
     type: "function",
     function: {
       name: "getPage",
-      description: "根据名称读取完整页面的内容。当你从搜索结果中找到感兴趣的页面时，使用此工具阅读其详细内容。支持追溯到页面根节点。",
+      description: `按名称读取页面完整内容。
+
+【何时使用】用户指定要看某个页面："打开[[某页面]]"
+【注意】搜索结果已包含内容，通常不需要再调用此工具`,
       parameters: {
         type: "object",
         properties: {
@@ -408,7 +433,7 @@ export const TOOLS: OpenAITool[] = [
           },
           includeChildren: {
             type: "boolean",
-            description: "是否包含所有子块内容（默认 true）",
+            description: "包含子块，默认true",
           },
         },
         required: ["pageName"],
@@ -419,22 +444,24 @@ export const TOOLS: OpenAITool[] = [
     type: "function",
     function: {
       name: "getBlock",
-      description: `根据块 ID 获取单个块的详细内容。当你需要查看某个特定块的完整内容时使用。
-⚠️ 如果要查看页面内容，优先使用 getPage（按名称查找更方便）`,
+      description: `按ID读取块的完整内容。
+
+【何时使用】需要查看特定块ID的内容
+【注意】如果知道页面名称，优先用getPage；搜索结果已包含内容，通常不需要再调用`,
       parameters: {
         type: "object",
         properties: {
           blockId: {
             type: "number",
-            description: "块的 ID（数字）",
+            description: "块ID，数字类型",
           },
           includeChildren: {
             type: "boolean",
-            description: "是否包含所有子块内容（默认 true）",
+            description: "包含子块，默认true",
           },
           includeMeta: {
             type: "boolean",
-            description: "是否包含元数据（创建时间、修改时间）",
+            description: "包含创建/修改时间",
           },
         },
         required: ["blockId"],
@@ -445,20 +472,20 @@ export const TOOLS: OpenAITool[] = [
     type: "function",
     function: {
       name: "getBlockMeta",
-      description: "批量获取多个块的元数据（创建时间、修改时间等）。适用于需要查询多个笔记时间信息的场景，如'最近修改的笔记'、'按时间排序'等。单个块请用 getBlock 的 includeMeta 参数。",
+      description: `批量获取多个块的元数据（创建/修改时间、标签、属性）。
+
+【何时使用】需要比较多个笔记的时间信息或批量获取属性`,
       parameters: {
         type: "object",
         properties: {
           blockIds: {
             type: "array",
-            description: "块 ID 列表（数字数组）",
-            items: {
-              type: "number",
-            },
+            description: "块ID数组",
+            items: { type: "number" },
           },
           fields: {
             type: "array",
-            description: "要获取的字段列表，可选值：created（创建时间）、modified（修改时间）、tags（标签）、properties（属性）。不传则返回所有字段。",
+            description: "要获取的字段",
             items: {
               type: "string",
               enum: ["created", "modified", "tags", "properties"],
@@ -473,30 +500,36 @@ export const TOOLS: OpenAITool[] = [
     type: "function",
     function: {
       name: "createBlock",
-      description: `在指定位置创建新笔记条目。你需要提供参考块 ID 以及新内容插入的位置（如子块末尾、当前块之后等）。
-⚠️ 内容格式要求：
-- 使用纯文本或 Markdown 格式
-- 不要包含 orca-block:xxx 这种内部链接格式
-- 如需引用页面，使用 [[页面名称]] 格式`,
+      description: `创建新笔记块。
+
+【何时使用】用户明确要求"创建"、"添加"、"写入"笔记
+【参数】
+- content: 必填，笔记内容，用纯文本或Markdown
+- pageName: 目标页面名称（推荐），在页面末尾创建
+- refBlockId: 参考块ID，与pageName二选一
+- position: 插入位置，默认lastChild
+
+【格式】用纯文本或Markdown，引用页面用[[页面名称]]，不要用orca-block:xxx
+【注意】只在用户明确要求时创建，成功后立即停止`,
       parameters: {
         type: "object",
         properties: {
           refBlockId: {
             type: "number",
-            description: "参考块的 ID（与 pageName 二选一）",
+            description: "参考块ID（与pageName二选一）",
           },
           pageName: {
             type: "string",
-            description: "页面名称。如果提供了此项，将在该页面末尾创建块（推荐使用）",
+            description: "目标页面名称（推荐）",
           },
           content: {
             type: "string",
-            description: "笔记内容（纯文本或 Markdown，不要用 orca-block 链接）",
+            description: "笔记内容，纯文本或Markdown",
           },
           position: {
             type: "string",
             enum: ["firstChild", "lastChild", "before", "after"],
-            description: "相对于参考块的插入位置，默认为 'lastChild' (作为子块末尾)",
+            description: "插入位置，默认lastChild",
           },
         },
         required: ["content"],
@@ -507,13 +540,13 @@ export const TOOLS: OpenAITool[] = [
     type: "function",
     function: {
       name: "createPage",
-      description: "为现有块创建页面别名（将其提升为标题页面）。",
+      description: `为块创建页面别名（将块提升为独立页面）。`,
       parameters: {
         type: "object",
         properties: {
           blockId: {
             type: "number",
-            description: "目标块 ID",
+            description: "目标块ID",
           },
           pageName: {
             type: "string",
@@ -528,26 +561,32 @@ export const TOOLS: OpenAITool[] = [
     type: "function",
     function: {
       name: "insertTag",
-      description: "为指定块添加标签。支持同时设置标签属性（如 #book {status: 'reading'}）。",
+      description: `为块添加标签。
+
+【何时使用】用户要求给笔记打标签
+【参数】
+- blockId: 目标块ID
+- tagName: 标签名，不带#号
+- properties: 可选，标签属性数组`,
       parameters: {
         type: "object",
         properties: {
           blockId: {
             type: "number",
-            description: "目标块 ID",
+            description: "目标块ID",
           },
           tagName: {
             type: "string",
-            description: "标签名（不带 #）",
+            description: "标签名，不带#号",
           },
           properties: {
             type: "array",
-            description: "标签属性列表（可选）",
+            description: "标签属性（可选）",
             items: {
               type: "object",
               properties: {
                 name: { type: "string", description: "属性名" },
-                value: { type: "string", description: "属性值（字符串形式）" },
+                value: { type: "string", description: "属性值" },
               },
               required: ["name", "value"],
             },
@@ -561,19 +600,21 @@ export const TOOLS: OpenAITool[] = [
     type: "function",
     function: {
       name: "getBlockLinks",
-      description: `获取指定页面或块的出链和入链（反链）列表。返回引用关系的详细信息。
-⚠️ 此工具仅返回链接数据的文本列表，不会生成可视化图谱
-❌ 如果用户要求"显示图谱"、"链接图"、"关系图"，请告知用户使用 /localgraph 命令`,
+      description: `获取块的出链和入链（反链）列表。
+
+【何时使用】查看某页面引用了哪些页面、被哪些页面引用
+【参数】blockId或pageName二选一
+【注意】只返回文本列表，不生成图谱。要看图谱请告知用户用/localgraph命令`,
       parameters: {
         type: "object",
         properties: {
           blockId: {
             type: "number",
-            description: "要查询链接关系的块 ID（与 pageName 二选一）",
+            description: "块ID（与pageName二选一）",
           },
           pageName: {
             type: "string",
-            description: "要查询链接关系的页面名称（与 blockId 二选一）",
+            description: "页面名称（与blockId二选一）",
           },
         },
       },
@@ -583,25 +624,23 @@ export const TOOLS: OpenAITool[] = [
     type: "function",
     function: {
       name: "getSavedAiConversations",
-      description: `获取已保存的 AI 对话记录。这些对话是用户之前与 AI 交流后保存到笔记中的内容。
-可用于：
-- 查找之前讨论过的话题
-- 回顾历史对话内容
-- 继续之前的讨论`,
+      description: `获取已保存的AI对话记录。
+
+【何时使用】"之前聊过什么"、"找找关于xxx的对话"`,
       parameters: {
         type: "object",
         properties: {
           query: {
             type: "string",
-            description: "搜索关键词（可选），用于过滤对话内容",
+            description: "搜索关键词（可选）",
           },
           maxResults: {
             type: "number",
-            description: "返回的最大结果数（默认 10，最大 30）",
+            description: "最大结果数，默认10，最大30",
           },
           briefMode: {
             type: "boolean",
-            description: "简洁模式：仅返回标题和摘要，不返回完整对话内容",
+            description: "只返回标题+摘要",
           },
         },
       },
@@ -1172,8 +1211,8 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
           setJournalExportCache(cacheId, rangeLabel, exportData);
           console.log(`[Tool] Cached ${exportData.length} entries with id: ${cacheId}`);
 
-          // 返回特殊标记，前端会检测并显示导出按钮
-          return `__JOURNAL_EXPORT__:${cacheId}:${exportData.length}:${rangeLabel}`;
+          // 返回 journal-export 代码块，前端会渲染为导出按钮
+          return `\`\`\`journal-export\ncache:${cacheId}\n\`\`\``;
         }
 
         const results = await getJournalsByDateRange(
@@ -1212,8 +1251,35 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
           setJournalExportCache(cacheId, rangeLabel, exportData);
           console.log(`[Tool] Cached ${exportData.length} entries with id: ${cacheId}`);
 
-          // 返回特殊标记，前端会检测并显示导出按钮
-          return `__JOURNAL_EXPORT__:${cacheId}:${exportData.length}:${rangeLabel}`;
+          // 返回 journal-export 代码块，前端会渲染为导出按钮
+          return `\`\`\`journal-export\ncache:${cacheId}\n\`\`\``;
+        }
+
+        // last-N-days 查询：显示导出按钮
+        const lastDaysMatch = value.match(/^last-(\d+)-days$/);
+        if (rangeType === "range" && lastDaysMatch) {
+          const days = parseInt(lastDaysMatch[1], 10);
+          const exportData = results
+            .map((r: any) => ({
+              date: r.title || "",
+              content: (r.fullContent || r.content || "").trim(),
+              blockId: r.id,
+            }))
+            .filter((entry: any) => entry.content.length > 0);
+          
+          const rangeLabel = `最近${days}天`;
+
+          if (exportData.length === 0) {
+            return `${rangeLabel}的日记都没有内容。`;
+          }
+
+          // 存入缓存，返回缓存 ID
+          const cacheId = `range-last-${days}-days-${Date.now()}`;
+          setJournalExportCache(cacheId, rangeLabel, exportData);
+          console.log(`[Tool] Cached ${exportData.length} entries with id: ${cacheId}`);
+
+          // 返回 journal-export 代码块，前端会渲染为导出按钮
+          return `\`\`\`journal-export\ncache:${cacheId}\n\`\`\``;
         }
 
         const preservationNote = addLinkPreservationNote(results.length);

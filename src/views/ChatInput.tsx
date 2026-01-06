@@ -57,14 +57,19 @@ const SLASH_COMMANDS: SlashCommandDef[] = [
   { command: "/table", description: "用表格格式展示结果", icon: "ti ti-table", category: "format" },
   { command: "/timeline", description: "以时间线格式展示结果", icon: "ti ti-clock", category: "format" },
   { command: "/compare", description: "对比模式，左右对比展示", icon: "ti ti-columns", category: "format" },
+  { command: "/list", description: "用列表格式展示结果", icon: "ti ti-list-check", category: "format" },
+  { command: "/steps", description: "分步骤展示操作流程", icon: "ti ti-stairs", category: "format" },
   // Style 风格类
   { command: "/brief", description: "简洁回答，不要长篇大论", icon: "ti ti-bolt", category: "style" },
   { command: "/detail", description: "详细回答，展开说明", icon: "ti ti-file-text", category: "style" },
   { command: "/summary", description: "总结模式，精炼内容要点", icon: "ti ti-list", category: "style" },
+  { command: "/eli5", description: "用简单易懂的方式解释", icon: "ti ti-bulb", category: "style" },
+  { command: "/formal", description: "正式专业的语气回答", icon: "ti ti-briefcase", category: "style" },
   // Visualization 可视化类
   { command: "/card", description: "生成闪卡，交互式复习并保存", icon: "ti ti-cards", category: "visualization" },
   { command: "/localgraph", description: "显示页面的链接关系图谱", icon: "ti ti-share", category: "visualization" },
   { command: "/mindmap", description: "显示块及子块的思维导图", icon: "ti ti-binary-tree", category: "visualization" },
+  { command: "/diagram", description: "生成流程图或示意图", icon: "ti ti-chart-dots", category: "visualization" },
 ];
 
 // 分类显示名称
@@ -152,6 +157,7 @@ export default function ChatInput({
   const addContextBtnRef = useRef<HTMLElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const slashMenuRef = useRef<HTMLDivElement | null>(null);
   const contextSnap = useSnapshot(contextStore);
 
   // 自动调整 textarea 高度
@@ -216,6 +222,34 @@ export default function ChatInput({
     return SLASH_COMMANDS.filter(cmd => recent.includes(cmd.command));
   }, []);
 
+  // 创建扁平化的菜单项列表（用于键盘导航）
+  const flatMenuItems = useMemo(() => {
+    const query = text.startsWith("/") ? text.slice(1).toLowerCase() : "";
+    if (query) {
+      // 有查询时，直接返回过滤结果
+      return filteredCommands;
+    }
+    // 无查询时，按最近使用 + 分类顺序排列
+    const items: SlashCommandDef[] = [];
+    const recentCmds = recentCommands.filter(cmd => 
+      filteredCommands.some(fc => fc.command === cmd.command)
+    );
+    items.push(...recentCmds);
+    
+    const grouped = groupCommandsByCategory(filteredCommands as SlashCommandType[]);
+    const categories: SlashCommandCategory[] = ["format", "style", "visualization"];
+    for (const category of categories) {
+      const cmds = grouped[category];
+      for (const cmd of cmds) {
+        // 跳过已在最近使用中的命令
+        if (!recentCmds.some(rc => rc.command === cmd.command)) {
+          items.push(cmd as SlashCommandDef);
+        }
+      }
+    }
+    return items;
+  }, [text, filteredCommands, recentCommands]);
+
   useEffect(() => {
     if (filteredCommands.length > 0 && text.startsWith("/") && !text.includes(" ")) {
       setSlashMenuOpen(true);
@@ -224,6 +258,16 @@ export default function ChatInput({
       setSlashMenuOpen(false);
     }
   }, [filteredCommands, text]);
+
+  // 斜杠菜单键盘导航时自动滚动到选中项
+  useEffect(() => {
+    if (!slashMenuOpen || !slashMenuRef.current) return;
+    const container = slashMenuRef.current;
+    const selectedItem = container.querySelector(`[data-slash-index="${slashMenuIndex}"]`) as HTMLElement;
+    if (selectedItem) {
+      selectedItem.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    }
+  }, [slashMenuIndex, slashMenuOpen]);
 
   // Load chat mode from storage on mount (Requirements: 5.2)
   useEffect(() => {
@@ -270,20 +314,20 @@ export default function ChatInput({
   const handleKeyDown = useCallback(
     (e: any) => {
       // 斜杠菜单键盘导航
-      if (slashMenuOpen && filteredCommands.length > 0) {
+      if (slashMenuOpen && flatMenuItems.length > 0) {
         if (e.key === "ArrowDown") {
           e.preventDefault();
-          setSlashMenuIndex(i => (i + 1) % filteredCommands.length);
+          setSlashMenuIndex(i => (i + 1) % flatMenuItems.length);
           return;
         }
         if (e.key === "ArrowUp") {
           e.preventDefault();
-          setSlashMenuIndex(i => (i - 1 + filteredCommands.length) % filteredCommands.length);
+          setSlashMenuIndex(i => (i - 1 + flatMenuItems.length) % flatMenuItems.length);
           return;
         }
         if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey)) {
           e.preventDefault();
-          const cmd = filteredCommands[slashMenuIndex];
+          const cmd = flatMenuItems[slashMenuIndex];
           if (cmd) {
             setText(cmd.command + " ");
             if (textareaRef.current) {
@@ -318,7 +362,7 @@ export default function ChatInput({
         }
       }
     },
-    [handleSend, slashMenuOpen, filteredCommands, slashMenuIndex]
+    [handleSend, slashMenuOpen, flatMenuItems, slashMenuIndex]
   );
 
   const handlePickerClose = useCallback(() => {
@@ -568,6 +612,7 @@ export default function ChatInput({
       slashMenuOpen && filteredCommands.length > 0 && createElement(
         "div",
         {
+          ref: slashMenuRef,
           style: {
             position: "absolute",
             bottom: "100%",
@@ -618,6 +663,7 @@ export default function ChatInput({
                 elements.push(
                   createElement("div", {
                     key: `recent-${cmd.command}`,
+                    "data-slash-index": currentIndex,
                     onClick: () => {
                       setText(cmd.command + " ");
                       if (textareaRef.current) {
@@ -680,6 +726,7 @@ export default function ChatInput({
                 elements.push(
                   createElement("div", {
                     key: cmd.command,
+                    "data-slash-index": currentIndex,
                     onClick: () => {
                       setText(cmd.command + " ");
                       if (textareaRef.current) {
@@ -715,6 +762,7 @@ export default function ChatInput({
               elements.push(
                 createElement("div", {
                   key: cmd.command,
+                  "data-slash-index": currentIndex,
                   onClick: () => {
                     setText(cmd.command + " ");
                     if (textareaRef.current) {

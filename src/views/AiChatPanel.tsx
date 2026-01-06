@@ -790,6 +790,65 @@ export default function AiChatPanel({ panelId }: PanelProps) {
 4. 对比项要一一对应，便于比较`;
 	    }
 
+	    // /list - 列表格式
+	    if (content.includes("/list")) {
+	      processedContent = processedContent.replace(/\/list/g, "").trim();
+	      systemPrompt += `\n\n【格式要求 - 列表】用户要求使用列表格式展示结果。请：
+1. 使用有序或无序列表呈现信息
+2. 每个列表项简洁明了
+3. 相关项目可以使用嵌套列表
+4. 如有链接，使用 [标题](orca-block:id) 格式`;
+	    }
+
+	    // /steps - 步骤格式
+	    if (content.includes("/steps")) {
+	      processedContent = processedContent.replace(/\/steps/g, "").trim();
+	      systemPrompt += `\n\n【格式要求 - 步骤】用户要求分步骤展示操作流程。请：
+1. 使用有序列表，每步一个编号
+2. 每步标题简洁，后面可以补充说明
+3. 步骤之间有清晰的逻辑顺序
+4. 如有注意事项，在相关步骤后用缩进说明`;
+	    }
+
+	    // /eli5 - 简单易懂解释
+	    if (content.includes("/eli5")) {
+	      processedContent = processedContent.replace(/\/eli5/g, "").trim();
+	      systemPrompt += `\n\n【回答风格 - 简单易懂】用户要求用简单易懂的方式解释。请：
+1. 避免专业术语，用日常用语
+2. 多用比喻和类比帮助理解
+3. 从基础概念讲起，循序渐进
+4. 举生活中的例子说明`;
+	    }
+
+	    // /formal - 正式专业语气
+	    if (content.includes("/formal")) {
+	      processedContent = processedContent.replace(/\/formal/g, "").trim();
+	      systemPrompt += `\n\n【回答风格 - 正式专业】用户要求使用正式专业的语气回答。请：
+1. 使用规范的书面语言
+2. 结构清晰，逻辑严谨
+3. 适当使用专业术语
+4. 保持客观中立的语气`;
+	    }
+
+	    // /diagram - 流程图/示意图
+	    if (content.includes("/diagram")) {
+	      processedContent = processedContent.replace(/\/diagram/g, "").trim();
+	      systemPrompt += `\n\n【格式要求 - 流程图】用户要求生成流程图或示意图。请使用 Mermaid 语法：
+\`\`\`mermaid
+graph TD
+    A[开始] --> B{判断条件}
+    B -->|是| C[执行操作1]
+    B -->|否| D[执行操作2]
+    C --> E[结束]
+    D --> E
+\`\`\`
+要求：
+1. 使用 mermaid 代码块
+2. 根据内容选择合适的图表类型（flowchart、sequence、mindmap 等）
+3. 节点文字简洁明了
+4. 连线标注清晰`;
+	    }
+
 	    // /localgraph - 链接关系图谱（直接渲染图谱，不走 AI）
 	    if (content.includes("/localgraph")) {
 	      const graphQuery = processedContent.replace(/\/localgraph/g, "").trim();
@@ -1531,6 +1590,23 @@ export default function AiChatPanel({ panelId }: PanelProps) {
             name: toolName,
             createdAt: Date.now(),
           });
+          
+          // 检查是否是直接渲染的工具结果（如日记导出），跳过 AI 后续处理
+          if (result.includes("```journal-export")) {
+            console.log(`[AI] [Round ${toolRound}] Direct render tool result detected, skipping AI follow-up`);
+            allToolResultMessages.push(...toolResultMessages);
+            conversation.push(...toolResultMessages);
+            setMessages((prev) => [...prev, ...toolResultMessages]);
+            queueMicrotask(scrollToBottom);
+            // 直接结束工具循环，不再调用 AI
+            currentToolCalls = [];
+            break;
+          }
+        }
+        
+        // 如果已经处理了直接渲染的结果，跳过后续 AI 调用
+        if (currentToolCalls.length === 0 && toolResultMessages.some(m => m.content.includes("```journal-export"))) {
+          break;
         }
 
         allToolResultMessages.push(...toolResultMessages);
@@ -2098,8 +2174,9 @@ export default function AiChatPanel({ panelId }: PanelProps) {
     }
 
     messages.forEach((m, i) => {
-      // 跳过 tool 消息，它们会被合并到 assistant 消息的工具调用区域
-      if (m.role === "tool") return;
+      // 跳过普通 tool 消息，它们会被合并到 assistant 消息的工具调用区域
+      // 但保留包含 journal-export 的 tool 消息，需要单独渲染导出按钮
+      if (m.role === "tool" && !m.content.includes("```journal-export")) return;
 
       // 添加日期分隔符（如果是新的一天）
       // **Feature: chat-ui-enhancement**

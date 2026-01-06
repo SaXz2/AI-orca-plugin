@@ -1,4 +1,5 @@
 import { parseMarkdown, type MarkdownInlineNode, type MarkdownNode, type TableAlignment, type CheckboxItem, type TimelineItem, type CompareItem, type GalleryImage } from "../utils/markdown-renderer";
+import { journalExportDataCache } from "../services/ai-tools";
 import LocalGraph from "./LocalGraph";
 import MindMapRenderer from "./MindMapRenderer";
 import {
@@ -121,9 +122,6 @@ function CodeBlock({ language, content }: { language?: string; content: string }
   );
 }
 
-// 全局缓存：存储大型日记导出数据
-const journalExportCache = new Map<string, { rangeLabel: string; entries: any[] }>();
-
 // Helper component for Journal Export Button
 function JournalExportBlock({ content }: { content: string }) {
   const [exporting, setExporting] = useState(false);
@@ -131,7 +129,7 @@ function JournalExportBlock({ content }: { content: string }) {
   const [data, setData] = useState(null as { rangeLabel: string; entries: any[] } | null);
 
   // 解析缓存 ID 中的日期信息
-  // 格式：cache:year-2025-timestamp 或 cache:month-2025-01-timestamp
+  // 格式：cache:year-2025-timestamp 或 cache:month-2025-01-timestamp 或 cache:range-last-30-days-timestamp
   const parseCacheId = (cacheId: string) => {
     const yearMatch = cacheId.match(/^year-(\d{4})-/);
     if (yearMatch) {
@@ -140,6 +138,10 @@ function JournalExportBlock({ content }: { content: string }) {
     const monthMatch = cacheId.match(/^month-(\d{4}-\d{2})-/);
     if (monthMatch) {
       return { type: "month" as const, value: monthMatch[1] };
+    }
+    const lastDaysMatch = cacheId.match(/^range-last-(\d+)-days-/);
+    if (lastDaysMatch) {
+      return { type: "range" as const, value: `last-${lastDaysMatch[1]}-days` };
     }
     return null;
   };
@@ -151,10 +153,11 @@ function JournalExportBlock({ content }: { content: string }) {
     // 检查是否是缓存 ID
     if (trimmed.startsWith("cache:")) {
       const cacheId = trimmed.substring(6);
-      const cached = journalExportCache.get(cacheId);
+      // 使用 ai-tools 的全局缓存
+      const cached = journalExportDataCache.get(cacheId);
       if (cached) {
         console.log("[JournalExportBlock] Found cached data:", cacheId);
-        setData(cached);
+        setData({ rangeLabel: cached.rangeLabel, entries: cached.entries });
         return;
       }
       
@@ -190,7 +193,8 @@ function JournalExportBlock({ content }: { content: string }) {
                 })();
             
             const newData = { rangeLabel, entries: exportData };
-            journalExportCache.set(cacheId, newData);
+            // 存入全局缓存
+            journalExportDataCache.set(cacheId, { ...newData, cachedAt: Date.now() });
             setData(newData);
           } catch (err) {
             console.error("[JournalExportBlock] Failed to re-fetch:", err);
@@ -210,12 +214,17 @@ function JournalExportBlock({ content }: { content: string }) {
     }
   }, [content]);
 
-  const handleExport = async () => {
+  const handleExport = async (format: "md" | "json" = "md") => {
     if (!data) return;
     try {
       setExporting(true);
-      const { exportJournalsAsFile } = await import("../services/export-service");
-      exportJournalsAsFile(data.entries, data.rangeLabel);
+      if (format === "json") {
+        const { exportJournalsAsJson } = await import("../services/export-service");
+        exportJournalsAsJson(data.entries, data.rangeLabel);
+      } else {
+        const { exportJournalsAsFile } = await import("../services/export-service");
+        exportJournalsAsFile(data.entries, data.rangeLabel);
+      }
     } catch (err) {
       console.error("Failed to export journals:", err);
       orca.notify("error", "导出失败: " + (err as Error).message);
@@ -226,6 +235,24 @@ function JournalExportBlock({ content }: { content: string }) {
 
   const entryCount = data?.entries?.length || 0;
   const rangeLabel = data?.rangeLabel || "";
+
+  const buttonDisabled = exporting || loading || entryCount === 0;
+  const buttonStyle = {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: "8px",
+    padding: "10px 16px",
+    background: buttonDisabled ? "var(--orca-color-bg-3)" : "#2563eb",
+    color: buttonDisabled ? "var(--orca-color-text-3)" : "#ffffff",
+    border: "none",
+    borderRadius: "6px",
+    cursor: buttonDisabled ? "not-allowed" : "pointer",
+    fontSize: "14px",
+    fontWeight: 500,
+    transition: "all 0.2s",
+    flex: 1,
+  };
 
   return createElement(
     "div",
@@ -254,29 +281,35 @@ function JournalExportBlock({ content }: { content: string }) {
       createElement("i", { className: loading ? "ti ti-loader" : "ti ti-file-export", style: { fontSize: "20px" } }),
       createElement("span", null, loading ? "加载中..." : `${rangeLabel} - 共 ${entryCount} 篇日记`)
     ),
+    // 两个导出按钮
     createElement(
-      "button",
+      "div",
       {
-        onClick: handleExport,
-        disabled: exporting || loading || entryCount === 0,
         style: {
           display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
           gap: "8px",
-          padding: "10px 20px",
-          background: exporting || loading || entryCount === 0 ? "var(--orca-color-bg-3)" : "#2563eb",
-          color: exporting || loading || entryCount === 0 ? "var(--orca-color-text-3)" : "#ffffff",
-          border: "none",
-          borderRadius: "6px",
-          cursor: exporting || loading || entryCount === 0 ? "not-allowed" : "pointer",
-          fontSize: "14px",
-          fontWeight: 500,
-          transition: "all 0.2s",
         },
       },
-      createElement("i", { className: exporting ? "ti ti-loader" : "ti ti-download" }),
-      exporting ? "导出中..." : loading ? "加载中..." : entryCount === 0 ? "无数据可导出" : "导出为 Markdown 文件"
+      createElement(
+        "button",
+        {
+          onClick: () => handleExport("md"),
+          disabled: buttonDisabled,
+          style: buttonStyle,
+        },
+        createElement("i", { className: exporting ? "ti ti-loader" : "ti ti-markdown" }),
+        "Markdown"
+      ),
+      createElement(
+        "button",
+        {
+          onClick: () => handleExport("json"),
+          disabled: buttonDisabled,
+          style: { ...buttonStyle, background: buttonDisabled ? "var(--orca-color-bg-3)" : "#059669" },
+        },
+        createElement("i", { className: exporting ? "ti ti-loader" : "ti ti-braces" }),
+        "JSON"
+      )
     ),
     createElement(
       "div",
@@ -1416,4 +1449,4 @@ export default function MarkdownMessage({ content, role }: Props) {
 }
 
 // 导出缓存供外部使用
-export { journalExportCache };
+export { journalExportDataCache };
