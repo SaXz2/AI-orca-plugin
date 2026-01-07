@@ -1480,13 +1480,18 @@ graph TD
           
           // 生成检索过程摘要作为 reasoning
           const retrieveSteps = ragResult.steps.filter(s => s.type === "retrieve");
+          const correctSteps = ragResult.steps.filter(s => s.type === "correct");
           const ragSummary = [
             `🧠 **Agentic RAG 检索过程**`,
             `- 迭代轮数: ${ragResult.iterations}`,
-            `- 检索步骤: ${retrieveSteps.length}`,
-            ...retrieveSteps.map(s => `- ${getToolDisplayName(s.tool || "")}: ${s.reasoning}`),
+            `- 检索步骤: ${retrieveSteps.length}${correctSteps.length > 0 ? ` (含 ${correctSteps.length} 次策略修正)` : ""}`,
+            ...retrieveSteps.map(s => {
+              const status = s.result?.includes("Error") ? "❌" : (s.result?.includes("No ") ? "⚠️" : "✅");
+              return `- ${status} ${getToolDisplayName(s.tool || "")}: ${s.reasoning}`;
+            }),
+            ragResult.strategySummary ? `- 📊 ${ragResult.strategySummary}` : "",
             ragResult.hitLimit ? `- ⚠️ 达到最大轮数限制` : `- ✅ 信息收集完成`,
-          ].join("\n");
+          ].filter(Boolean).join("\n");
           
           updateMessage(assistantId, {
             content: ragResult.answer,
