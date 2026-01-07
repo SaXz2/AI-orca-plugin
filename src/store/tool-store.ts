@@ -91,6 +91,16 @@ export const TOOL_DISPLAY_NAMES: Record<string, string> = {
 const DEFAULT_TOOL_STATUS: ToolStatus = "auto";
 
 /**
+ * Agentic RAG 配置
+ */
+export interface AgenticRAGConfig {
+  /** 最大迭代次数（防止无限循环） */
+  maxIterations: number;
+  /** 是否启用反思机制（评估检索结果质量） */
+  enableReflection: boolean;
+}
+
+/**
  * 工具 Store
  */
 interface ToolStore {
@@ -100,12 +110,21 @@ interface ToolStore {
   showPanel: boolean;
   /** 联网搜索开关 */
   webSearchEnabled: boolean;
+  /** Agentic RAG 开关（深度检索模式） */
+  agenticRAGEnabled: boolean;
+  /** Agentic RAG 配置 */
+  agenticRAGConfig: AgenticRAGConfig;
 }
 
 export const toolStore = proxy<ToolStore>({
   toolStatus: {},
   showPanel: false,
   webSearchEnabled: false,
+  agenticRAGEnabled: false,
+  agenticRAGConfig: {
+    maxIterations: 5,
+    enableReflection: true,
+  },
 });
 
 /**
@@ -174,6 +193,44 @@ export function isWebSearchEnabled(): boolean {
 }
 
 /**
+ * 切换 Agentic RAG 开关
+ */
+export function toggleAgenticRAG(): void {
+  toolStore.agenticRAGEnabled = !toolStore.agenticRAGEnabled;
+  saveToolSettings();
+}
+
+/**
+ * 设置 Agentic RAG 状态
+ */
+export function setAgenticRAGEnabled(enabled: boolean): void {
+  toolStore.agenticRAGEnabled = enabled;
+  saveToolSettings();
+}
+
+/**
+ * 获取 Agentic RAG 状态
+ */
+export function isAgenticRAGEnabled(): boolean {
+  return toolStore.agenticRAGEnabled;
+}
+
+/**
+ * 更新 Agentic RAG 配置
+ */
+export function updateAgenticRAGConfig(config: Partial<AgenticRAGConfig>): void {
+  toolStore.agenticRAGConfig = { ...toolStore.agenticRAGConfig, ...config };
+  saveToolSettings();
+}
+
+/**
+ * 获取 Agentic RAG 配置
+ */
+export function getAgenticRAGConfig(): AgenticRAGConfig {
+  return toolStore.agenticRAGConfig;
+}
+
+/**
  * 保存工具设置到本地存储
  */
 function saveToolSettings(): void {
@@ -181,6 +238,8 @@ function saveToolSettings(): void {
     const settings = {
       toolStatus: toolStore.toolStatus,
       webSearchEnabled: toolStore.webSearchEnabled,
+      agenticRAGEnabled: toolStore.agenticRAGEnabled,
+      agenticRAGConfig: toolStore.agenticRAGConfig,
     };
     localStorage.setItem("ai-chat-tool-settings", JSON.stringify(settings));
   } catch (e) {
@@ -201,6 +260,13 @@ export function loadToolSettings(): void {
         if (parsed.toolStatus) {
           toolStore.toolStatus = parsed.toolStatus;
           toolStore.webSearchEnabled = parsed.webSearchEnabled ?? false;
+          toolStore.agenticRAGEnabled = parsed.agenticRAGEnabled ?? false;
+          if (parsed.agenticRAGConfig) {
+            toolStore.agenticRAGConfig = {
+              ...toolStore.agenticRAGConfig,
+              ...parsed.agenticRAGConfig,
+            };
+          }
         } else {
           // 旧格式：直接是 toolStatus 对象
           toolStore.toolStatus = parsed;

@@ -2066,28 +2066,52 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
         // 通过标签搜索已保存的 AI 对话
         const result = await orca.invokeBackend("get-blocks-with-tags", ["Ai会话保存"]);
         
+        console.log("[getSavedAiConversations] Found blocks with tag:", result?.length || 0);
+        
         if (!result || !Array.isArray(result) || result.length === 0) {
           return "未找到已保存的 AI 对话记录。";
         }
 
+        // 获取完整的块信息（包括 text 字段）
+        const fullBlocks = result.map((block: any) => {
+          const fullBlock = orca.state.blocks[block.id] || block;
+          return { ...block, ...fullBlock };
+        });
+
         // 过滤和处理结果
-        let conversations = result;
+        let conversations = fullBlocks;
         
         // 如果有搜索关键词，过滤结果
         if (query) {
           const lowerQuery = query.toLowerCase();
+          console.log("[getSavedAiConversations] Searching for:", lowerQuery);
+          
           conversations = conversations.filter((block: any) => {
+            // 搜索块的 text 字段（可搜索文本）
+            const blockText = block.text || "";
+            if (blockText.toLowerCase().includes(lowerQuery)) {
+              console.log("[getSavedAiConversations] Found in text field");
+              return true;
+            }
+            
+            // 搜索 _repr 里的内容
             const repr = block._repr || {};
             const title = repr.title || "";
             const messages = repr.messages || [];
             
             // 搜索标题
-            if (title.toLowerCase().includes(lowerQuery)) return true;
+            if (title.toLowerCase().includes(lowerQuery)) {
+              console.log("[getSavedAiConversations] Found in title");
+              return true;
+            }
             
             // 搜索对话内容
             for (const msg of messages) {
               const content = msg.content || "";
-              if (content.toLowerCase().includes(lowerQuery)) return true;
+              if (content.toLowerCase().includes(lowerQuery)) {
+                console.log("[getSavedAiConversations] Found in message content");
+                return true;
+              }
             }
             
             return false;

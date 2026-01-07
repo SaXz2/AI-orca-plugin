@@ -23,7 +23,7 @@ import { textareaStyle, sendButtonStyle } from "./chat-input";
 import { MultiModelToggleButton } from "../components/MultiModelSelector";
 import { multiModelStore } from "../store/multi-model-store";
 import ToolPanel from "../components/ToolPanel";
-import { loadToolSettings, toolStore, toggleWebSearch } from "../store/tool-store";
+import { loadToolSettings, toolStore, toggleWebSearch, toggleAgenticRAG } from "../store/tool-store";
 
 const React = window.React as unknown as {
   createElement: typeof window.React.createElement;
@@ -1219,6 +1219,24 @@ export default function ChatInput({
               },
             },
             createElement("i", { className: "ti ti-world-search" })
+          ),
+          // Agentic RAG 开关（深度检索模式）
+          createElement(
+            Button,
+            {
+              variant: "plain",
+              onClick: toggleAgenticRAG,
+              title: toolSnap.agenticRAGEnabled 
+                ? "关闭深度检索（Agentic RAG）\n当前：AI 会多轮迭代检索，消耗更多 token" 
+                : "开启深度检索（Agentic RAG）\n开启后：AI 会自主规划检索策略，多轮迭代直到信息充足",
+              style: { 
+                padding: "4px",
+                color: toolSnap.agenticRAGEnabled ? "var(--orca-color-warning, #f59e0b)" : undefined,
+                background: toolSnap.agenticRAGEnabled ? "rgba(245, 158, 11, 0.1)" : undefined,
+                borderRadius: "4px",
+              },
+            },
+            createElement("i", { className: "ti ti-brain" })
           ),
           // Token 预估显示
           tokenEstimate.inputTokens > 0 && createElement(

@@ -1,6 +1,6 @@
 /**
  * Web Search Service
- * 支持多个搜索引擎：Tavily, Serper, Bing, DuckDuckGo, Brave, SearXNG, You.com
+ * 支持多个搜索引擎：Tavily, Bing, DuckDuckGo, Brave, SearXNG, Google
  */
 
 export interface SearchResult {
@@ -23,7 +23,7 @@ export interface SearchResponse {
 // 搜索引擎类型定义
 // ═══════════════════════════════════════════════════════════════════════════
 
-export type SearchProvider = "tavily" | "serper" | "bing" | "duckduckgo" | "brave" | "searxng" | "you";
+export type SearchProvider = "tavily" | "bing" | "duckduckgo" | "brave" | "searxng" | "google";
 
 export interface TavilyConfig {
   apiKey: string;
@@ -31,12 +31,6 @@ export interface TavilyConfig {
   includeAnswer?: boolean;
   includeDomains?: string[];
   excludeDomains?: string[];
-}
-
-export interface SerperConfig {
-  apiKey: string;
-  gl?: string;  // 国家代码，如 "cn", "us"
-  hl?: string;  // 语言代码，如 "zh-cn", "en"
 }
 
 export interface BingConfig {
@@ -61,20 +55,24 @@ export interface SearXNGConfig {
   language?: string;  // 语言，如 "zh-CN", "en"
 }
 
-export interface YouConfig {
-  apiKey: string;
+export interface GoogleConfig {
+  apiKey: string;  // Google Cloud API Key
+  searchEngineId: string;  // Programmable Search Engine ID (cx)
+  gl?: string;  // 国家代码，如 "cn", "us"
+  hl?: string;  // 界面语言，如 "zh-CN", "en"
+  lr?: string;  // 搜索结果语言，如 "lang_zh-CN", "lang_en"
+  safe?: "off" | "active";  // 安全搜索
 }
 
 export interface SearchConfig {
   provider: SearchProvider;
   maxResults?: number;
   tavily?: TavilyConfig;
-  serper?: SerperConfig;
   bing?: BingConfig;
   duckduckgo?: DuckDuckGoConfig;
   brave?: BraveConfig;
   searxng?: SearXNGConfig;
-  you?: YouConfig;
+  google?: GoogleConfig;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -136,71 +134,6 @@ async function searchTavily(query: string, maxResults: number, config: TavilyCon
       publishedDate: r.published_date,
     })),
     answer: data.answer,
-    responseTime: Date.now() - startTime,
-  };
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// Serper API (Google Search)
-// ═══════════════════════════════════════════════════════════════════════════
-
-const SERPER_API_URL = "https://google.serper.dev/search";
-
-async function searchSerper(query: string, maxResults: number, config: SerperConfig): Promise<SearchResponse> {
-  const { apiKey, gl = "us", hl = "en" } = config;
-
-  if (!apiKey) {
-    throw new Error("Serper API Key 未配置");
-  }
-
-  const startTime = Date.now();
-  const response = await fetch(SERPER_API_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-API-KEY": apiKey,
-    },
-    body: JSON.stringify({
-      q: query,
-      gl,
-      hl,
-      num: maxResults,
-    }),
-  });
-
-  if (!response.ok) {
-    if (response.status === 401) throw new Error("Serper API Key 无效");
-    if (response.status === 429) throw new Error("Serper API 调用次数已达上限");
-    throw new Error(`Serper API 错误: ${response.status}`);
-  }
-
-  const data = await response.json();
-  const results: SearchResult[] = [];
-
-  // 处理 organic 结果
-  if (data.organic) {
-    for (const r of data.organic.slice(0, maxResults)) {
-      results.push({
-        title: r.title || "",
-        url: r.link || "",
-        content: r.snippet || "",
-      });
-    }
-  }
-
-  // 如果有 answerBox，作为答案
-  let answer: string | undefined;
-  if (data.answerBox?.answer) {
-    answer = data.answerBox.answer;
-  } else if (data.answerBox?.snippet) {
-    answer = data.answerBox.snippet;
-  }
-
-  return {
-    query,
-    provider: "Serper (Google)",
-    results,
-    answer,
     responseTime: Date.now() - startTime,
   };
 }
@@ -434,11 +367,12 @@ async function searchBrave(
 // ═══════════════════════════════════════════════════════════════════════════
 
 // 公共 SearXNG 实例列表（按稳定性排序）
+// 注意：很多公共实例会限制 API 访问，建议自建或使用其他搜索引擎
 const SEARXNG_PUBLIC_INSTANCES = [
   "https://searx.be",
-  "https://search.bus-hit.me",
-  "https://searx.tiekoetter.com",
-  "https://search.ononoki.org",
+  "https://search.sapti.me",
+  "https://searx.tuxcloud.net",
+  "https://search.mdosch.de",
 ];
 
 async function searchSearXNG(
@@ -454,103 +388,312 @@ async function searchSearXNG(
   let lastError: Error | null = null;
 
   for (const instance of instances) {
+    // 清理实例 URL，移除尾部斜杠
+    const cleanInstance = instance.replace(/\/+$/, "");
+    console.log(`[SearXNG] Trying instance: ${cleanInstance}`);
+
+    // 方法1: 尝试 JSON API
     try {
-      const url = new URL(`${instance}/search`);
-      url.searchParams.set("q", query);
-      url.searchParams.set("format", "json");
-      url.searchParams.set("language", language);
-
-      const response = await fetch(url.toString(), {
-        headers: {
-          Accept: "application/json",
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        },
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
+      const results = await searchSearXNGJson(cleanInstance, query, maxResults, language);
+      if (results.length > 0) {
+        return {
+          query,
+          provider: `SearXNG`,
+          results,
+          responseTime: Date.now() - startTime,
+        };
       }
-
-      const data = await response.json();
-      const results: SearchResult[] = [];
-
-      if (data.results) {
-        for (const r of data.results.slice(0, maxResults)) {
-          results.push({
-            title: r.title || "",
-            url: r.url || "",
-            content: r.content || r.title || "",
-            publishedDate: r.publishedDate,
-          });
-        }
-      }
-
-      return {
-        query,
-        provider: `SearXNG`,
-        results,
-        responseTime: Date.now() - startTime,
-      };
     } catch (error: any) {
+      console.log(`[SearXNG] JSON API failed: ${error.message}, trying HTML fallback...`);
+    }
+
+    // 方法2: 尝试 HTML 解析（很多实例禁用 JSON 但允许 HTML）
+    try {
+      const results = await searchSearXNGHtml(cleanInstance, query, maxResults, language);
+      if (results.length > 0) {
+        console.log(`[SearXNG] HTML fallback succeeded with ${results.length} results`);
+        return {
+          query,
+          provider: `SearXNG`,
+          results,
+          responseTime: Date.now() - startTime,
+        };
+      }
+    } catch (error: any) {
+      console.warn(`[SearXNG] Instance ${instance} failed completely:`, error.message);
       lastError = error;
-      // 继续尝试下一个实例
     }
   }
 
   throw new Error(lastError?.message || "所有 SearXNG 实例都不可用");
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// You.com Search API
-// ═══════════════════════════════════════════════════════════════════════════
-
-const YOU_API_URL = "https://api.ydc-index.io/search";
-
-async function searchYou(
+/**
+ * SearXNG JSON API 搜索
+ */
+async function searchSearXNGJson(
+  instanceUrl: string,
   query: string,
   maxResults: number,
-  config: YouConfig
-): Promise<SearchResponse> {
-  const { apiKey } = config;
-
-  if (!apiKey) {
-    throw new Error("You.com API Key 未配置");
-  }
-
-  const startTime = Date.now();
-  const url = new URL(YOU_API_URL);
-  url.searchParams.set("query", query);
-  url.searchParams.set("num_web_results", String(maxResults));
+  language: string
+): Promise<SearchResult[]> {
+  const url = new URL(`${instanceUrl}/search`);
+  url.searchParams.set("q", query);
+  url.searchParams.set("format", "json");
+  url.searchParams.set("language", language);
+  url.searchParams.set("categories", "general");
+  url.searchParams.set("pageno", "1");
 
   const response = await fetch(url.toString(), {
+    method: "GET",
     headers: {
-      "X-API-Key": apiKey,
+      "Accept": "application/json, text/javascript, */*; q=0.01",
+      "Accept-Language": "en-US,en;q=0.9,zh-CN;q=0.8,zh;q=0.7",
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      "Referer": `${instanceUrl}/`,
     },
+    credentials: "omit",
+    mode: "cors",
   });
 
   if (!response.ok) {
-    if (response.status === 401) throw new Error("You.com API Key 无效");
-    if (response.status === 429) throw new Error("You.com API 调用次数已达上限");
-    throw new Error(`You.com API 错误: ${response.status}`);
+    throw new Error(`HTTP ${response.status}`);
   }
 
   const data = await response.json();
   const results: SearchResult[] = [];
 
-  if (data.hits) {
-    for (const r of data.hits.slice(0, maxResults)) {
+  if (data.results) {
+    for (const r of data.results.slice(0, maxResults)) {
       results.push({
         title: r.title || "",
         url: r.url || "",
-        content: r.description || r.snippet || "",
+        content: r.content || r.title || "",
+        publishedDate: r.publishedDate,
       });
     }
   }
 
+  console.log(`[SearXNG] JSON API found ${results.length} results`);
+  return results;
+}
+
+/**
+ * SearXNG HTML 解析搜索（备用方案）
+ * 当 JSON API 被禁用时使用
+ */
+async function searchSearXNGHtml(
+  instanceUrl: string,
+  query: string,
+  maxResults: number,
+  language: string
+): Promise<SearchResult[]> {
+  const url = new URL(`${instanceUrl}/search`);
+  url.searchParams.set("q", query);
+  url.searchParams.set("language", language);
+  url.searchParams.set("categories", "general");
+
+  const response = await fetch(url.toString(), {
+    method: "GET",
+    headers: {
+      "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      "Accept-Language": "en-US,en;q=0.9,zh-CN;q=0.8,zh;q=0.7",
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      "Referer": `${instanceUrl}/`,
+    },
+    credentials: "omit",
+    mode: "cors",
+  });
+
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+
+  const html = await response.text();
+  const results: SearchResult[] = [];
+
+  // SearXNG HTML 结果格式解析
+  // 结果通常在 <article class="result"> 或 <div class="result"> 中
+  
+  // 模式1: 新版 SearXNG 格式
+  // <article class="result">
+  //   <a href="..." class="url_header">...</a>
+  //   <h3><a href="...">title</a></h3>
+  //   <p class="content">snippet</p>
+  // </article>
+  const articleRegex = /<article[^>]*class="[^"]*result[^"]*"[^>]*>([\s\S]*?)<\/article>/gi;
+  let articleMatch;
+  
+  while ((articleMatch = articleRegex.exec(html)) !== null && results.length < maxResults) {
+    const articleHtml = articleMatch[1];
+    
+    // 提取 URL 和标题
+    const linkMatch = articleHtml.match(/<h[34][^>]*>[\s\S]*?<a[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/i);
+    if (!linkMatch) continue;
+    
+    const resultUrl = linkMatch[1];
+    const title = decodeHTMLEntities(linkMatch[2].replace(/<[^>]*>/g, "").trim());
+    
+    // 提取摘要
+    const contentMatch = articleHtml.match(/<p[^>]*class="[^"]*content[^"]*"[^>]*>([\s\S]*?)<\/p>/i);
+    const content = contentMatch 
+      ? decodeHTMLEntities(contentMatch[1].replace(/<[^>]*>/g, "").trim())
+      : title;
+    
+    if (title && resultUrl && resultUrl.startsWith("http")) {
+      results.push({ title, url: resultUrl, content });
+    }
+  }
+
+  // 模式2: 旧版或其他 SearXNG 主题格式
+  if (results.length === 0) {
+    // <div class="result">
+    //   <h4 class="result_header"><a href="...">title</a></h4>
+    //   <p class="result-content">snippet</p>
+    // </div>
+    const divRegex = /<div[^>]*class="[^"]*result[^"]*"[^>]*>([\s\S]*?)<\/div>\s*(?=<div|<\/|$)/gi;
+    let divMatch;
+    
+    while ((divMatch = divRegex.exec(html)) !== null && results.length < maxResults) {
+      const divHtml = divMatch[1];
+      
+      const linkMatch = divHtml.match(/<a[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/i);
+      if (!linkMatch) continue;
+      
+      const resultUrl = linkMatch[1];
+      const title = decodeHTMLEntities(linkMatch[2].replace(/<[^>]*>/g, "").trim());
+      
+      const contentMatch = divHtml.match(/<p[^>]*>([\s\S]*?)<\/p>/i);
+      const content = contentMatch 
+        ? decodeHTMLEntities(contentMatch[1].replace(/<[^>]*>/g, "").trim())
+        : title;
+      
+      if (title && resultUrl && resultUrl.startsWith("http")) {
+        results.push({ title, url: resultUrl, content });
+      }
+    }
+  }
+
+  // 模式3: 更宽松的匹配（最后手段）
+  if (results.length === 0) {
+    // 尝试匹配任何看起来像搜索结果的链接
+    const looseRegex = /<a[^>]*href="(https?:\/\/[^"]+)"[^>]*>([^<]+)<\/a>/gi;
+    let looseMatch;
+    const seenUrls = new Set<string>();
+    
+    while ((looseMatch = looseRegex.exec(html)) !== null && results.length < maxResults) {
+      const resultUrl = looseMatch[1];
+      const title = decodeHTMLEntities(looseMatch[2].trim());
+      
+      // 过滤掉 SearXNG 自身的链接和重复链接
+      if (
+        title.length > 5 &&
+        !resultUrl.includes(instanceUrl) &&
+        !resultUrl.includes("searx") &&
+        !seenUrls.has(resultUrl)
+      ) {
+        seenUrls.add(resultUrl);
+        results.push({ title, url: resultUrl, content: title });
+      }
+    }
+  }
+
+  console.log(`[SearXNG] HTML parsing found ${results.length} results`);
+  return results;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Google Custom Search API (Programmable Search Engine)
+// 文档: https://developers.google.com/custom-search/v1/overview
+// 免费额度: 每天 100 次查询，超出后 $5/1000 次
+// ═══════════════════════════════════════════════════════════════════════════
+
+const GOOGLE_CSE_API_URL = "https://www.googleapis.com/customsearch/v1";
+
+async function searchGoogle(
+  query: string,
+  maxResults: number,
+  config: GoogleConfig
+): Promise<SearchResponse> {
+  const { apiKey, searchEngineId, gl, hl = "zh-CN", lr, safe = "off" } = config;
+
+  if (!apiKey) {
+    throw new Error("Google API Key 未配置");
+  }
+  if (!searchEngineId) {
+    throw new Error("Google Search Engine ID (cx) 未配置");
+  }
+
+  const startTime = Date.now();
+  const url = new URL(GOOGLE_CSE_API_URL);
+  url.searchParams.set("key", apiKey);
+  url.searchParams.set("cx", searchEngineId);
+  url.searchParams.set("q", query);
+  url.searchParams.set("num", String(Math.min(maxResults, 10))); // Google CSE 最多返回 10 条
+  url.searchParams.set("safe", safe);
+  
+  if (gl) url.searchParams.set("gl", gl);  // 地理位置
+  if (hl) url.searchParams.set("hl", hl);  // 界面语言
+  if (lr) url.searchParams.set("lr", lr);  // 结果语言限制
+
+  console.log(`[Google CSE] Searching: ${query}`);
+
+  const response = await fetch(url.toString(), {
+    headers: {
+      "Accept": "application/json",
+    },
+  });
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    const errorMessage = errorData?.error?.message || "";
+    
+    if (response.status === 400) {
+      throw new Error(`Google API 请求无效: ${errorMessage}`);
+    }
+    if (response.status === 401 || response.status === 403) {
+      throw new Error(`Google API Key 无效或无权限: ${errorMessage}`);
+    }
+    if (response.status === 429) {
+      throw new Error("Google API 调用次数已达上限（每天 100 次免费）");
+    }
+    throw new Error(`Google API 错误: ${response.status} ${errorMessage}`);
+  }
+
+  const data = await response.json();
+  const results: SearchResult[] = [];
+
+  // 解析搜索结果
+  if (data.items) {
+    for (const item of data.items.slice(0, maxResults)) {
+      results.push({
+        title: item.title || "",
+        url: item.link || "",
+        content: item.snippet || "",
+        // Google CSE 可能返回缩略图等额外信息
+      });
+    }
+  }
+
+  // 检查是否有搜索信息
+  let answer: string | undefined;
+  if (data.searchInformation?.totalResults === "0") {
+    console.log("[Google CSE] No results found");
+  } else {
+    console.log(`[Google CSE] Found ${results.length} results (total: ${data.searchInformation?.totalResults})`);
+  }
+
+  // 如果有 Featured Snippet（精选摘要），提取为 answer
+  // Google CSE 的 promotions 或 spelling 可能包含有用信息
+  if (data.spelling?.correctedQuery) {
+    answer = `您是否要搜索: ${data.spelling.correctedQuery}`;
+  }
+
   return {
     query,
-    provider: "You.com",
+    provider: "Google",
     results,
+    answer,
     responseTime: Date.now() - startTime,
   };
 }
@@ -568,10 +711,6 @@ export async function searchWeb(query: string, config: SearchConfig): Promise<Se
         if (!config.tavily) throw new Error("Tavily 配置缺失");
         return await searchTavily(query, maxResults, config.tavily);
       
-      case "serper":
-        if (!config.serper) throw new Error("Serper 配置缺失");
-        return await searchSerper(query, maxResults, config.serper);
-      
       case "bing":
         if (!config.bing) throw new Error("Bing 配置缺失");
         return await searchBing(query, maxResults, config.bing);
@@ -586,9 +725,9 @@ export async function searchWeb(query: string, config: SearchConfig): Promise<Se
       case "searxng":
         return await searchSearXNG(query, maxResults, config.searxng || {});
       
-      case "you":
-        if (!config.you) throw new Error("You.com 配置缺失");
-        return await searchYou(query, maxResults, config.you);
+      case "google":
+        if (!config.google) throw new Error("Google 配置缺失");
+        return await searchGoogle(query, maxResults, config.google);
       
       default:
         throw new Error(`不支持的搜索引擎: ${provider}`);
@@ -660,13 +799,6 @@ function buildSearchConfig(instance: SearchProviderInstance, maxResults: number)
         excludeDomains: instance.tavilyExcludeDomains,
       };
       break;
-    case "serper":
-      config.serper = {
-        apiKey: instance.serperApiKey || "",
-        gl: instance.serperCountry || "us",
-        hl: instance.serperLanguage || "en",
-      };
-      break;
     case "bing":
       config.bing = {
         apiKey: instance.bingApiKey || "",
@@ -691,9 +823,14 @@ function buildSearchConfig(instance: SearchProviderInstance, maxResults: number)
         language: instance.searxngLanguage || "en",
       };
       break;
-    case "you":
-      config.you = {
-        apiKey: instance.youApiKey || "",
+    case "google":
+      config.google = {
+        apiKey: instance.googleApiKey || "",
+        searchEngineId: instance.googleSearchEngineId || "",
+        gl: instance.googleGl,
+        hl: instance.googleHl || "zh-CN",
+        lr: instance.googleLr,
+        safe: instance.googleSafe || "off",
       };
       break;
   }
@@ -755,8 +892,6 @@ export function isInstanceConfigured(instance: SearchProviderInstance): boolean 
   switch (instance.provider) {
     case "tavily":
       return !!instance.tavilyApiKey?.trim();
-    case "serper":
-      return !!instance.serperApiKey?.trim();
     case "bing":
       return !!instance.bingApiKey?.trim();
     case "duckduckgo":
@@ -765,8 +900,8 @@ export function isInstanceConfigured(instance: SearchProviderInstance): boolean 
       return !!instance.braveApiKey?.trim();
     case "searxng":
       return true; // 不需要 API Key，使用公共实例
-    case "you":
-      return !!instance.youApiKey?.trim();
+    case "google":
+      return !!instance.googleApiKey?.trim() && !!instance.googleSearchEngineId?.trim();
     default:
       return false;
   }
@@ -778,12 +913,11 @@ export function isInstanceConfigured(instance: SearchProviderInstance): boolean 
 export function getProviderDisplayName(provider: SearchProvider): string {
   switch (provider) {
     case "tavily": return "Tavily";
-    case "serper": return "Serper (Google)";
     case "bing": return "Bing";
     case "duckduckgo": return "DuckDuckGo";
     case "brave": return "Brave";
     case "searxng": return "SearXNG";
-    case "you": return "You.com";
+    case "google": return "Google";
     default: return provider;
   }
 }

@@ -17,10 +17,9 @@ const { Button } = orca.components;
 interface Props { isOpen: boolean; onClose: () => void; }
 
 const PROVIDERS: { value: SearchProvider; label: string; needsKey: boolean }[] = [
+  { value: "google", label: "Google", needsKey: true },
   { value: "tavily", label: "Tavily", needsKey: true },
-  { value: "serper", label: "Serper (Google)", needsKey: true },
   { value: "brave", label: "Brave", needsKey: true },
-  { value: "you", label: "You.com", needsKey: true },
   { value: "bing", label: "Bing", needsKey: true },
   { value: "searxng", label: "SearXNG (免费)", needsKey: false },
   { value: "duckduckgo", label: "DuckDuckGo (免费)", needsKey: false },
@@ -91,13 +90,13 @@ export default function WebSearchSettingsModal({ isOpen, onClose }: Props) {
       name: getProviderDisplayName(provider),
       tavilySearchDepth: "basic",
       tavilyIncludeAnswer: true,
-      serperCountry: "us",
-      serperLanguage: "en",
       bingMarket: "en-US",
       duckduckgoRegion: "wt-wt",
       braveCountry: "US",
       braveSearchLang: "en",
       searxngLanguage: "en",
+      googleHl: "zh-CN",
+      googleSafe: "off",
     };
     setInstances([...instances, newInstance]);
     setEditingId(newInstance.id);
@@ -195,23 +194,19 @@ export default function WebSearchSettingsModal({ isOpen, onClose }: Props) {
               createElement("input", { style: input, value: inst.name || "", onChange: (e: any) => updateInstance(inst.id, { name: e.target.value }), placeholder: "自定义名称" })),
             
             // API Key (非 DuckDuckGo/SearXNG)
-            inst.provider !== "duckduckgo" && inst.provider !== "searxng" && createElement("div", { style: { marginBottom: 8 } },
+            inst.provider !== "duckduckgo" && inst.provider !== "searxng" && inst.provider !== "google" && createElement("div", { style: { marginBottom: 8 } },
               createElement("div", { style: { ...label, fontSize: 12, marginBottom: 4 } }, "API Key"),
               createElement("input", { 
                 type: "password", style: input,
                 value: inst.provider === "tavily" ? (inst.tavilyApiKey || "") 
-                     : inst.provider === "serper" ? (inst.serperApiKey || "") 
                      : inst.provider === "bing" ? (inst.bingApiKey || "")
                      : inst.provider === "brave" ? (inst.braveApiKey || "")
-                     : inst.provider === "you" ? (inst.youApiKey || "")
                      : "",
                 onChange: (e: any) => {
                   const key = e.target.value;
                   if (inst.provider === "tavily") updateInstance(inst.id, { tavilyApiKey: key });
-                  else if (inst.provider === "serper") updateInstance(inst.id, { serperApiKey: key });
                   else if (inst.provider === "bing") updateInstance(inst.id, { bingApiKey: key });
                   else if (inst.provider === "brave") updateInstance(inst.id, { braveApiKey: key });
-                  else if (inst.provider === "you") updateInstance(inst.id, { youApiKey: key });
                 },
                 placeholder: inst.provider === "tavily" ? "tvly-xxx" : "API Key"
               }),
@@ -223,14 +218,6 @@ export default function WebSearchSettingsModal({ isOpen, onClose }: Props) {
                   style: { color: "var(--orca-color-primary)", textDecoration: "none" },
                   onClick: (e: any) => { e.preventDefault(); orca.invokeBackend("shell-open", "https://tavily.com"); }
                 }, "tavily.com")),
-              // Serper 获取链接提示
-              inst.provider === "serper" && createElement("div", { style: { marginTop: 6, fontSize: 11, color: "var(--orca-color-text-3)" } },
-                "免费 2500 次 → ",
-                createElement("a", { 
-                  href: "https://serper.dev", 
-                  style: { color: "var(--orca-color-primary)", textDecoration: "none" },
-                  onClick: (e: any) => { e.preventDefault(); orca.invokeBackend("shell-open", "https://serper.dev"); }
-                }, "serper.dev")),
               // Bing 获取链接提示
               inst.provider === "bing" && createElement("div", { style: { marginTop: 6, fontSize: 11, color: "var(--orca-color-text-3)" } },
                 "免费 1000 次/月 → ",
@@ -246,15 +233,51 @@ export default function WebSearchSettingsModal({ isOpen, onClose }: Props) {
                   href: "https://brave.com/search/api/", 
                   style: { color: "var(--orca-color-primary)", textDecoration: "none" },
                   onClick: (e: any) => { e.preventDefault(); orca.invokeBackend("shell-open", "https://brave.com/search/api/"); }
-                }, "brave.com/search/api")),
-              // You.com 获取链接提示
-              inst.provider === "you" && createElement("div", { style: { marginTop: 6, fontSize: 11, color: "var(--orca-color-text-3)" } },
-                "免费额度 → ",
+                }, "brave.com/search/api"))),
+            
+            // Google Custom Search 设置
+            inst.provider === "google" && createElement("div", null,
+              createElement("div", { style: { marginBottom: 8 } },
+                createElement("div", { style: { ...label, fontSize: 12, marginBottom: 4 } }, "API Key"),
+                createElement("input", { 
+                  type: "password", style: input,
+                  value: inst.googleApiKey || "",
+                  onChange: (e: any) => updateInstance(inst.id, { googleApiKey: e.target.value }),
+                  placeholder: "AIzaSy..."
+                })),
+              createElement("div", { style: { marginBottom: 8 } },
+                createElement("div", { style: { ...label, fontSize: 12, marginBottom: 4 } }, "Search Engine ID (cx)"),
+                createElement("input", { 
+                  style: input,
+                  value: inst.googleSearchEngineId || "",
+                  onChange: (e: any) => updateInstance(inst.id, { googleSearchEngineId: e.target.value }),
+                  placeholder: "搜索引擎 ID"
+                })),
+              createElement("div", { style: { display: "flex", gap: 12, marginBottom: 8 } },
+                createElement("div", { style: { flex: 1 } },
+                  createElement("div", { style: { ...label, fontSize: 12, marginBottom: 4 } }, "界面语言"),
+                  createElement("select", { style: { ...select, width: "100%" }, value: inst.googleHl || "zh-CN", onChange: (e: any) => updateInstance(inst.id, { googleHl: e.target.value }) },
+                    createElement("option", { value: "zh-CN" }, "中文"),
+                    createElement("option", { value: "en" }, "English"),
+                    createElement("option", { value: "ja" }, "日本語"))),
+                createElement("div", { style: { flex: 1 } },
+                  createElement("div", { style: { ...label, fontSize: 12, marginBottom: 4 } }, "安全搜索"),
+                  createElement("select", { style: { ...select, width: "100%" }, value: inst.googleSafe || "off", onChange: (e: any) => updateInstance(inst.id, { googleSafe: e.target.value }) },
+                    createElement("option", { value: "off" }, "关闭"),
+                    createElement("option", { value: "active" }, "开启")))),
+              createElement("div", { style: { marginTop: 6, fontSize: 11, color: "var(--orca-color-text-3)", lineHeight: 1.5 } },
+                "免费 100 次/天 → ",
                 createElement("a", { 
-                  href: "https://api.you.com", 
+                  href: "https://developers.google.com/custom-search/v1/overview", 
                   style: { color: "var(--orca-color-primary)", textDecoration: "none" },
-                  onClick: (e: any) => { e.preventDefault(); orca.invokeBackend("shell-open", "https://api.you.com"); }
-                }, "api.you.com"))),
+                  onClick: (e: any) => { e.preventDefault(); orca.invokeBackend("shell-open", "https://developers.google.com/custom-search/v1/overview"); }
+                }, "获取 API Key"),
+                " | ",
+                createElement("a", { 
+                  href: "https://programmablesearchengine.google.com/", 
+                  style: { color: "var(--orca-color-primary)", textDecoration: "none" },
+                  onClick: (e: any) => { e.preventDefault(); orca.invokeBackend("shell-open", "https://programmablesearchengine.google.com/"); }
+                }, "创建搜索引擎"))),
             
             // Tavily 特有设置
             inst.provider === "tavily" && createElement("div", { style: { display: "flex", gap: 12 } },
@@ -266,17 +289,6 @@ export default function WebSearchSettingsModal({ isOpen, onClose }: Props) {
               createElement("div", { style: { display: "flex", alignItems: "center", gap: 6 } },
                 createElement("input", { type: "checkbox", checked: inst.tavilyIncludeAnswer !== false, onChange: (e: any) => updateInstance(inst.id, { tavilyIncludeAnswer: e.target.checked }) }),
                 createElement("span", { style: { fontSize: 12 } }, "AI摘要"))),
-            
-            // Serper 设置
-            inst.provider === "serper" && createElement("div", { style: { display: "flex", gap: 12 } },
-              createElement("div", { style: { flex: 1 } },
-                createElement("div", { style: { ...label, fontSize: 12, marginBottom: 4 } }, "国家"),
-                createElement("select", { style: { ...select, width: "100%" }, value: inst.serperCountry || "us", onChange: (e: any) => updateInstance(inst.id, { serperCountry: e.target.value }) },
-                  createElement("option", { value: "cn" }, "中国"), createElement("option", { value: "us" }, "美国"), createElement("option", { value: "jp" }, "日本"))),
-              createElement("div", { style: { flex: 1 } },
-                createElement("div", { style: { ...label, fontSize: 12, marginBottom: 4 } }, "语言"),
-                createElement("select", { style: { ...select, width: "100%" }, value: inst.serperLanguage || "en", onChange: (e: any) => updateInstance(inst.id, { serperLanguage: e.target.value }) },
-                  createElement("option", { value: "zh-cn" }, "中文"), createElement("option", { value: "en" }, "English")))),
             
             // Bing 设置
             inst.provider === "bing" && createElement("div", null,

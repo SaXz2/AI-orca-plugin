@@ -64,10 +64,11 @@ import {
 import { exportSessionAsFile, saveSessionToJournal, saveMessagesToJournal } from "../services/export-service";
 import { sessionStore, updateSessionStore, clearSessionStore } from "../store/session-store";
 import { TOOLS, FLASHCARD_TOOL, executeTool, getToolsForDraggedContext, getTools } from "../services/ai-tools";
-import { getToolStatus, isToolDisabled, shouldAskForTool } from "../store/tool-store";
+import { getToolStatus, isToolDisabled, shouldAskForTool, isAgenticRAGEnabled, getAgenticRAGConfig } from "../store/tool-store";
 import { nowId, safeText } from "../utils/text-utils";
 import { buildConversationMessages } from "../services/message-builder";
 import { streamChatWithRetry, type ToolCallInfo } from "../services/chat-stream-handler";
+import { executeAgenticRAG, formatRAGSteps, getToolDisplayName } from "../services/agentic-rag-service";
 import {
   panelContainerStyle,
   headerStyle,
@@ -306,15 +307,24 @@ export default function AiChatPanel({ panelId }: PanelProps) {
 
   const listRef = useRef<HTMLDivElement | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  // 追踪用户是否在底部附近，用于决定流式输出时是否自动滚动
+  const isNearBottomRef = useRef(true);
 
   const scrollToBottom = useCallback(() => {
     smoothScrollToBottom(listRef.current);
   }, []);
 
+  // 智能滚动：只有当用户在底部附近时才自动滚动
+  const scrollToBottomIfNeeded = useCallback(() => {
+    if (isNearBottomRef.current) {
+      smoothScrollToBottom(listRef.current);
+    }
+  }, []);
+
   const updateMessage = useCallback((id: string, updates: Partial<Message>) => {
     setMessages((prev) => prev.map((m) => (m.id === id ? { ...m, ...updates } : m)));
-    queueMicrotask(scrollToBottom);
-  }, [scrollToBottom]);
+    queueMicrotask(scrollToBottomIfNeeded);
+  }, [scrollToBottomIfNeeded]);
 
   const displaySessionTitle = useMemo(() => {
     const title = (currentSession.title || "").trim();
@@ -625,6 +635,9 @@ export default function AiChatPanel({ panelId }: PanelProps) {
       // Show button when user scrolls up more than 200px from bottom
       const distanceFromBottom = listEl.scrollHeight - listEl.scrollTop - listEl.clientHeight;
       setShowScrollToBottom(distanceFromBottom > 200);
+      // 更新 isNearBottomRef，用于决定流式输出时是否自动滚动
+      // 阈值设为 100px，比按钮显示阈值小，避免用户刚滚动一点就停止自动滚动
+      isNearBottomRef.current = distanceFromBottom < 100;
     };
 
     listEl.addEventListener("scroll", handleScroll, { passive: true });
@@ -634,6 +647,8 @@ export default function AiChatPanel({ panelId }: PanelProps) {
   const handleScrollToBottom = useCallback(() => {
     smoothScrollToBottom(listRef.current);
     setShowScrollToBottom(false);
+    // 点击滚动到底部按钮后，恢复自动滚动
+    isNearBottomRef.current = true;
   }, []);
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -1229,6 +1244,8 @@ graph TD
         setMessages((prev) => [...prev, userMsg]);
     }
     
+    // 用户发送消息时，重置为自动滚动状态并滚动到底部
+    isNearBottomRef.current = true;
     queueMicrotask(scrollToBottom);
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -1379,6 +1396,138 @@ graph TD
       const baseTools = hasHighPriorityContext ? getToolsForDraggedContext() : getTools();
       const filteredTools = baseTools.filter(tool => !isToolDisabled(tool.function.name));
       const toolsToUse = includeTools && filteredTools.length > 0 ? filteredTools : undefined;
+
+      // ─────────────────────────────────────────────────────────────────────────
+      // Agentic RAG 模式：AI 自主规划检索策略，多轮迭代
+      // ─────────────────────────────────────────────────────────────────────────
+      if (isAgenticRAGEnabled() && includeTools && !hasHighPriorityContext) {
+        console.log("[AI] Agentic RAG mode enabled, starting intelligent retrieval...");
+        
+        const ragConfig = getAgenticRAGConfig();
+        const assistantId = nowId();
+        const assistantCreatedAt = Date.now();
+        
+        // 创建一个占位消息，显示正在思考
+        setMessages((prev) => [...prev, {
+          id: assistantId,
+          role: "assistant",
+          content: "🧠 正在智能检索...",
+          createdAt: assistantCreatedAt,
+          model,
+          localOnly: true, // 标记为本地消息，不发送给 API
+        }]);
+        setStreamingMessageId(assistantId);
+        
+        try {
+          // 创建 LLM 调用函数
+          const callLLM = async (prompt: string, options?: { temperature?: number; maxTokens?: number }) => {
+            const ragMessages: Message[] = [
+              { id: nowId(), role: "user", content: prompt, createdAt: Date.now() }
+            ];
+            
+            const { standard: ragApiMessages } = await buildConversationMessages({
+              messages: ragMessages,
+              systemPrompt: "你是一个智能检索规划助手。请严格按照要求返回 JSON 格式。",
+              contextText: "",
+              customMemory: "",
+              chatMode: "ask",
+            });
+            
+            let result = "";
+            for await (const chunk of streamChatWithRetry(
+              {
+                apiUrl: apiConfig.apiUrl,
+                apiKey: apiConfig.apiKey,
+                model,
+                temperature: options?.temperature ?? 0.3,
+                maxTokens: options?.maxTokens ?? 1000,
+                signal: aborter.signal,
+              },
+              ragApiMessages,
+              ragApiMessages,
+            )) {
+              if (chunk.type === "content") {
+                result += chunk.content;
+              }
+            }
+            return result;
+          };
+          
+          // 进度回调 - 使用 reasoning 字段显示详细思考过程
+          const onProgress = (update: { phase: string; status: string; reasoning: string; step?: any; iteration?: number }) => {
+            // 用 reasoning 字段显示思考过程，content 显示当前状态
+            updateMessage(assistantId, {
+              content: `*${update.status}*`,
+              reasoning: update.reasoning,
+            });
+          };
+          
+          // 执行 Agentic RAG
+          const ragResult = await executeAgenticRAG(processedContent, callLLM, {
+            maxIterations: ragConfig.maxIterations,
+            enableReflection: ragConfig.enableReflection,
+            onProgress,
+          });
+          
+          console.log("[AI] Agentic RAG completed:", {
+            iterations: ragResult.iterations,
+            steps: ragResult.steps.length,
+            hitLimit: ragResult.hitLimit,
+          });
+          
+          // 更新消息为最终答案，保留 reasoning 作为思考过程记录
+          setStreamingMessageId(null);
+          
+          // 生成检索过程摘要作为 reasoning
+          const retrieveSteps = ragResult.steps.filter(s => s.type === "retrieve");
+          const ragSummary = [
+            `🧠 **Agentic RAG 检索过程**`,
+            `- 迭代轮数: ${ragResult.iterations}`,
+            `- 检索步骤: ${retrieveSteps.length}`,
+            ...retrieveSteps.map(s => `- ${getToolDisplayName(s.tool || "")}: ${s.reasoning}`),
+            ragResult.hitLimit ? `- ⚠️ 达到最大轮数限制` : `- ✅ 信息收集完成`,
+          ].join("\n");
+          
+          updateMessage(assistantId, {
+            content: ragResult.answer,
+            reasoning: ragSummary,
+            localOnly: false,
+          });
+          
+          // 添加到会话
+          conversation.push({
+            id: assistantId,
+            role: "assistant",
+            content: ragResult.answer,
+            reasoning: ragSummary,
+            createdAt: assistantCreatedAt,
+          });
+          
+        } catch (err: any) {
+          const isAbort = String(err?.name ?? "") === "AbortError";
+          if (!isAbort) {
+            console.error("[AI] Agentic RAG error:", err);
+            updateMessage(assistantId, {
+              content: `检索出错: ${err.message || "未知错误"}`,
+              localOnly: false,
+            });
+          } else {
+            // 用户取消，移除占位消息
+            setMessages((prev) => prev.filter(m => m.id !== assistantId));
+          }
+          setStreamingMessageId(null);
+        }
+        
+        // Agentic RAG 完成，跳过普通工具调用流程
+        setSending(false);
+        if (abortRef.current === aborter) abortRef.current = null;
+        
+        // 自动缓存会话
+        autoCacheSession(currentSession);
+        
+        return; // 不走普通流程
+      }
+      // ─────────────────────────────────────────────────────────────────────────
 
       for await (const chunk of streamChatWithRetry(
         {
