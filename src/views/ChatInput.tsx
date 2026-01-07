@@ -23,7 +23,7 @@ import { textareaStyle, sendButtonStyle } from "./chat-input";
 import { MultiModelToggleButton } from "../components/MultiModelSelector";
 import { multiModelStore } from "../store/multi-model-store";
 import ToolPanel from "../components/ToolPanel";
-import { loadToolSettings, toolStore, toggleWebSearch, toggleAgenticRAG } from "../store/tool-store";
+import { loadToolSettings, toolStore, toggleWebSearch, toggleAgenticRAG, toggleScriptAnalysis } from "../store/tool-store";
 
 const React = window.React as unknown as {
   createElement: typeof window.React.createElement;
@@ -1237,6 +1237,24 @@ export default function ChatInput({
               },
             },
             createElement("i", { className: "ti ti-brain" })
+          ),
+          // 数据分析开关
+          createElement(
+            Button,
+            {
+              variant: "plain",
+              onClick: toggleScriptAnalysis,
+              title: toolSnap.scriptAnalysisEnabled 
+                ? "关闭数据分析\n当前：AI 可以执行脚本分析笔记数据" 
+                : "开启数据分析\n开启后：AI 可以统计词频、搜索次数等，返回真实数据",
+              style: { 
+                padding: "4px",
+                color: toolSnap.scriptAnalysisEnabled ? "var(--orca-color-success, #10b981)" : undefined,
+                background: toolSnap.scriptAnalysisEnabled ? "rgba(16, 185, 129, 0.1)" : undefined,
+                borderRadius: "4px",
+              },
+            },
+            createElement("i", { className: "ti ti-chart-bar" })
           ),
           // Token 预估显示
           tokenEstimate.inputTokens > 0 && createElement(

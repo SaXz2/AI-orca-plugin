@@ -29,7 +29,11 @@ import type {
 } from "../utils/query-types";
 import { uiStore } from "../store/ui-store";
 import { searchWeb, formatSearchResults, type SearchConfig } from "./web-search-service";
-import { isWebSearchEnabled } from "../store/tool-store";
+import { isWebSearchEnabled, isScriptAnalysisEnabled } from "../store/tool-store";
+import { 
+  getScriptAnalysisTools, 
+  handleScriptAnalysisTool 
+} from "./script-analysis-tool";
 
 type JournalExportCacheEntry = {
   rangeLabel: string;
@@ -764,13 +768,18 @@ export const WEB_SEARCH_TOOL: OpenAITool = {
 /**
  * 获取工具列表（根据联网搜索开关动态添加）
  */
-export function getTools(webSearchEnabled?: boolean): OpenAITool[] {
+export function getTools(webSearchEnabled?: boolean, scriptAnalysisEnabled?: boolean): OpenAITool[] {
   const tools = [...TOOLS];
   
   // 如果联网搜索已开启，添加 webSearch 工具
   // API Key 检查在执行时进行，这里只检查开关状态
   if (webSearchEnabled ?? isWebSearchEnabled()) {
     tools.push(WEB_SEARCH_TOOL);
+  }
+  
+  // 如果脚本分析已开启，添加脚本分析工具
+  if (scriptAnalysisEnabled ?? isScriptAnalysisEnabled()) {
+    tools.push(...getScriptAnalysisTools());
   }
   
   return tools;
@@ -2291,6 +2300,12 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
         });
       }
     } else {
+      // 尝试处理脚本分析工具
+      const scriptResult = await handleScriptAnalysisTool(toolName, args);
+      if (scriptResult !== null) {
+        return scriptResult;
+      }
+      
       console.error("[Tool] Unknown tool:", toolName);
       return `Unknown tool: ${toolName}`;
     }

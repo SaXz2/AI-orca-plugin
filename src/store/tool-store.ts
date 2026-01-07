@@ -114,6 +114,8 @@ interface ToolStore {
   agenticRAGEnabled: boolean;
   /** Agentic RAG 配置 */
   agenticRAGConfig: AgenticRAGConfig;
+  /** 脚本分析开关（数据分析能力） */
+  scriptAnalysisEnabled: boolean;
 }
 
 export const toolStore = proxy<ToolStore>({
@@ -125,6 +127,7 @@ export const toolStore = proxy<ToolStore>({
     maxIterations: 5,
     enableReflection: true,
   },
+  scriptAnalysisEnabled: false,
 });
 
 /**
@@ -231,6 +234,29 @@ export function getAgenticRAGConfig(): AgenticRAGConfig {
 }
 
 /**
+ * 切换脚本分析开关
+ */
+export function toggleScriptAnalysis(): void {
+  toolStore.scriptAnalysisEnabled = !toolStore.scriptAnalysisEnabled;
+  saveToolSettings();
+}
+
+/**
+ * 设置脚本分析状态
+ */
+export function setScriptAnalysisEnabled(enabled: boolean): void {
+  toolStore.scriptAnalysisEnabled = enabled;
+  saveToolSettings();
+}
+
+/**
+ * 获取脚本分析状态
+ */
+export function isScriptAnalysisEnabled(): boolean {
+  return toolStore.scriptAnalysisEnabled;
+}
+
+/**
  * 保存工具设置到本地存储
  */
 function saveToolSettings(): void {
@@ -240,6 +266,7 @@ function saveToolSettings(): void {
       webSearchEnabled: toolStore.webSearchEnabled,
       agenticRAGEnabled: toolStore.agenticRAGEnabled,
       agenticRAGConfig: toolStore.agenticRAGConfig,
+      scriptAnalysisEnabled: toolStore.scriptAnalysisEnabled,
     };
     localStorage.setItem("ai-chat-tool-settings", JSON.stringify(settings));
   } catch (e) {
@@ -261,6 +288,7 @@ export function loadToolSettings(): void {
           toolStore.toolStatus = parsed.toolStatus;
           toolStore.webSearchEnabled = parsed.webSearchEnabled ?? false;
           toolStore.agenticRAGEnabled = parsed.agenticRAGEnabled ?? false;
+          toolStore.scriptAnalysisEnabled = parsed.scriptAnalysisEnabled ?? false;
           if (parsed.agenticRAGConfig) {
             toolStore.agenticRAGConfig = {
               ...toolStore.agenticRAGConfig,

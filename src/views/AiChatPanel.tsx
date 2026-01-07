@@ -69,6 +69,7 @@ import { nowId, safeText } from "../utils/text-utils";
 import { buildConversationMessages } from "../services/message-builder";
 import { streamChatWithRetry, type ToolCallInfo } from "../services/chat-stream-handler";
 import { executeAgenticRAG, formatRAGSteps, getToolDisplayName } from "../services/agentic-rag-service";
+import { clearSummaryCache } from "../services/compression-service";
 import {
   panelContainerStyle,
   headerStyle,
@@ -432,6 +433,11 @@ export default function AiChatPanel({ panelId }: PanelProps) {
     const settings = getAiChatSettings(pluginName);
     const defaultModel = settings.selectedModelId;
 
+    // 清理旧会话的压缩缓存（重要！防止旧对话摘要泄漏到新对话）
+    if (currentSession.id) {
+      clearSummaryCache(currentSession.id);
+    }
+
     // 创建全新的会话，确保 ID 是新的
     const newSession = { ...createNewSession(), model: defaultModel };
     setCurrentSession(newSession);
@@ -456,7 +462,7 @@ export default function AiChatPanel({ panelId }: PanelProps) {
     setFlashcardIndex(0);
     setFlashcardKeptCount(0);
     setFlashcardSkippedCount(0);
-  }, []);
+  }, [currentSession.id]);
 
   const handleSelectSession = useCallback(async (sessionId: string) => {
     const pluginName = getAiChatPluginName();
