@@ -1425,6 +1425,9 @@ export default function MarkdownMessage({ content, role }: Props) {
     // 清理中文方括号引用标注：【引用】
     text = text.replace(/【([^】]+)】/g, '$1');
     
+    // 清理纯数字引用标记：[1]、[2]、[1][2] 等，直接删除
+    text = text.replace(/\[(\d+)\]/g, '');
+    
     // 清理英文方括号，但保留 Markdown 语法和 GRAPH_REQUEST 标记
     // 使用更精确的方式：先标记需要保留的，再清理其他的
     // 保留：[text](url) 链接、![alt](url) 图片、[ ] 和 [x] 任务列表、[GRAPH_REQUEST:xxx]

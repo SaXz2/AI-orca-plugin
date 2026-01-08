@@ -390,7 +390,6 @@ async function searchSearXNG(
   for (const instance of instances) {
     // 清理实例 URL，移除尾部斜杠
     const cleanInstance = instance.replace(/\/+$/, "");
-    console.log(`[SearXNG] Trying instance: ${cleanInstance}`);
 
     // 方法1: 尝试 JSON API
     try {
@@ -404,14 +403,12 @@ async function searchSearXNG(
         };
       }
     } catch (error: any) {
-      console.log(`[SearXNG] JSON API failed: ${error.message}, trying HTML fallback...`);
     }
 
     // 方法2: 尝试 HTML 解析（很多实例禁用 JSON 但允许 HTML）
     try {
       const results = await searchSearXNGHtml(cleanInstance, query, maxResults, language);
       if (results.length > 0) {
-        console.log(`[SearXNG] HTML fallback succeeded with ${results.length} results`);
         return {
           query,
           provider: `SearXNG`,
@@ -420,7 +417,6 @@ async function searchSearXNG(
         };
       }
     } catch (error: any) {
-      console.warn(`[SearXNG] Instance ${instance} failed completely:`, error.message);
       lastError = error;
     }
   }
@@ -474,7 +470,6 @@ async function searchSearXNGJson(
     }
   }
 
-  console.log(`[SearXNG] JSON API found ${results.length} results`);
   return results;
 }
 
@@ -598,7 +593,6 @@ async function searchSearXNGHtml(
     }
   }
 
-  console.log(`[SearXNG] HTML parsing found ${results.length} results`);
   return results;
 }
 
@@ -636,7 +630,6 @@ async function searchGoogle(
   if (hl) url.searchParams.set("hl", hl);  // 界面语言
   if (lr) url.searchParams.set("lr", lr);  // 结果语言限制
 
-  console.log(`[Google CSE] Searching: ${query}`);
 
   const response = await fetch(url.toString(), {
     headers: {
@@ -678,9 +671,7 @@ async function searchGoogle(
   // 检查是否有搜索信息
   let answer: string | undefined;
   if (data.searchInformation?.totalResults === "0") {
-    console.log("[Google CSE] No results found");
   } else {
-    console.log(`[Google CSE] Found ${results.length} results (total: ${data.searchInformation?.totalResults})`);
   }
 
   // 如果有 Featured Snippet（精选摘要），提取为 answer
@@ -733,7 +724,6 @@ export async function searchWeb(query: string, config: SearchConfig): Promise<Se
         throw new Error(`不支持的搜索引擎: ${provider}`);
     }
   } catch (error: any) {
-    console.error(`[WebSearch] ${provider} search failed:`, error);
     throw error;
   }
 }
@@ -868,19 +858,16 @@ export async function searchWithFallback(
     const instanceName = instance.name || `${instance.provider}-${instance.id.slice(-4)}`;
     
     try {
-      console.log(`[WebSearch] Trying ${instanceName}...`);
       const config = buildSearchConfig(instance, maxResults);
       const response = await searchWeb(query, config);
       
       // 成功，返回结果
-      console.log(`[WebSearch] ${instanceName} succeeded with ${response.results.length} results`);
       return {
         ...response,
         provider: instanceName, // 使用实例名称
       };
     } catch (error: any) {
       const errorMsg = error.message || String(error);
-      console.warn(`[WebSearch] ${instanceName} failed: ${errorMsg}`);
       errors.push(`${instanceName}: ${errorMsg}`);
       // 继续尝试下一个
     }

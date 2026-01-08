@@ -27,18 +27,6 @@ import ChatNavigation from "../components/ChatNavigation";
 import FlashcardReview, { type Flashcard } from "../components/FlashcardReview";
 import GlobalImagePreview from "../components/GlobalImagePreview";
 import { injectChatStyles } from "../styles/chat-animations";
-
-// DEBUG: Check if all components are defined
-console.log("[AiChatPanel] Component imports check:", {
-  DateSeparator: typeof DateSeparator,
-  ScrollToBottomButton: typeof ScrollToBottomButton,
-  ErrorMessage: typeof ErrorMessage,
-  TypingIndicator: typeof TypingIndicator,
-  ChatNavigation: typeof ChatNavigation,
-  MessageItem: typeof MessageItem,
-  EmptyState: typeof EmptyState,
-  MarkdownMessage: typeof MarkdownMessage,
-});
 import {
   getAiChatSettings,
   getModelApiConfig,
@@ -352,16 +340,9 @@ export default function AiChatPanel({ panelId }: PanelProps) {
       );
       
       if (panelElement) {
-        console.log('[AiChatPanel] Setting panel metadata for panelId:', panelId);
         panelElement.setAttribute('data-panel-title', 'AI Chat');
         panelElement.setAttribute('data-panel-icon', '🤖');
         panelElement.setAttribute('data-panel-type', 'view');
-        console.log('[AiChatPanel] Panel metadata set successfully');
-      } else {
-        console.warn('[AiChatPanel] Could not find panel element for panelId:', panelId);
-        // 列出所有面板元素帮助调试
-        const allPanels = document.querySelectorAll('.orca-panel');
-        console.log('[AiChatPanel] Available panels:', Array.from(allPanels).map(p => p.getAttribute('data-panel-id')));
       }
     };
 
@@ -404,7 +385,6 @@ export default function AiChatPanel({ panelId }: PanelProps) {
             const state = active.flashcardState;
             // 只有还有未完成的卡片才恢复
             if (state.currentIndex < state.cards.length) {
-              console.log("[AiChatPanel] Restoring flashcard state:", state.currentIndex, "/", state.cards.length);
               setPendingFlashcards(state.cards as Flashcard[]);
               setFlashcardIndex(state.currentIndex);
               setFlashcardKeptCount(state.keptCount);
@@ -590,10 +570,6 @@ export default function AiChatPanel({ panelId }: PanelProps) {
         keptCount: flashcardKeptCount,
         skippedCount: flashcardSkippedCount,
       } : undefined;
-      
-      if (hasFlashcards) {
-        console.log("[AiChatPanel] Saving flashcard state:", flashcardIndex, "/", pendingFlashcards.length);
-      }
       
       const sessionToCache: SavedSession = {
         ...currentSession,
@@ -903,15 +879,14 @@ graph TD
 	          } else {
 	            // 否则当作页面名称，需要查找对应的 blockId
 	            pageName = cleanedQuery;
-	            try {
-	              const block = await orca.invokeBackend("get-block-by-alias", cleanedQuery);
-	              if (block && block.id) {
-	                blockId = block.id;
-	              }
-	            } catch (err) {
-	              console.warn("[/localgraph] Failed to find page:", cleanedQuery, err);
-	            }
-	          }
+            try {
+              const block = await orca.invokeBackend("get-block-by-alias", cleanedQuery);
+              if (block && block.id) {
+                blockId = block.id;
+              }
+            } catch (err) {
+            }
+          }
 	        } else {
 	          // 使用当前打开的页面
 	          try {
@@ -981,15 +956,14 @@ graph TD
 	          } else {
 	            // 否则当作页面名称，需要查找对应的 blockId
 	            pageName = cleanedQuery;
-	            try {
-	              const block = await orca.invokeBackend("get-block-by-alias", cleanedQuery);
-	              if (block && block.id) {
-	                blockId = block.id;
-	              }
-	            } catch (err) {
-	              console.warn("[/mindmap] Failed to find page:", cleanedQuery, err);
-	            }
-	          }
+            try {
+              const block = await orca.invokeBackend("get-block-by-alias", cleanedQuery);
+              if (block && block.id) {
+                blockId = block.id;
+              }
+            } catch (err) {
+            }
+          }
 	        } else {
 	          // 使用当前打开的页面
 	          try {
@@ -1093,8 +1067,6 @@ graph TD
 	        }
 	      } catch {}
 	      
-	      console.log("[Flashcard] Building messages for API with tool calling");
-	      
 	      // 使用专用的闪卡工具（不在普通 TOOLS 列表中）
 	      const { standard: apiMessages, fallback: apiMessagesFallback } = await buildConversationMessages({
 	        messages: conversationForFlashcard,
@@ -1146,7 +1118,6 @@ graph TD
 	        if (!toolCallResult && mergedToolCalls.length > 0) {
 	          for (const tc of mergedToolCalls) {
 	            if (tc.function.name === "generateFlashcards") {
-	              console.log("[Flashcard] Tool call received:", tc.function.name);
 	              try {
 	                const args = typeof tc.function.arguments === "string"
 	                  ? JSON.parse(tc.function.arguments)
@@ -1154,13 +1125,10 @@ graph TD
 	                const resultStr = await executeTool("generateFlashcards", args);
 	                toolCallResult = JSON.parse(resultStr);
 	              } catch (e) {
-	                console.error("[Flashcard] Tool execution error:", e);
 	              }
 	            }
 	          }
 	        }
-	        
-	        console.log("[Flashcard] Tool result:", toolCallResult);
 	        
 	        // 检查工具调用结果
 	        if (toolCallResult && toolCallResult.success && toolCallResult.cards) {
@@ -1195,7 +1163,6 @@ graph TD
 	          setMessages((prev) => [...prev, assistantMsg]);
 	        }
 	      } catch (err: any) {
-	        console.error("[Flashcard] Error:", err);
 	        const msg = String(err?.message ?? err ?? "生成闪卡失败");
 	        orca.notify("error", msg);
 	        const assistantMsg: Message = {
@@ -1409,8 +1376,6 @@ graph TD
       // Agentic RAG 模式：AI 自主规划检索策略，多轮迭代
       // ─────────────────────────────────────────────────────────────────────────
       if (isAgenticRAGEnabled() && includeTools && !hasHighPriorityContext) {
-        console.log("[AI] Agentic RAG mode enabled, starting intelligent retrieval...");
-        
         const ragConfig = getAgenticRAGConfig();
         const assistantId = nowId();
         const assistantCreatedAt = Date.now();
@@ -1477,12 +1442,6 @@ graph TD
             onProgress,
           });
           
-          console.log("[AI] Agentic RAG completed:", {
-            iterations: ragResult.iterations,
-            steps: ragResult.steps.length,
-            hitLimit: ragResult.hitLimit,
-          });
-          
           // 更新消息为最终答案，保留 reasoning 作为思考过程记录
           setStreamingMessageId(null);
           
@@ -1519,7 +1478,6 @@ graph TD
         } catch (err: any) {
           const isAbort = String(err?.name ?? "") === "AbortError";
           if (!isAbort) {
-            console.error("[AI] Agentic RAG error:", err);
             updateMessage(assistantId, {
               content: `检索出错: ${err.message || "未知错误"}`,
               localOnly: false,
@@ -1668,7 +1626,6 @@ graph TD
 
       while (currentToolCalls.length > 0 && toolRound < MAX_TOOL_ROUNDS) {
         toolRound++;
-        console.log(`[AI] Tool calling round ${toolRound}/${MAX_TOOL_ROUNDS}`);
 
         updateMessage(currentAssistantId, { tool_calls: currentToolCalls });
 
@@ -1681,12 +1638,10 @@ graph TD
         const newToolCalls = currentToolCalls.filter(tc => !executedToolCallIds.has(tc.id));
         
         if (newToolCalls.length === 0) {
-          console.log(`[AI] [Round ${toolRound}] All tool calls already executed, skipping`);
           break;
         }
         
         if (newToolCalls.length < currentToolCalls.length) {
-          console.log(`[AI] [Round ${toolRound}] Filtered ${currentToolCalls.length - newToolCalls.length} duplicate tool calls`);
         }
 
         // Execute tools
@@ -1700,16 +1655,9 @@ graph TD
             args = JSON.parse(toolCall.function.arguments);
           } catch (error: any) {
             parseError = `Invalid JSON in tool arguments: ${error.message}`;
-            console.error(`[AI] [Round ${toolRound}] JSON parse error for ${toolName}:`, error);
-            console.error(`[AI] Raw arguments:`, toolCall.function.arguments);
           }
 
           // Log tool call with parsed arguments for debugging
-          console.log(`[AI] [Round ${toolRound}] Calling tool: ${toolName}`);
-          if (!parseError) {
-            console.log(`[AI] [Round ${toolRound}] Tool arguments:`, args);
-          }
-
           // If JSON parsing failed, return error to model
           let result: string;
           if (parseError) {
@@ -1727,7 +1675,6 @@ graph TD
              
              if (!userApproved) {
                result = `用户拒绝执行此工具。请尝试其他方式或直接回答用户的问题。`;
-               console.log(`[AI] [Round ${toolRound}] Tool ${toolName} denied by user`);
              } else {
                // Execute tool with timeout protection
                const TOOL_TIMEOUT_MS = 60000; // 60s timeout for tool execution
@@ -1741,13 +1688,10 @@ graph TD
                    timeoutPromise
                  ]);
                } catch (err: any) {
-                 console.error(`[AI] [Round ${toolRound}] Tool execution error/timeout:`, err);
                  result = `Error: ${err.message || "Tool execution failed"}`;
                }
              }
           }
-
-          console.log(`[AI] [Round ${toolRound}] Tool result: ${result.substring(0, 100)}${result.length > 100 ? "..." : ""}`);
 
           toolResultMessages.push({
             id: nowId(),
@@ -1760,7 +1704,6 @@ graph TD
           
           // 检查是否是直接渲染的工具结果（如日记导出），跳过 AI 后续处理
           if (result.includes("```journal-export")) {
-            console.log(`[AI] [Round ${toolRound}] Direct render tool result detected, skipping AI follow-up`);
             allToolResultMessages.push(...toolResultMessages);
             conversation.push(...toolResultMessages);
             setMessages((prev) => [...prev, ...toolResultMessages]);
@@ -1819,8 +1762,7 @@ graph TD
               tools: enableTools ? filteredTools : undefined, // Last round: disable tools to force an answer
             },
             standard,
-            fallback,
-            () => console.log(`[AI] [Round ${toolRound}] Retrying with fallback format...`)
+            fallback
           )) {
             if (chunk.type === "reasoning") {
               // 第一次收到 reasoning 时，创建独立的 reasoning 消息
@@ -1882,7 +1824,6 @@ graph TD
             }
           }
         } catch (streamErr: any) {
-          console.error(`[AI] [Round ${toolRound}] Error during response:`, streamErr);
           throw streamErr;
         }
 
@@ -1934,14 +1875,12 @@ graph TD
 
         // Check if model wants to call more tools
         if (nextToolCalls.length > 0 && toolRound < MAX_TOOL_ROUNDS) {
-          console.log(`[AI] Model requested ${nextToolCalls.length} more tool(s), continuing to round ${toolRound + 1}`);
           currentToolCalls = nextToolCalls;
           currentAssistantId = nextAssistantId;
           // Continue loop
         } else {
           // No more tool calls or reached max rounds
           if (nextToolCalls.length > 0) {
-            console.warn(`[AI] Reached max tool rounds (${MAX_TOOL_ROUNDS}), stopping`);
             const toolFallback = allToolResultMessages.map((m) => m.content).join("\n\n").trim();
             const warning = [
               nextContent?.trim(),
@@ -1955,7 +1894,6 @@ graph TD
             }
           }
 
-          console.log(`[AI] Tool calling complete after ${toolRound} round(s) (${nextContent.length} chars)`);
           break;
         }
       }
@@ -2121,7 +2059,6 @@ graph TD
     }).then(() => {
       setSettingsVersion(v => v + 1); // 触发重新获取设置
     }).catch(err => {
-      console.warn("[AiChatPanel] Failed to update model selection:", err);
     });
   }, [pluginNameForUi]);
 

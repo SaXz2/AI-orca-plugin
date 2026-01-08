@@ -93,7 +93,6 @@ export function extractSearchResultsFromToolResults(
           const lastLogged = loggedMessages.get(logKey) || 0;
           
           if (now - lastLogged > LOG_THROTTLE_MS) {
-            console.log(`[extractSearchResults] Found ${cachedResults.length} cached results for key: ${cacheKey}`);
             loggedMessages.set(logKey, now);
           }
           continue; // 已从缓存获取，跳过解析
@@ -105,7 +104,6 @@ export function extractSearchResultsFromToolResults(
       const parsedResults = parseSearchResultsFromContent(result.content);
       if (parsedResults.length > 0) {
         allSearchResults.push(...parsedResults);
-        console.log(`[extractSearchResults] Parsed ${parsedResults.length} results from content`);
       }
     }
   }
@@ -1046,7 +1044,6 @@ async function getRootBlockId(blockId: number): Promise<number | undefined> {
       safetyCounter++;
     }
   } catch (error) {
-    console.warn(`[getRootBlockId] Error tracing root for block ${blockId}:`, error);
   }
   return currentId;
 }
@@ -1176,7 +1173,6 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
         
         // Early validation: check for undefined tagQuery
         if (!tagQuery) {
-          console.error("[Tool] searchBlocksByTag: Missing tag_query parameter. Args:", args);
           return "Error: Missing tag_query parameter. Please specify which tag to search for.";
         }
         
@@ -1190,7 +1186,6 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
         // Fetch extra to support offset and sorting
         const fetchLimit = offset + actualLimit;
         
-        console.log(`[Tool] searchBlocksByTag: "${tagQuery}" (countOnly=${countOnly}, briefMode=${briefMode}, offset=${offset}, sortBy=${sortBy})`);
         let allResults = await searchBlocksByTag(tagQuery, Math.min(fetchLimit, 200));
         
         // Sort results if sortBy is specified
@@ -1204,7 +1199,6 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
         
         const results = allResults.slice(offset, offset + actualLimit);
         const totalFetched = allResults.length;
-        console.log(`[Tool] searchBlocksByTag found ${totalFetched} total, returning ${results.length} (offset=${offset})`);
 
         if (results.length === 0) {
           if (offset > 0 && totalFetched > 0) {
@@ -1238,7 +1232,6 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
 
         return `${preservationNote}Found ${results.length} block(s) with tag "${tagQuery}":${sortInfo}\n${summary}${paginationInfo}${limitWarning}`;
       } catch (err: any) {
-        console.error(`[Tool] Error in searchBlocksByTag:`, err);
         return `Error searching by tag: ${err.message}`;
       }
     } else if (toolName === "searchBlocksByText") {
@@ -1253,7 +1246,6 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
         const sortOrder = (args.sortOrder || "desc") as "asc" | "desc";
         const fetchLimit = offset + actualLimit;
 
-        console.log(`[Tool] searchBlocksByText: "${query}" (countOnly=${countOnly}, briefMode=${briefMode}, offset=${offset}, sortBy=${sortBy})`);
         let allResults = await searchBlocksByText(query, Math.min(fetchLimit, 200));
         
         // Sort results if sortBy is specified
@@ -1267,7 +1259,6 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
         
         const results = allResults.slice(offset, offset + actualLimit);
         const totalFetched = allResults.length;
-        console.log(`[Tool] searchBlocksByText found ${totalFetched} total, returning ${results.length} (offset=${offset})`);
 
         if (results.length === 0) {
           if (offset > 0 && totalFetched > 0) {
@@ -1301,7 +1292,6 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
 
         return `${preservationNote}Found ${results.length} block(s) matching "${query}":${sortInfo}\n${summary}${paginationInfo}${limitWarning}`;
       } catch (err: any) {
-        console.error(`[Tool] Error in searchBlocksByText:`, err);
         return `Error searching by text: ${err.message}`;
       }
     } else if (toolName === "query_blocks_by_tag") {
@@ -1310,7 +1300,6 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
         
         // Early validation: check for undefined tagName
         if (!tagName) {
-          console.error("[Tool] query_blocks_by_tag: Missing tagName parameter. Args:", args);
           return "Error: Missing tagName parameter. Please specify which tag to search for.";
         }
         
@@ -1323,14 +1312,11 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
           try {
             filters = JSON.parse(filters);
           } catch (parseErr) {
-            console.warn("[Tool] Failed to parse filters string:", filters);
             filters = [];
           }
         }
 
-        console.log(`[Tool] query_blocks_by_tag: #${tagName}`, { filters, maxResults: actualLimit });
         const results = await queryBlocksByTag(tagName, { properties: filters, maxResults: actualLimit });
-        console.log(`[Tool] query_blocks_by_tag found ${results.length} results`);
 
         if (results.length === 0) {
           const filterDesc = filters.length > 0 ? " with specified filters" : "";
@@ -1344,7 +1330,6 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
         // Add explicit completion indicator to prevent unnecessary follow-up queries
         return `${preservationNote}✅ Search complete. Found ${results.length} block(s) for #${tagName}:\n${summary}${limitWarning}\n\n---\n📋 Above are all matching results. You can directly reference these blocks using the blockid format shown.${results.length >= actualLimit ? " Note: More results may exist beyond the limit." : " No further queries needed."}`;
       } catch (err: any) {
-        console.error(`[Tool] Error in query_blocks_by_tag:`, err);
         return `Error querying tag with filters: ${err.message}`;
       }
     } else if (toolName === "getRecentJournals") {
@@ -1371,17 +1356,12 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
 不要再用 getRecentJournals 查询超过 7 天的日记。`;
         }
 
-        console.log("[Tool] getRecentJournals:", {
-          days: normalizedDays,
-          includeChildren,
-        });
 
         const results = await getRecentJournals(
           normalizedDays,
           includeChildren,
           normalizedDays // maxResults = days
         );
-        console.log(`[Tool] getRecentJournals found ${results.length} results`);
 
         if (results.length === 0) {
           return `No journal entries found in the last ${normalizedDays} day(s).`;
@@ -1392,14 +1372,12 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
 
         return `${preservationNote}Found ${results.length} journal entries in the last ${normalizedDays} day(s):\n${summary}`;
       } catch (err: any) {
-        console.error(`[Tool] Error in getRecentJournals:`, err);
         return `Error getting recent journals: ${err.message}`;
       }
     } else if (toolName === "getTodayJournal") {
       try {
         const includeChildren = args.includeChildren !== false; // default true
 
-        console.log("[Tool] getTodayJournal:", { includeChildren });
 
         // Get today's date in YYYY-MM-DD format
         const today = new Date();
@@ -1416,12 +1394,10 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
             return `${preservationNote}Today's journal (${todayStr}):\n${formatted}`;
           }
         } catch (journalErr: any) {
-          console.log(`[Tool] getTodayJournal: Journal not found, error: ${journalErr.message}`);
         }
 
         return `No journal entry found for today (${todayStr}). Please create it manually in Orca.`;
       } catch (err: any) {
-        console.error(`[Tool] Error in getTodayJournal:`, err);
         return `Error getting today's journal: ${err.message}`;
       }
     } else if (toolName === "getJournalByDate") {
@@ -1433,7 +1409,6 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
           return "Error: date parameter is required. Format: YYYY-MM-DD (e.g., 2024-12-25)";
         }
 
-        console.log("[Tool] getJournalByDate:", { date: dateStr, includeChildren });
 
         const journal = await getJournalByDate(dateStr, includeChildren);
         
@@ -1445,7 +1420,6 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
 
         return `No journal entry found for ${dateStr}.`;
       } catch (err: any) {
-        console.error(`[Tool] Error in getJournalByDate:`, err);
         return `Error getting journal for specified date: ${err.message}`;
       }
     } else if (toolName === "getJournalsByDateRange") {
@@ -1468,11 +1442,9 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
           return "Error: endValue is required when rangeType is 'range'";
         }
 
-        console.log("[Tool] getJournalsByDateRange:", { rangeType, value, endValue, includeChildren, maxResults });
 
         // 年份查询：直接获取数据并返回导出按钮
         if (rangeType === "year") {
-          console.log("[Tool] getJournalsByDateRange: Year query, fetching data for export button");
           
           const results = await getJournalsByDateRange(
             "year",
@@ -1517,7 +1489,6 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
           // 存入缓存，返回缓存 ID
           const cacheId = `year-${value}-${Date.now()}`;
           setJournalExportCache(cacheId, rangeLabel, exportData);
-          console.log(`[Tool] Cached ${exportData.length} entries with id: ${cacheId}`);
 
           // 返回 journal-export 代码块，前端会渲染为导出按钮
           return `\`\`\`journal-export\ncache:${cacheId}\n\`\`\``;
@@ -1570,7 +1541,6 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
           // 存入缓存，返回缓存 ID
           const cacheId = `month-${value}-${Date.now()}`;
           setJournalExportCache(cacheId, rangeLabel, exportData);
-          console.log(`[Tool] Cached ${exportData.length} entries with id: ${cacheId}`);
 
           // 返回 journal-export 代码块，前端会渲染为导出按钮
           return `\`\`\`journal-export\ncache:${cacheId}\n\`\`\``;
@@ -1610,7 +1580,6 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
           // 存入缓存，返回缓存 ID
           const cacheId = `range-last-${days}-days-${Date.now()}`;
           setJournalExportCache(cacheId, rangeLabel, exportData);
-          console.log(`[Tool] Cached ${exportData.length} entries with id: ${cacheId}`);
 
           // 返回 journal-export 代码块，前端会渲染为导出按钮
           return `\`\`\`journal-export\ncache:${cacheId}\n\`\`\``;
@@ -1621,7 +1590,6 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
 
         return `${preservationNote}Found ${results.length} journal entries for ${rangeType}: ${value}${endValue ? ` to ${endValue}` : ""}:\n${summary}`;
       } catch (err: any) {
-        console.error(`[Tool] Error in getJournalsByDateRange:`, err);
         return `Error getting journals for date range: ${err.message}`;
       }
     } else if (toolName === "query_blocks") {
@@ -1636,7 +1604,6 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
           return "Error: At least one condition is required for query_blocks.";
         }
 
-        console.log("[Tool] query_blocks:", { conditions, combineMode, maxResults: actualLimit });
 
         const convertedConditions: QueryCondition[] = conditions.map((c: any) => {
           switch (c.type) {
@@ -1673,7 +1640,6 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
           combineMode: combineMode as QueryCombineMode,
           pageSize: actualLimit,
         });
-        console.log(`[Tool] query_blocks found ${results.length} results`);
 
         if (results.length === 0) {
           return `No blocks found matching the ${combineMode.toUpperCase()} query.`;
@@ -1685,7 +1651,6 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
 
         return `${preservationNote}Found ${results.length} block(s) matching ${combineMode.toUpperCase()} query:\n${summary}${limitWarning}`;
       } catch (err: any) {
-        console.error(`[Tool] Error in query_blocks:`, err);
         return `Error executing complex query: ${err.message}`;
       }
     } else if (toolName === "get_tag_schema") {
@@ -1697,13 +1662,10 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
         }
 
         if (!tagName) {
-          console.error("[Tool] Missing tag name parameter");
           return "Error: Missing tag name parameter";
         }
 
-        console.log(`[Tool] get_tag_schema: "${tagName}"`);
         const schema = await getTagSchema(tagName);
-        console.log(`[Tool] get_tag_schema found ${schema.properties.length} properties`);
 
         if (schema.properties.length === 0) {
           return `Tag "${tagName}" found but has no properties defined.`;
@@ -1723,7 +1685,6 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
         result += `\n**Usage tip**: When querying with property filters, use the numeric values shown above for choice properties.\n`;
         return result;
       } catch (err: any) {
-        console.error(`[Tool] Error in get_tag_schema:`, err);
         return `Error getting schema for tag "${args.tagName}": ${err.message}`;
       }
     } else if (toolName === "searchBlocksByReference") {
@@ -1743,16 +1704,13 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
         }
 
         if (!pageName) {
-          console.error("[Tool] Missing page name parameter. Args:", args);
           return "Error: Missing page name parameter. Please specify which page to find references to.";
         }
 
-        console.log("[Tool] searchBlocksByReference:", { pageName, maxResults: actualLimit, countOnly, briefMode, offset });
 
         const allResults = await searchBlocksByReference(pageName, Math.min(fetchLimit, 200));
         const results = allResults.slice(offset, offset + actualLimit);
         const totalFetched = allResults.length;
-        console.log(`[Tool] searchBlocksByReference found ${totalFetched} total, returning ${results.length} (offset=${offset})`);
 
         if (results.length === 0) {
           if (offset > 0 && totalFetched > 0) {
@@ -1785,7 +1743,6 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
 
         return `${preservationNote}Found ${results.length} block(s) referencing "[[${pageName}]]":\n${summary}${paginationInfo}${limitWarning}`;
       } catch (err: any) {
-        console.error(`[Tool] Error in searchBlocksByReference:`, err);
         return `Error searching references to "${args.pageName}": ${err.message}`;
       }
     } else if (toolName === "getPage") {
@@ -1798,11 +1755,9 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
         }
 
         if (!pageName) {
-          console.error("[Tool] Missing page name parameter");
           return "Error: Missing page name parameter.";
         }
 
-        console.log("[Tool] getPage:", { pageName, includeChildren });
 
         try {
           const result = await getPageByName(pageName, includeChildren);
@@ -1817,7 +1772,6 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
           throw error;
         }
       } catch (err: any) {
-        console.error(`[Tool] Error in getPage:`, err);
         return `Error getting page "${args.pageName}": ${err.message}`;
       }
     } else if (toolName === "getBlock") {
@@ -1835,11 +1789,9 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
         const blockId = toFiniteNumber(blockIdRaw);
 
         if (!blockId) {
-          console.error("[Tool] Missing or invalid blockId parameter");
           return "Error: Missing or invalid blockId parameter. Please provide a valid block ID number.";
         }
 
-        console.log("[Tool] getBlock:", { blockId, includeChildren, includeMeta });
 
         // Get block from state or backend
         let block = orca.state.blocks[blockId] || await orca.invokeBackend("get-block", blockId);
@@ -1911,7 +1863,6 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
 
         return `# ${title}${metaInfo}\n\n${content}${childrenContent}\n\n---\n📄 [查看原块](orca-block:${blockId})`;
       } catch (err: any) {
-        console.error(`[Tool] Error in getBlock:`, err);
         return `Error getting block ${args.blockId}: ${err.message}`;
       }
     } else if (toolName === "getBlockMeta") {
@@ -1941,7 +1892,6 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
         const fields: string[] = args.fields || ["created", "modified", "tags", "properties"];
 
         if (blockIds.length === 0) {
-          console.error("[Tool] getBlockMeta: Missing or invalid blockIds");
           return "Error: Missing or invalid blockIds parameter.";
         }
 
@@ -1950,7 +1900,6 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
           blockIds = blockIds.slice(0, 100);
         }
 
-        console.log("[Tool] getBlockMeta:", { blockIds: blockIds.length, fields });
 
         // Format date helper
         const formatDate = (date: any): string => {
@@ -1993,7 +1942,6 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
 
         return `📋 ${blockIds.length} 个块的元数据：\n${results.join("\n")}`;
       } catch (err: any) {
-        console.error(`[Tool] Error in getBlockMeta:`, err);
         return `Error getting block metadata: ${err.message}`;
       }
     } else if (toolName === "createBlock") {
@@ -2078,7 +2026,6 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
         
         return `✅ Created new block: [${newBlockId}](orca-block:${newBlockId})\n⚠️ 创建成功，请勿重复调用 createBlock！`;
       } catch (err: any) {
-        console.error(`[Tool] Error in createBlock:`, err);
         return `Error creating block: ${err.message}`;
       }
     } else if (toolName === "createPage") {
@@ -2233,7 +2180,6 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
         // 通过标签搜索已保存的 AI 对话
         const result = await orca.invokeBackend("get-blocks-with-tags", ["Ai会话保存"]);
         
-        console.log("[getSavedAiConversations] Found blocks with tag:", result?.length || 0);
         
         if (!result || !Array.isArray(result) || result.length === 0) {
           return "未找到已保存的 AI 对话记录。";
@@ -2251,13 +2197,11 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
         // 如果有搜索关键词，过滤结果
         if (query) {
           const lowerQuery = query.toLowerCase();
-          console.log("[getSavedAiConversations] Searching for:", lowerQuery);
           
           conversations = conversations.filter((block: any) => {
             // 搜索块的 text 字段（可搜索文本）
             const blockText = block.text || "";
             if (blockText.toLowerCase().includes(lowerQuery)) {
-              console.log("[getSavedAiConversations] Found in text field");
               return true;
             }
             
@@ -2268,7 +2212,6 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
             
             // 搜索标题
             if (title.toLowerCase().includes(lowerQuery)) {
-              console.log("[getSavedAiConversations] Found in title");
               return true;
             }
             
@@ -2276,7 +2219,6 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
             for (const msg of messages) {
               const content = msg.content || "";
               if (content.toLowerCase().includes(lowerQuery)) {
-                console.log("[getSavedAiConversations] Found in message content");
                 return true;
               }
             }
@@ -2374,7 +2316,6 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
           }
         }
         
-        console.log(`[Tool] webSearch: "${query}" (instances=${instances.length}, maxResults=${maxResults})`);
         
         // 使用故障转移搜索
         const response = await searchWithFallback(query, instances, maxResults);
@@ -2382,13 +2323,11 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
         // 存储原始搜索结果供自动增强使用
         const cacheKey = `websearch-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
         searchResultsCache.set(cacheKey, response.results || []);
-        console.log(`[Tool] webSearch: Cached ${response.results?.length || 0} results with key: ${cacheKey}`);
         
         // 在格式化结果中包含缓存键（隐藏在HTML注释中）
         const formattedResults = formatSearchResults(response);
         return `${formattedResults}\n<!-- search-cache:${cacheKey} -->`;
       } catch (err: any) {
-        console.error("[Tool] Error in webSearch:", err);
         return `Error searching web: ${err.message}`;
       }
     } else if (toolName === "imageSearch") {
@@ -2464,7 +2403,6 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
           }
         }
         
-        console.log(`[Tool] imageSearch: "${query}" (provider=${provider}, maxResults=${maxResults})`);
         
         const response = await searchImages(query, imageConfig);
         
@@ -2494,7 +2432,6 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
         
         return lines.join("\n");
       } catch (err: any) {
-        console.error("[Tool] Error in imageSearch:", err);
         
         // 提供更友好的错误信息和解决方案
         const errorMessage = err.message || "未知错误";
@@ -2562,7 +2499,6 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
           });
         }
         
-        console.log(`[Tool] generateFlashcards: Generated ${validCards.length} valid cards`);
         
         // 返回结构化结果，前端会识别 _flashcardToolResult 标记
         return JSON.stringify({
@@ -2572,7 +2508,6 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
           _flashcardToolResult: true,
         });
       } catch (err: any) {
-        console.error("[Tool] Error in generateFlashcards:", err);
         return JSON.stringify({ 
           success: false, 
           error: err.message,
@@ -2586,11 +2521,9 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
         return scriptResult;
       }
       
-      console.error("[Tool] Unknown tool:", toolName);
       return `Unknown tool: ${toolName}`;
     }
   } catch (error: any) {
-    console.error("[Tool] Error:", error);
     return `Error executing ${toolName}: ${error?.message ?? error}`;
   }
 }

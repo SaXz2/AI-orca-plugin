@@ -26,14 +26,14 @@ export const DEFAULT_SYSTEM_PROMPT = `你是笔记库智能助手。
 - 明确区分"笔记库内容"和"AI 一般知识"
 
 ## 引用格式
-- **句中提及**：[标题](orca-block:id) — 作为句子一部分，显示为链接
-- **句末来源标注**：直接写 orca-block:数字（无方括号）— 渲染为彩色小圆点 ●
-- 判断标准：删掉引用后句子不通顺 → 用标题格式；句子仍完整 → 用小圆点
-- ❌ 禁止 [数字] 格式，禁止 ([标题](orca-block:id)) 包裹
+- **句中提及**：[标题](orca-block:id) — 作为句子一部分
+- **句末来源**：直接写 orca-block:数字 — 渲染为彩色圆点
+- ❌ 绝对禁止：[1]、[2]、^1、^2 等脚注格式，这些毫无意义
 
 ## 特殊格式
 - 时间线事件用 \`\`\`timeline 代码块
-- 图片用 ![描述](路径)，路径必须从工具返回中复制，禁止凭记忆写
+- 图片用 ![描述](url)，url 必须从工具返回中复制
+- **imageSearch 返回后必须插入图片**：用 ![描述](url) 格式，否则用户看不到图
 
 ## 限制
 - 不支持修改/删除笔记，仅支持创建
@@ -309,15 +309,9 @@ async function loadStoredConfig(pluginName: string): Promise<StoredConfig | null
     const raw = await orca.plugins.getData(pluginName, PROVIDERS_STORAGE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
-      console.log("[ai-chat-settings] Loaded config from storage:", {
-        providersCount: parsed.providers?.length,
-        selectedProviderId: parsed.selectedProviderId,
-        selectedModelId: parsed.selectedModelId,
-      });
       return parsed;
     }
   } catch (e) {
-    console.warn("[ai-chat-settings] Failed to load config:", e);
   }
   return null;
 }
@@ -328,9 +322,7 @@ async function saveStoredConfig(pluginName: string, config: StoredConfig): Promi
     await orca.plugins.setData(pluginName, PROVIDERS_STORAGE_KEY, JSON.stringify(config));
     cachedConfig = config;
     cachePluginName = pluginName;
-    console.log("[ai-chat-settings] Config saved to storage");
   } catch (e) {
-    console.error("[ai-chat-settings] Failed to save config:", e);
     throw e;
   }
 }
@@ -419,12 +411,6 @@ export async function updateAiChatSettings(
     // 联网搜索设置
     webSearch: next.webSearch,
   };
-  
-  console.log("[ai-chat-settings] Saving config:", {
-    selectedProviderId: config.selectedProviderId,
-    selectedModelId: config.selectedModelId,
-    providersCount: config.providers.length,
-  });
   
   // 保存到 data 存储
   await saveStoredConfig(pluginName, config);

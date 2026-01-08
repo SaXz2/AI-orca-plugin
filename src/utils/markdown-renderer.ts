@@ -530,7 +530,6 @@ function parseMarkdownInternal(text: string): MarkdownNode[] {
       }
       
       if (blockId > 0) {
-        console.log(`[markdown-renderer] Intercepted ${codeBlockLang} block, converting to localgraph with blockId=${blockId}`);
         nodes.push({
           type: "localgraph",
           blockId,
