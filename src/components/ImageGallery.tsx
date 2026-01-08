@@ -42,6 +42,11 @@ export default function ImageGallery({
     return images.slice(0, maxDisplay);
   }, [images, maxDisplay]);
 
+  // 过滤掉加载失败的图片，只显示成功加载的
+  const visibleImages = useMemo(() => {
+    return displayImages.filter(img => !failedImages.has(img.url));
+  }, [displayImages, failedImages]);
+
   const handleImageLoad = useCallback((url: string) => {
     setLoadedImages(prev => new Set([...prev, url]));
   }, []);
@@ -74,13 +79,21 @@ export default function ImageGallery({
     window.open(sourceUrl, '_blank', 'noopener,noreferrer');
   }, []);
 
+  if (visibleImages.length === 0 && loadedImages.size === 0 && failedImages.size === displayImages.length) {
+    // 所有图片都加载失败，不显示任何内容
+    return null;
+  }
+
   if (displayImages.length === 0) {
     return null;
   }
 
+  // 智能布局样式 - 基于实际可见图片数量
+  const actualVisibleCount = visibleImages.length > 0 ? visibleImages.length : displayImages.length;
+
   // 智能布局样式 - 基于图片实际尺寸和数量
   const getResponsiveGridColumns = () => {
-    const imageCount = displayImages.length;
+    const imageCount = actualVisibleCount;
     if (layout === "row") {
       return `repeat(${Math.min(imageCount, 4)}, minmax(120px, 1fr))`;
     }
@@ -98,7 +111,7 @@ export default function ImageGallery({
   };
 
   const getGridRows = () => {
-    const imageCount = displayImages.length;
+    const imageCount = actualVisibleCount;
     // 使用auto而不是1fr，让行高度自适应图片内容
     if (imageCount <= 2) return "auto";
     if (imageCount === 3) return "auto"; // 单行
@@ -139,24 +152,28 @@ export default function ImageGallery({
   return createElement(
     Fragment,
     null,
-    // 图片网格/行
+    // 图片网格/行 - 只渲染未失败的图片
     createElement(
       "div",
       { style: layout === "grid" ? gridStyle : rowStyle },
       ...displayImages.map((image, index) => {
         const isLoaded = loadedImages.has(image.url);
-        const isFailed = failedImages.has(image.url);
+        
+        // 跳过加载失败的图片，不渲染任何内容
+        if (failedImages.has(image.url)) {
+          return null;
+        }
         
         // 计算每张图片的网格位置 - 简化为标准网格布局
-        const getGridPosition = (index: number, totalCount: number) => {
+        const getGridPosition = (idx: number, totalCount: number) => {
           // 对于5张图片，使用特殊布局：第一行2张，第二行3张
           if (totalCount === 5) {
-            if (index < 2) {
-              return { gridColumn: `${index + 1} / ${index + 2}` }; // 第一行：第1、2列
+            if (idx < 2) {
+              return { gridColumn: `${idx + 1} / ${idx + 2}` }; // 第一行：第1、2列
             } else {
               return { 
                 gridRow: "2",
-                gridColumn: `${index - 1} / ${index}` // 第二行：第1、2、3列
+                gridColumn: `${idx - 1} / ${idx}` // 第二行：第1、2、3列
               };
             }
           }
@@ -195,7 +212,7 @@ export default function ImageGallery({
             },
           },
           // 图片
-          !isFailed && createElement("img", {
+          createElement("img", {
             src: image.url,
             alt: image.title,
             style: {
@@ -209,7 +226,7 @@ export default function ImageGallery({
             onError: () => handleImageError(image.url),
           }),
           // 加载中占位符
-          !isLoaded && !isFailed && createElement(
+          !isLoaded && createElement(
             "div",
             {
               style: {
@@ -231,31 +248,6 @@ export default function ImageGallery({
               },
             }),
             createElement("div", null, "加载中...")
-          ),
-          // 加载失败占位符
-          isFailed && createElement(
-            "div",
-            {
-              style: {
-                display: "flex",
-                flexDirection: "column",
-                alignItems: "center",
-                justifyContent: "center",
-                minHeight: "80px", // 给错误状态一个最小高度
-                color: "var(--orca-color-text-3)",
-                fontSize: "clamp(9px, 1.8vw, 11px)",
-                padding: "8px",
-                textAlign: "center",
-              },
-            },
-            createElement("i", {
-              className: "ti ti-photo-off",
-              style: { 
-                fontSize: "clamp(14px, 3vw, 18px)",
-                marginBottom: "4px" 
-              },
-            }),
-            createElement("div", null, "加载失败")
           ),
           // 图片信息覆盖层
           isLoaded && createElement(

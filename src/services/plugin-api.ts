@@ -20,7 +20,7 @@
  * ```
  */
 
-import { getAiChatSettings, getModelApiConfig, validateCurrentConfig } from "../settings/ai-chat-settings";
+import { getAiChatSettings, getModelApiConfig, validateCurrentConfig, DEFAULT_SYSTEM_PROMPT } from "../settings/ai-chat-settings";
 import { getAiChatPluginName } from "../ui/ai-chat-ui";
 import { buildConversationMessages } from "./message-builder";
 import { streamChatWithRetry, type StreamChunk, type ToolCallInfo } from "./chat-stream-handler";
@@ -173,7 +173,7 @@ export const AiChatPluginAPI = {
 
     const {
       model = settings.selectedModelId,
-      systemPrompt = settings.systemPrompt,
+      systemPrompt = DEFAULT_SYSTEM_PROMPT,
       enableTools = true,
       tools = TOOLS,
       temperature = settings.temperature,

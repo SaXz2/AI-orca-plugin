@@ -24,11 +24,23 @@
  * - 语义断点：检测话题结束，避免逻辑中间截断
  * - Token 对齐：64 Token 边界填充，最大化缓存命中
  * - 元数据标记：消息范围追溯，支持原文召回
+ * 
+ * v2 更新：
+ * - 使用新的 tokenizer 模块（多模型支持）
+ * - 使用 semantic-breakpoint 模块（更鲁棒的断点检测）
+ * - 使用 compression-config 模块（配置 Schema 校验）
+ * - 改进的填充策略（避免重复字符）
  */
 
 import type { Message } from "./session-service";
 import { openAIChatCompletionsStream, type OpenAIChatMessage } from "./openai-client";
 import { estimateTokens } from "../utils/token-utils";
+import { alignToTokenBoundary } from "../utils/tokenizer/alignment";
+import {
+  detectBreakpoint,
+  isLowPriorityMessage,
+  findManualMarkers,
+} from "./semantic-breakpoint";
 import {
   type CompressionStrategyConfig,
   type CompressionStrategyType,
@@ -38,6 +50,11 @@ import {
   clearStrategyState,
   compressionStrategyDebug,
 } from "./compression-strategy";
+import {
+  type CompressionConfigSchema,
+  DEFAULT_CONFIG as CONFIG_DEFAULTS,
+  printConfig,
+} from "./compression-config";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 类型定义
@@ -420,8 +437,8 @@ const MILESTONE_DISTILL_PROMPT = `你是对话压缩专家。将以下多个里�
 // ═══════════════════════════════════════════════════════════════════════════
 
 function isLowPriority(content: string): boolean {
-  if (!content || content.trim().length < 3) return true;
-  return LOW_PRIORITY_PATTERNS.some(p => p.test(content.trim()));
+  // 使用新的语义断点模块
+  return isLowPriorityMessage({ content, role: "user" } as Message);
 }
 
 function calculateTokens(messages: Message[]): number {
@@ -491,33 +508,14 @@ function findSafeRecentBoundary(
 
 /**
  * 检测语义断点（是否适合在此处压缩）
+ * 使用新的 semantic-breakpoint 模块
  * 返回 true 表示可以安全压缩
  */
 function isSemanticBreakPoint(lastMessage: Message | undefined): boolean {
-  if (!lastMessage || !lastMessage.content) return true;
+  if (!lastMessage) return true;
   
-  const content = lastMessage.content.trim();
-  
-  // 检查是否在逻辑连续中（不应截断）
-  for (const pattern of LOGIC_CONTINUATION_PATTERNS) {
-    if (pattern.test(content)) {
-      return false;
-    }
-  }
-  
-  // 检查是否为语义断点（适合截断）
-  for (const pattern of SEMANTIC_BREAK_PATTERNS) {
-    if (pattern.test(content)) {
-      return true;
-    }
-  }
-  
-  // 默认：如果是 assistant 消息且较长，认为是完整回复
-  if (lastMessage.role === "assistant" && content.length > 100) {
-    return true;
-  }
-  
-  return false;
+  const result = detectBreakpoint(lastMessage);
+  return result.isBreakpoint && result.confidence >= 0.6;
 }
 
 /**
@@ -621,36 +619,25 @@ function buildEntityMapText(entityMap: Map<string, EntityInfo>): string {
 }
 
 /**
- * Token 对齐填充（动态配置）
- * 使用 HTML 注释填充，避免空格干扰模型注意力
+ * Token 对齐填充（使用新的 alignment 模块）
  * 
  * @param text 要对齐的文本
  * @param enableAlignment 是否启用对齐（REASONING_FIRST 策略禁用）
  * @param alignUnit Token 对齐单位（默认 64）
+ * @param paddingStrategy 填充策略（默认 comment）
  */
-function alignToTokenBoundary(
+function alignToTokenBoundaryLocal(
   text: string, 
   enableAlignment: boolean = true,
   alignUnit: number = 64,
+  paddingStrategy: "comment" | "whitespace" | "marker" | "none" = "comment",
 ): string {
-  // 如果禁用对齐，直接返回
-  if (!enableAlignment || alignUnit <= 1) {
-    return text;
-  }
-  
-  const tokens = estimateTokens(text);
-  const remainder = tokens % alignUnit;
-  
-  if (remainder === 0) return text;
-  
-  // 计算需要填充的 Token 数
-  const paddingTokens = alignUnit - remainder;
-  // 使用 HTML 注释填充，避免空格干扰模型
-  // 粗略估计：1 Token ≈ 4 个字符
-  const paddingContent = "-".repeat(paddingTokens * 4);
-  const padding = `<!-- padding: ${paddingContent} -->`;
-  
-  return text.trimEnd() + "\n" + padding + "\n";
+  // 使用新的 alignment 模块
+  return alignToTokenBoundary(text, {
+    enabled: enableAlignment,
+    alignUnit,
+    paddingStrategy,
+  });
 }
 
 /**
@@ -662,6 +649,7 @@ function alignToTokenBoundary(
  * @param isMilestone 是否为里程碑
  * @param enableAlignment 是否启用 Token 对齐
  * @param alignUnit Token 对齐单位
+ * @param paddingStrategy 填充策略
  */
 function formatSummaryOutput(
   summary: string, 
@@ -670,6 +658,7 @@ function formatSummaryOutput(
   isMilestone: boolean = false,
   enableAlignment: boolean = true,
   alignUnit: number = 64,
+  paddingStrategy: "comment" | "whitespace" | "marker" | "none" = "comment",
 ): string {
   // 1. 统一换行符
   let cleaned = summary.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
@@ -686,8 +675,8 @@ function formatSummaryOutput(
   
   const formatted = `\n\n${label}\n${meta}\n${cleaned}${DEFAULT_CONFIG.blockEndMarker}`;
   
-  // 5. Token 对齐（使用传入的配置）
-  return alignToTokenBoundary(formatted, enableAlignment, alignUnit);
+  // 5. Token 对齐（使用新的对齐模块）
+  return alignToTokenBoundaryLocal(formatted, enableAlignment, alignUnit, paddingStrategy);
 }
 
 /**

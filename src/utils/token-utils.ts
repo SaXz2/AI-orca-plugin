@@ -1,18 +1,55 @@
 /**
  * Token estimation utilities
- * 简单的 Token 估算工具，用于预估消息的 Token 数量和费用
+ * Token 估算工具，用于预估消息的 Token 数量和费用
+ * 
+ * v2: 使用新的 tokenizer 模块，支持多模型校准
  */
 
 import type { CurrencyType } from "../settings/ai-chat-settings";
 import { CURRENCY_SYMBOLS } from "../settings/ai-chat-settings";
+import { 
+  estimateTokens as tokenizerEstimate,
+  estimateTokensDetailed,
+  recordCalibrationSample,
+  setTokenizerConfig,
+  getTokenizerConfig,
+} from "./tokenizer";
+
+// 重新导出 tokenizer 功能
+export { 
+  estimateTokensDetailed,
+  recordCalibrationSample,
+  setTokenizerConfig,
+  getTokenizerConfig,
+} from "./tokenizer";
+
+export { 
+  alignToTokenBoundary,
+  getModelAlignmentConfig,
+  isAligned,
+  removePadding,
+} from "./tokenizer/alignment";
 
 /**
  * 估算文本的 Token 数量
- * 使用简单的启发式方法：
- * - 英文：约 4 字符 = 1 token
- * - 中文：约 1.5 字符 = 1 token
+ * 
+ * 使用新的 tokenizer 模块，支持：
+ * - 多模型特定估算
+ * - 运行时偏差校准
+ * - 安全余量
+ * 
+ * @param text 要估算的文本
+ * @param modelName 可选的模型名称
  */
-export function estimateTokens(text: string): number {
+export function estimateTokens(text: string, modelName?: string): number {
+  return tokenizerEstimate(text, modelName);
+}
+
+/**
+ * 简单估算（不使用校准，用于快速计算）
+ * 保留原有的简单启发式方法，用于向后兼容
+ */
+export function estimateTokensSimple(text: string): number {
   if (!text) return 0;
   
   // 分离中文和非中文字符

@@ -755,14 +755,19 @@ export function formatSearchResults(response: SearchResponse): string {
     lines.push(`\n📄 搜索结果 (${response.results.length} 条):\n`);
     
     response.results.forEach((r, i) => {
-      // 使用 Markdown 链接格式，方便 AI 直接引用
-      lines.push(`${i + 1}. [${r.title}](${r.url})`);
+      const num = i + 1;
+      // 使用编号格式，方便AI引用
+      lines.push(`[${num}] ${r.title}`);
+      lines.push(`    来源: ${r.url}`);
       if (r.publishedDate) {
-        lines.push(`   发布时间: ${r.publishedDate}`);
+        lines.push(`    发布时间: ${r.publishedDate}`);
       }
-      lines.push(`   ${r.content}`);
+      lines.push(`    内容: ${r.content}`);
       lines.push("");
     });
+    
+    // 添加引用格式提示
+    lines.push(`\n📌 **引用格式说明**：回复时请在相关内容后使用 [数字] 标注来源，如"这是一个事实[1]"。用户界面会自动将这些标注渲染为可点击的来源链接。`);
   } else {
     lines.push("\n未找到相关结果。");
   }

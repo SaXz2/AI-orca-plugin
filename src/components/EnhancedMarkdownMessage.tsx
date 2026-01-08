@@ -2,15 +2,13 @@
  * EnhancedMarkdownMessage Component
  * 增强版Markdown消息组件，支持：
  * - 自动解析和显示图片
- * - 引用来源显示（底部折叠列表 + 内联标签）
+ * - 引用来源显示（底部折叠列表）
  * - 智能内容增强
- * - 自动图片搜索和引用生成
  */
 
 import MarkdownMessage from "./MarkdownMessage";
 import ImageGallery, { type ImageItem } from "./ImageGallery";
 import CitationList, { type Citation } from "./CitationList";
-import InlineCitation, { type InlineCitationData } from "./InlineCitation";
 
 const React = window.React as unknown as {
   createElement: typeof window.React.createElement;
@@ -30,53 +28,12 @@ interface EnhancedMarkdownMessageProps {
   citations?: Citation[];
   // 是否自动解析内容中的图片和引用
   autoParseEnhancements?: boolean;
-  // 是否启用自动增强（图片搜索和引用生成）- 已禁用
-  enableAutoEnhancement?: boolean;
-  // 搜索结果（用于生成引用）
-  searchResults?: any[];
-}
-
-/**
- * 检测是否有内联图片的更智能逻辑
- * 只有当图片真正嵌入在段落中间时才认为是内联
- */
-function hasInlineImagesInContent(content: string): boolean {
-  const lines = content.split('\n');
-  
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i].trim();
-    
-    // 检查是否是图片行
-    if (line.match(/^!\[.*?\]\(.*?\)$/)) {
-      // 检查图片前后是否有非空的文本行（不是标题、不是空行）
-      const prevLine = i > 0 ? lines[i - 1].trim() : '';
-      const nextLine = i < lines.length - 1 ? lines[i + 1].trim() : '';
-      
-      // 如果图片前后都有实质性文本内容（不是标题、不是图片描述），则认为是内联
-      const hasPrevText = prevLine.length > 0 && 
-                         !prevLine.startsWith('#') && 
-                         !prevLine.startsWith('*') &&
-                         !prevLine.match(/^!\[.*?\]\(.*?\)$/);
-      
-      const hasNextText = nextLine.length > 0 && 
-                         !nextLine.startsWith('#') && 
-                         !nextLine.startsWith('*') &&
-                         !nextLine.match(/^!\[.*?\]\(.*?\)$/);
-      
-      // 只有当图片真正嵌入在文本段落中间时才认为是内联
-      if (hasPrevText && hasNextText) {
-        return true;
-      }
-    }
-  }
-  
-  return false;
 }
 
 /**
  * 从Markdown内容中解析图片
  */
-function parseImagesFromMarkdown(content: string): { images: ImageItem[], hasInlineImages: boolean } {
+function parseImagesFromMarkdown(content: string): { images: ImageItem[], hasMarkdownImages: boolean } {
   const images: ImageItem[] = [];
   
   // 匹配Markdown图片语法: ![alt](url "title")
@@ -91,15 +48,12 @@ function parseImagesFromMarkdown(content: string): { images: ImageItem[], hasInl
       images.push({
         url: url.trim(),
         title: title || alt || '图片',
-        sourceUrl: url.trim(), // 图片本身就是来源
+        sourceUrl: url.trim(),
       });
     }
   }
   
-  // 使用更智能的内联检测
-  const hasInlineImages = hasInlineImagesInContent(content);
-  
-  return { images, hasInlineImages };
+  return { images, hasMarkdownImages: images.length > 0 };
 }
 
 /**
@@ -108,7 +62,7 @@ function parseImagesFromMarkdown(content: string): { images: ImageItem[], hasInl
 function parseCitationsFromMarkdown(content: string): Citation[] {
   const citations: Citation[] = [];
   
-  // 匹配引用格式: [数字] 或 [标题](URL)
+  // 匹配引用格式: [标题](URL)
   const citationRegex = /\[([^\]]+)\]\(([^)]+)\)/g;
   let match;
   let citationIndex = 1;
@@ -176,76 +130,13 @@ function extractDomain(url: string): string {
   }
 }
 
-/**
- * 清理内容，移除已解析的图片和引用部分
- * 智能清理策略 - 避免重复显示图片
- */
-function cleanContentForDisplay(content: string, images: ImageItem[], citations: Citation[], hasInlineImages: boolean): string {
-  let cleanContent = content;
-  
-  // 移除参考来源部分
-  cleanContent = cleanContent.replace(/---\s*\*\*参考来源:\*\*\s*[\s\S]*?(?=\n\n|$)/g, '');
-  
-  // 如果有图片且会在ImageGallery中显示，则移除Markdown中的图片避免重复
-  if (images.length > 0) {
-    const imageUrls = images.map(img => img.url);
-    imageUrls.forEach(url => {
-      const escapedUrl = url.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      // 移除所有匹配的图片行
-      const imageRegex = new RegExp(`!\\[[^\\]]*\\]\\(${escapedUrl}[^)]*\\)`, 'g');
-      cleanContent = cleanContent.replace(imageRegex, '');
-    });
-  }
-  
-  // 清理多余的空行
-  cleanContent = cleanContent.replace(/\n{3,}/g, '\n\n').trim();
-  
-  return cleanContent;
-}
-
 export default function EnhancedMarkdownMessage({
   content,
   role,
   images: providedImages,
   citations: providedCitations,
   autoParseEnhancements = true,
-  enableAutoEnhancement = false, // 默认禁用自动增强
-  searchResults = [],
 }: EnhancedMarkdownMessageProps) {
-  
-  // 调试日志 - 检查searchResults是否正确传递
-  useMemo(() => {
-    if (searchResults && searchResults.length > 0) {
-      console.log(`[EnhancedMarkdownMessage] Received ${searchResults.length} search results:`, searchResults);
-    }
-  }, [searchResults]);
-  
-  // 从searchResults生成内联引用数据
-  const inlineCitations = useMemo((): InlineCitationData[] => {
-    if (!searchResults || searchResults.length === 0) {
-      return [];
-    }
-    
-    console.log(`[EnhancedMarkdownMessage] Generating ${searchResults.length} inline citations`);
-    
-    return searchResults.map((result, index) => {
-      let domain = "";
-      try {
-        const urlObj = new URL(result.url);
-        domain = urlObj.hostname.replace(/^www\./, "");
-      } catch {
-        domain = result.url || "";
-      }
-      
-      return {
-        index: index + 1,
-        title: result.title || `来源 ${index + 1}`,
-        url: result.url || "",
-        domain,
-        snippet: result.content || result.snippet || "",
-      };
-    });
-  }, [searchResults]);
   
   // 使用useCallback优化内容清理函数
   const cleanContent = useCallback((rawContent: string) => {
@@ -282,12 +173,11 @@ export default function EnhancedMarkdownMessage({
   }, []);
   
   // 解析内容中的图片和引用 - 智能显示模式切换
-  const { parsedImages, parsedCitations, cleanedContent, hasMarkdownImages } = useMemo(() => {
+  const { parsedCitations, cleanedContent, hasMarkdownImages } = useMemo(() => {
     const contentToUse = cleanContent(content);
     
     if (!autoParseEnhancements) {
       return {
-        parsedImages: [],
         parsedCitations: [],
         cleanedContent: contentToUse,
         hasMarkdownImages: false,
@@ -297,10 +187,10 @@ export default function EnhancedMarkdownMessage({
     // 检测是否有Markdown图片
     const hasMarkdownImgs = contentToUse.includes('![') && contentToUse.includes('](');
     
-    // 解析Markdown中的图片（仅用于检测，不用于显示）
-    const { images: markdownImages } = hasMarkdownImgs
+    // 解析Markdown中的图片（仅用于检测）
+    const { hasMarkdownImages: hasImgs } = hasMarkdownImgs
       ? parseImagesFromMarkdown(contentToUse)
-      : { images: [] };
+      : { hasMarkdownImages: false };
     
     // 只有当内容包含引用格式时才解析引用，避免不必要的正则操作
     const citations = (contentToUse.includes('[') && contentToUse.includes('](') && contentToUse.includes('http'))
@@ -313,10 +203,9 @@ export default function EnhancedMarkdownMessage({
       : contentToUse;
     
     return {
-      parsedImages: markdownImages,
       parsedCitations: citations,
       cleanedContent: cleaned.replace(/\n{3,}/g, '\n\n').trim(),
-      hasMarkdownImages: markdownImages.length > 0,
+      hasMarkdownImages: hasImgs,
     };
   }, [content, autoParseEnhancements, cleanContent]);
   
@@ -375,65 +264,11 @@ export default function EnhancedMarkdownMessage({
       // 智能布局选择：1-2张用行布局，3张以上用网格布局
       layout: finalImages.length <= 2 ? "row" : "grid",
     }),
-    // Markdown内容（保留原始图片，让其自然显示）
+    // Markdown内容
     createElement(MarkdownMessage, {
       content: cleanedContent,
       role,
     }),
-    // 内联引用标签栏 - 显示在内容后面，引用列表前面
-    inlineCitations.length > 0 && createElement(
-      "div",
-      {
-        style: {
-          display: "flex",
-          flexWrap: "wrap",
-          gap: "6px",
-          marginTop: "12px",
-          paddingTop: "8px",
-          borderTop: "1px dashed var(--orca-color-border)",
-        },
-      },
-      createElement(
-        "span",
-        {
-          style: {
-            fontSize: "11px",
-            color: "var(--orca-color-text-3)",
-            marginRight: "4px",
-            display: "flex",
-            alignItems: "center",
-            gap: "4px",
-          },
-        },
-        createElement("i", { className: "ti ti-quote", style: { fontSize: "12px" } }),
-        "来源:"
-      ),
-      ...inlineCitations.slice(0, 5).map((citation) => 
-        createElement(InlineCitation, {
-          key: citation.index,
-          citation,
-          showDomain: true,
-          compact: false,
-        })
-      ),
-      inlineCitations.length > 5 && createElement(
-        "span",
-        {
-          style: {
-            fontSize: "11px",
-            color: "var(--orca-color-text-3)",
-            padding: "2px 8px",
-            background: "var(--orca-color-bg-3)",
-            borderRadius: "4px",
-            cursor: "pointer",
-          },
-          onClick: () => {
-            // 展开更多引用 - 可以触发底部引用列表展开
-          },
-        },
-        `+${inlineCitations.length - 5} 更多`
-      )
-    ),
     // 引用列表（在内容之后，默认折叠）
     finalCitations.length > 0 && createElement(CitationList, {
       citations: finalCitations,

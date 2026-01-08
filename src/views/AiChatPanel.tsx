@@ -46,6 +46,7 @@ import {
   getSelectedProvider,
   updateAiChatSettings,
   validateCurrentConfig,
+  DEFAULT_SYSTEM_PROMPT,
   type AiChatSettings,
 } from "../settings/ai-chat-settings";
 import {
@@ -735,7 +736,7 @@ export default function AiChatPanel({ panelId }: PanelProps) {
 	    // 工具调用最大轮数：可在设置中配置；若缺失则默认 5（向后兼容）
 	    const MAX_TOOL_ROUNDS = settings.maxToolRounds || 5;
 	    // 系统提示词模板变量：支持 {maxToolRounds}，按当前 MAX_TOOL_ROUNDS 注入
-	    let systemPrompt = settings.systemPrompt.split("{maxToolRounds}").join(String(MAX_TOOL_ROUNDS));
+	    let systemPrompt = DEFAULT_SYSTEM_PROMPT.split("{maxToolRounds}").join(String(MAX_TOOL_ROUNDS));
 
 	    // 检测用户指令并追加格式要求
 	    let processedContent = content;
@@ -2159,7 +2160,7 @@ graph TD
     });
 
     // 计算系统开销 token（系统提示 + 记忆 + 上下文）
-    const systemPromptTokens = estimateTokens(settingsForUi.systemPrompt || "");
+    const systemPromptTokens = estimateTokens(DEFAULT_SYSTEM_PROMPT || "");
     const memoryTokens = estimateTokens(memoryStore.getFullMemoryText() || "");
     // 上下文 token 在 ChatInput 中已经显示，这里只计算基础开销
     const baseOverheadTokens = systemPromptTokens + memoryTokens;

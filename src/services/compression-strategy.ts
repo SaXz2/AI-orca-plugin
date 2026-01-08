@@ -7,7 +7,24 @@
  * - GENERAL: 通用模式，平衡压缩率和信息保留
  * 
  * 策略自动检测：基于模型名称模式匹配 + 运行时性能反馈
+ * 
+ * v2 更新：
+ * - 使用 compression-config.ts 的预设配置
+ * - 支持配置 Schema 校验
+ * - 改进的填充策略
  */
+
+import {
+  type CompressionConfigSchema,
+  PRESET_DEEPSEEK,
+  PRESET_GEMINI,
+  PRESET_CLAUDE,
+  PRESET_GPT,
+  PRESET_GENERAL,
+  DEFAULT_CONFIG,
+  createSessionConfig,
+  printConfig,
+} from "./compression-config";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 类型定义
@@ -42,6 +59,9 @@ export type CompressionStrategyConfig = {
   // 中层配置
   middleLayerTokenLimit: number;     // 中层 Token 上限
   layerTokenTarget: number;          // 每层摘要的目标 Token 数
+  
+  // 填充策略（新增）
+  paddingStrategy?: "comment" | "whitespace" | "marker" | "none";
 };
 
 /** 策略运行时状态 */
@@ -55,97 +75,67 @@ export type StrategyRuntimeState = {
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
-// 策略配置定义
+// 策略配置定义（使用 compression-config 预设）
 // ═══════════════════════════════════════════════════════════════════════════
 
 /**
  * CACHE_FIRST 策略 - 针对 DeepSeek 等支持 KV Cache 的模型
- * 
- * 特点：
- * - 较低的压缩阈值，更早触发压缩
- * - 启用 Token 对齐（64单位），最大化缓存命中
- * - 极简摘要，追求稳定性
- * - 实体映射放在 System Prompt 之后，保证前缀稳定
  */
 const CACHE_FIRST_CONFIG: CompressionStrategyConfig = {
-  compressionThreshold: 4000,
-  hardLimitThreshold: 5800,
-  recentTokenLimit: 2500,
-  
-  summaryMaxTokens: 400,
-  summaryMaxTokensCompact: 250,
-  summaryVerbosity: "minimal",
-  
-  enableTokenAlignment: true,
-  tokenAlignUnit: 64,
-  
-  milestoneThreshold: 10,
-  milestoneDistillThreshold: 3,
-  
-  entityMapPosition: "after_system",
-  
-  middleLayerTokenLimit: 1500,
-  layerTokenTarget: 1500,
+  compressionThreshold: PRESET_DEEPSEEK.compressionThreshold!,
+  hardLimitThreshold: PRESET_DEEPSEEK.hardLimitThreshold!,
+  recentTokenLimit: PRESET_DEEPSEEK.recentTokenLimit!,
+  summaryMaxTokens: PRESET_DEEPSEEK.summaryMaxTokens!,
+  summaryMaxTokensCompact: PRESET_DEEPSEEK.summaryMaxTokensCompact!,
+  summaryVerbosity: PRESET_DEEPSEEK.summaryVerbosity!,
+  enableTokenAlignment: PRESET_DEEPSEEK.enableTokenAlignment!,
+  tokenAlignUnit: PRESET_DEEPSEEK.tokenAlignUnit!,
+  milestoneThreshold: PRESET_DEEPSEEK.milestoneThreshold!,
+  milestoneDistillThreshold: PRESET_DEEPSEEK.milestoneDistillThreshold!,
+  entityMapPosition: PRESET_DEEPSEEK.entityMapPosition!,
+  middleLayerTokenLimit: PRESET_DEEPSEEK.middleLayerTokenLimit!,
+  layerTokenTarget: PRESET_DEEPSEEK.layerTokenTarget!,
+  paddingStrategy: PRESET_DEEPSEEK.paddingStrategy,
 };
 
 /**
  * REASONING_FIRST 策略 - 针对 Gemini 2.5/3 Pro、Claude 等推理模型
- * 
- * 特点：
- * - 较高的压缩阈值，保留更多原始上下文
- * - 禁用 Token 对齐（这些模型不依赖 KV Cache）
- * - 中等冗余度摘要，保留更多推理细节
- * - 实体映射放在 Dynamic Context 之前，便于推理参考
  */
 const REASONING_FIRST_CONFIG: CompressionStrategyConfig = {
-  compressionThreshold: 12000,       // 更高阈值
-  hardLimitThreshold: 18000,         // 更高硬限制
-  recentTokenLimit: 4000,            // 保留更多最近对话
-  
-  summaryMaxTokens: 600,             // 更详细的摘要
-  summaryMaxTokensCompact: 400,
-  summaryVerbosity: "medium",
-  
-  enableTokenAlignment: false,       // 禁用对齐
-  tokenAlignUnit: 1,                 // 无对齐
-  
-  milestoneThreshold: 20,            // 更多层才合并
-  milestoneDistillThreshold: 4,
-  
-  entityMapPosition: "before_dynamic",
-  
-  middleLayerTokenLimit: 3000,       // 更大的中层容量
-  layerTokenTarget: 2000,
+  compressionThreshold: PRESET_GEMINI.compressionThreshold!,
+  hardLimitThreshold: PRESET_GEMINI.hardLimitThreshold!,
+  recentTokenLimit: PRESET_GEMINI.recentTokenLimit!,
+  summaryMaxTokens: PRESET_GEMINI.summaryMaxTokens!,
+  summaryMaxTokensCompact: PRESET_GEMINI.summaryMaxTokensCompact!,
+  summaryVerbosity: PRESET_GEMINI.summaryVerbosity!,
+  enableTokenAlignment: PRESET_GEMINI.enableTokenAlignment!,
+  tokenAlignUnit: PRESET_GEMINI.tokenAlignUnit!,
+  milestoneThreshold: PRESET_GEMINI.milestoneThreshold!,
+  milestoneDistillThreshold: PRESET_GEMINI.milestoneDistillThreshold!,
+  entityMapPosition: PRESET_GEMINI.entityMapPosition!,
+  middleLayerTokenLimit: PRESET_GEMINI.middleLayerTokenLimit!,
+  layerTokenTarget: PRESET_GEMINI.layerTokenTarget!,
+  paddingStrategy: PRESET_GEMINI.paddingStrategy,
 };
 
 /**
  * GENERAL 策略 - 通用模式
- * 
- * 特点：
- * - 平衡的压缩阈值
- * - 禁用 Token 对齐
- * - 中等冗余度
- * - 实体映射放在 System Prompt 之后
  */
 const GENERAL_CONFIG: CompressionStrategyConfig = {
-  compressionThreshold: 6000,
-  hardLimitThreshold: 9000,
-  recentTokenLimit: 3000,
-  
-  summaryMaxTokens: 500,
-  summaryMaxTokensCompact: 300,
-  summaryVerbosity: "medium",
-  
-  enableTokenAlignment: false,
-  tokenAlignUnit: 1,
-  
-  milestoneThreshold: 12,
-  milestoneDistillThreshold: 3,
-  
-  entityMapPosition: "after_system",
-  
-  middleLayerTokenLimit: 2000,
-  layerTokenTarget: 1800,
+  compressionThreshold: PRESET_GENERAL.compressionThreshold!,
+  hardLimitThreshold: PRESET_GENERAL.hardLimitThreshold!,
+  recentTokenLimit: PRESET_GENERAL.recentTokenLimit!,
+  summaryMaxTokens: PRESET_GENERAL.summaryMaxTokens!,
+  summaryMaxTokensCompact: PRESET_GENERAL.summaryMaxTokensCompact!,
+  summaryVerbosity: PRESET_GENERAL.summaryVerbosity!,
+  enableTokenAlignment: PRESET_GENERAL.enableTokenAlignment!,
+  tokenAlignUnit: PRESET_GENERAL.tokenAlignUnit!,
+  milestoneThreshold: PRESET_GENERAL.milestoneThreshold!,
+  milestoneDistillThreshold: PRESET_GENERAL.milestoneDistillThreshold!,
+  entityMapPosition: PRESET_GENERAL.entityMapPosition!,
+  middleLayerTokenLimit: PRESET_GENERAL.middleLayerTokenLimit!,
+  layerTokenTarget: PRESET_GENERAL.layerTokenTarget!,
+  paddingStrategy: PRESET_GENERAL.paddingStrategy,
 };
 
 /** 策略配置映射 */
