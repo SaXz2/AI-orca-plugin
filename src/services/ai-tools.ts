@@ -35,6 +35,16 @@ import {
   handleScriptAnalysisTool 
 } from "./script-analysis-tool";
 
+// 辅助函数：从URL提取域名
+function extractDomain(url: string): string {
+  try {
+    const urlObj = new URL(url);
+    return urlObj.hostname.replace(/^www\./, "");
+  } catch {
+    return url;
+  }
+}
+
 type JournalExportCacheEntry = {
   rangeLabel: string;
   entries: any[];
@@ -46,6 +56,109 @@ const JOURNAL_EXPORT_CACHE_MAX = 5;
 
 // 全局缓存：存储大型日记导出数据（供前端使用）
 export const journalExportDataCache = new Map<string, JournalExportCacheEntry>();
+
+// 全局缓存：存储搜索结果（供自动增强使用）
+export const searchResultsCache = new Map<string, any[]>();
+
+// 日志去重缓存 - 使用更智能的去重策略
+const loggedMessages = new Map<string, number>();
+const LOG_THROTTLE_MS = 5000; // 5秒内相同消息只输出一次
+
+/**
+ * 从工具结果中提取搜索结果
+ * 支持两种方式：
+ * 1. 从缓存中获取（如果缓存存在）
+ * 2. 直接从工具结果内容中解析（作为备选）
+ */
+export function extractSearchResultsFromToolResults(
+  toolResults?: Map<string, { content: string; name: string }>
+): any[] {
+  if (!toolResults) return [];
+  
+  const allSearchResults: any[] = [];
+  
+  for (const [toolCallId, result] of toolResults.entries()) {
+    if (result.name === "webSearch") {
+      // 方式1：从缓存中获取
+      const cacheKeyMatch = result.content.match(/<!-- search-cache:([^>]+) -->/);
+      if (cacheKeyMatch) {
+        const cacheKey = cacheKeyMatch[1];
+        const cachedResults = searchResultsCache.get(cacheKey);
+        if (cachedResults && cachedResults.length > 0) {
+          allSearchResults.push(...cachedResults);
+          
+          // 智能日志去重
+          const logKey = `cache-${cacheKey}`;
+          const now = Date.now();
+          const lastLogged = loggedMessages.get(logKey) || 0;
+          
+          if (now - lastLogged > LOG_THROTTLE_MS) {
+            console.log(`[extractSearchResults] Found ${cachedResults.length} cached results for key: ${cacheKey}`);
+            loggedMessages.set(logKey, now);
+          }
+          continue; // 已从缓存获取，跳过解析
+        }
+      }
+      
+      // 方式2：直接从工具结果内容中解析搜索结果
+      // 格式：1. [标题](URL)\n   发布时间: xxx\n   内容摘要
+      const parsedResults = parseSearchResultsFromContent(result.content);
+      if (parsedResults.length > 0) {
+        allSearchResults.push(...parsedResults);
+        console.log(`[extractSearchResults] Parsed ${parsedResults.length} results from content`);
+      }
+    }
+  }
+  
+  return allSearchResults;
+}
+
+/**
+ * 从webSearch工具返回的文本内容中解析搜索结果
+ */
+function parseSearchResultsFromContent(content: string): any[] {
+  const results: any[] = [];
+  
+  // 匹配格式：数字. [标题](URL)
+  const resultRegex = /(\d+)\.\s*\[([^\]]+)\]\(([^)]+)\)/g;
+  let match;
+  
+  while ((match = resultRegex.exec(content)) !== null) {
+    const [fullMatch, index, title, url] = match;
+    
+    // 只处理HTTP/HTTPS链接
+    if (!url.startsWith('http://') && !url.startsWith('https://')) {
+      continue;
+    }
+    
+    // 尝试提取该结果后面的内容摘要
+    const afterMatch = content.substring(match.index + fullMatch.length);
+    const nextResultIndex = afterMatch.search(/\n\d+\.\s*\[/);
+    const resultBlock = nextResultIndex > 0 
+      ? afterMatch.substring(0, nextResultIndex) 
+      : afterMatch.substring(0, 500);
+    
+    // 提取摘要（跳过发布时间行）
+    const lines = resultBlock.split('\n').filter(line => line.trim());
+    let snippet = '';
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith('发布时间:') && !trimmed.startsWith('⏱️') && trimmed.length > 10) {
+        snippet = trimmed;
+        break;
+      }
+    }
+    
+    results.push({
+      title: title.trim(),
+      url: url.trim(),
+      content: snippet,
+      snippet: snippet,
+    });
+  }
+  
+  return results;
+}
 
 function pruneJournalExportCache(now: number): void {
   for (const [key, entry] of journalExportDataCache.entries()) {
@@ -766,15 +879,60 @@ export const WEB_SEARCH_TOOL: OpenAITool = {
 };
 
 /**
+ * 图像搜索工具 - 仅在用户开启联网搜索时添加
+ */
+export const IMAGE_SEARCH_TOOL: OpenAITool = {
+  type: "function",
+  function: {
+    name: "imageSearch",
+    description: `搜索相关图片并在回复中显示。
+
+【何时使用 - 优先使用】
+- 用户询问任何人物、地点、物品、概念的外观或样子
+- 回答中提到具体的人名、地名、产品名、建筑物等
+- 用户问"是什么"、"长什么样"、"外观如何"等问题
+- 介绍、描述任何具体事物时都应该搜索图片
+
+【常见触发场景】
+- "谁是XXX？" → 搜索人物照片
+- "什么是XXX？" → 搜索相关图片  
+- "介绍XXX" → 搜索对象图片
+- "XXX长什么样？" → 直接搜索
+- 任何涉及具体事物的问题
+
+【参数】
+- query: 图片搜索关键词，使用最核心的名词
+- maxResults: 返回图片数量，默认3，最大6
+
+【重要】优先使用此工具！图片能大大提升回答质量，用户更喜欢图文并茂的回答。`,
+    parameters: {
+      type: "object",
+      properties: {
+        query: {
+          type: "string",
+          description: "图片搜索关键词，使用最核心的名词",
+        },
+        maxResults: {
+          type: "number",
+          description: "最大图片数量，默认3，最大6",
+        },
+      },
+      required: ["query"],
+    },
+  },
+};
+
+/**
  * 获取工具列表（根据联网搜索开关动态添加）
  */
 export function getTools(webSearchEnabled?: boolean, scriptAnalysisEnabled?: boolean): OpenAITool[] {
   const tools = [...TOOLS];
   
-  // 如果联网搜索已开启，添加 webSearch 工具
-  // API Key 检查在执行时进行，这里只检查开关状态
+  // 如果联网搜索已开启，添加 imageSearch 和 webSearch 工具
+  // 注意：imageSearch 放在前面，让AI优先考虑使用图片搜索
   if (webSearchEnabled ?? isWebSearchEnabled()) {
-    tools.push(WEB_SEARCH_TOOL);
+    tools.push(IMAGE_SEARCH_TOOL);  // 图片搜索放在前面
+    tools.push(WEB_SEARCH_TOOL);    // 网页搜索放在后面
   }
   
   // 如果脚本分析已开启，添加脚本分析工具
@@ -2220,10 +2378,132 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
         
         // 使用故障转移搜索
         const response = await searchWithFallback(query, instances, maxResults);
-        return formatSearchResults(response);
+        
+        // 存储原始搜索结果供自动增强使用
+        const cacheKey = `websearch-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+        searchResultsCache.set(cacheKey, response.results || []);
+        console.log(`[Tool] webSearch: Cached ${response.results?.length || 0} results with key: ${cacheKey}`);
+        
+        // 在格式化结果中包含缓存键（隐藏在HTML注释中）
+        const formattedResults = formatSearchResults(response);
+        return `${formattedResults}\n<!-- search-cache:${cacheKey} -->`;
       } catch (err: any) {
         console.error("[Tool] Error in webSearch:", err);
         return `Error searching web: ${err.message}`;
+      }
+    } else if (toolName === "imageSearch") {
+      // 图像搜索工具
+      const query = args.query; // 将query定义移到try块外面
+      try {
+        if (!query) {
+          return "Error: Missing query parameter for image search.";
+        }
+        
+        const { getAiChatPluginName } = await import("../ui/ai-chat-ui");
+        const { getAiChatSettings } = await import("../settings/ai-chat-settings");
+        const { searchImages, formatImageResults } = await import("./image-search-service");
+        
+        const pluginName = getAiChatPluginName();
+        const settings = getAiChatSettings(pluginName);
+        const webConfig = settings.webSearch;
+        
+        if (!webConfig) {
+          return "Error: 联网搜索未配置。请在设置中配置搜索引擎以使用图像搜索。";
+        }
+        
+        const maxResults = Math.min(args.maxResults || 3, 6);
+        
+        // 尝试使用配置的搜索引擎进行图像搜索
+        // 优先级：Google Images > Bing Images > DuckDuckGo Images
+        const instances = webConfig.instances || [];
+        
+        // 查找支持图像搜索的引擎
+        let imageConfig: any = null;
+        let provider: "google" | "bing" | "duckduckgo" = "duckduckgo"; // 默认使用免费的DuckDuckGo
+        
+        // 优先使用Google Images（如果配置了）
+        const googleInstance = instances.find(i => i.provider === "google" && i.enabled && i.googleApiKey && i.googleSearchEngineId);
+        if (googleInstance) {
+          provider = "google";
+          imageConfig = {
+            provider: "google",
+            maxResults,
+            google: {
+              apiKey: googleInstance.googleApiKey!,
+              searchEngineId: googleInstance.googleSearchEngineId!,
+              gl: googleInstance.googleGl,
+              hl: googleInstance.googleHl || "zh-CN",
+              safe: googleInstance.googleSafe || "off",
+            },
+          };
+        } else {
+          // 尝试使用Bing Images
+          const bingInstance = instances.find(i => i.provider === "bing" && i.enabled && i.bingApiKey);
+          if (bingInstance) {
+            provider = "bing";
+            imageConfig = {
+              provider: "bing",
+              maxResults,
+              bing: {
+                apiKey: bingInstance.bingApiKey!,
+                mkt: bingInstance.bingMarket || "zh-CN",
+                safeSearch: "Moderate",
+              },
+            };
+          } else {
+            // 使用免费的DuckDuckGo Images
+            provider = "duckduckgo";
+            imageConfig = {
+              provider: "duckduckgo",
+              maxResults,
+              duckduckgo: {
+                region: "cn-zh",
+                safeSearch: "moderate",
+              },
+            };
+          }
+        }
+        
+        console.log(`[Tool] imageSearch: "${query}" (provider=${provider}, maxResults=${maxResults})`);
+        
+        const response = await searchImages(query, imageConfig);
+        
+        if (response.results.length === 0) {
+          return `未找到与"${query}"相关的图片。\n\n💡 建议：\n- 尝试使用更具体的关键词\n- 如果使用DuckDuckGo遇到问题，建议配置Google Images或Bing Images API\n- 可以尝试问"给我看看[具体内容]的照片"`;
+        }
+        
+        // 格式化结果，包含图片的Markdown显示
+        const lines: string[] = [];
+        lines.push(`🖼️ 找到 ${response.results.length} 张与"${query}"相关的图片:\n`);
+        
+        response.results.forEach((img, i) => {
+          lines.push(`${i + 1}. ![${img.title}](${img.url})`);
+          if (img.sourceUrl && img.sourceUrl !== img.url) {
+            lines.push(`   📄 来源: [${extractDomain(img.sourceUrl)}](${img.sourceUrl})`);
+          }
+          if (img.width && img.height) {
+            lines.push(`   📐 尺寸: ${img.width}×${img.height}${img.size ? ` (${img.size})` : ""}`);
+          }
+          lines.push("");
+        });
+        
+        lines.push(`\n🔍 图片搜索由 ${response.provider} 提供`);
+        if (response.responseTime) {
+          lines.push(`⏱️ 搜索耗时: ${response.responseTime}ms`);
+        }
+        
+        return lines.join("\n");
+      } catch (err: any) {
+        console.error("[Tool] Error in imageSearch:", err);
+        
+        // 提供更友好的错误信息和解决方案
+        const errorMessage = err.message || "未知错误";
+        
+        if (errorMessage.includes("403") || errorMessage.includes("DuckDuckGo")) {
+          return `❌ 图片搜索暂时不可用\n\n**问题：** DuckDuckGo图片搜索遇到访问限制\n\n**解决方案：**\n1. **推荐：配置Google Images API**\n   - 访问 Google Cloud Console\n   - 启用 Custom Search API\n   - 创建 Custom Search Engine\n   - 在联网搜索设置中添加Google配置\n\n2. **或者配置Bing Images API**\n   - 访问 Azure Portal\n   - 创建 Bing Search 资源\n   - 在联网搜索设置中添加Bing配置\n\n3. **临时方案：** 可以直接问我关于"${query}"的描述，我会尽量详细说明外观特征。\n\n💡 配置API后，图片搜索功能会更稳定可靠。`;
+        }
+        
+        return `❌ 图片搜索失败: ${errorMessage}\n\n💡 建议：\n- 检查网络连接\n- 尝试配置其他搜索引擎（Google Images或Bing Images）\n- 可以直接问我关于"${query}"的描述`;
       }
     } else if (toolName === "generateFlashcards") {
       // 闪卡生成工具 - 返回结构化数据供前端处理

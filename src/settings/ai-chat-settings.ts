@@ -160,6 +160,9 @@ export type WebSearchConfig = {
   maxResults: number;
   // 搜索引擎实例列表（按优先级排序，第一个失败自动尝试下一个）
   instances: SearchProviderInstance[];
+  // 图像搜索配置
+  imageSearchEnabled: boolean;
+  maxImageResults: number;
   // 兼容旧版单引擎配置
   provider?: SearchProvider;
   tavilyApiKey?: string;
@@ -258,6 +261,8 @@ export const DEFAULT_AI_CHAT_SETTINGS: AiChatSettings = {
     enabled: false,
     maxResults: 5,
     instances: [], // 用户添加的搜索引擎实例
+    imageSearchEnabled: true, // 默认启用图像搜索
+    maxImageResults: 3, // 默认最多3张图片
   },
 };
 

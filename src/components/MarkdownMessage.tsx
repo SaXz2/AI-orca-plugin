@@ -1,5 +1,6 @@
 import { parseMarkdown, type MarkdownInlineNode, type MarkdownNode, type TableAlignment, type CheckboxItem, type TimelineItem, type CompareItem, type GalleryImage } from "../utils/markdown-renderer";
 import { journalExportDataCache } from "../services/ai-tools";
+import { openImagePreview, createImagePreviewItem } from "../services/image-preview-service";
 import LocalGraph from "./LocalGraph";
 import MindMapRenderer from "./MindMapRenderer";
 import {
@@ -1056,9 +1057,17 @@ function renderInlineNode(node: MarkdownInlineNode, key: number): any {
         createElement("img", {
           src: resolveImageSrc(node.src),
           alt: node.alt || "image",
-          style: imageStyle,
+          style: {
+            ...imageStyle,
+            cursor: "pointer", // 添加指针样式
+          },
           onClick: () => {
-            orca.invokeBackend("shell-open", resolveImageFilePath(node.src));
+            // 使用全局预览服务，与ImageGallery保持一致
+            openImagePreview(createImagePreviewItem(
+              resolveImageSrc(node.src),
+              node.alt || "图片",
+              resolveImageSrc(node.src)
+            ));
           },
           onError: (e: any) => {
             console.warn("[MarkdownMessage] Image not found:", node.src);

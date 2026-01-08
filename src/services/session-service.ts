@@ -58,6 +58,9 @@ export type Message = {
   }>;
   tool_call_id?: string;
   name?: string;
+  // 自动增强相关
+  searchResults?: any[]; // 搜索结果（用于自动增强）
+  autoEnhanced?: boolean; // 是否已自动增强
 };
 
 /**

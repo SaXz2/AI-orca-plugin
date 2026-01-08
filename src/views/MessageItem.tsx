@@ -12,6 +12,7 @@
  */
 
 import MarkdownMessage from "../components/MarkdownMessage";
+import EnhancedMarkdownMessage from "../components/EnhancedMarkdownMessage";
 import ToolStatusIndicator from "../components/ToolStatusIndicator";
 import SuggestedReplies from "../components/SuggestedReplies";
 import ExtractMemoryButton from "./ExtractMemoryButton";
@@ -829,6 +830,24 @@ export default function MessageItem({
     return selection && selection.toString().length > 0;
   }, []);
 
+  // Extract search results from tool results for auto-enhancement
+  const [searchResults, setSearchResults] = useState<any[]>([]);
+  
+  useEffect(() => {
+    if (!message.tool_calls || !toolResults) {
+      setSearchResults([]);
+      return;
+    }
+    
+    // Import and extract search results
+    import("../services/ai-tools").then(({ extractSearchResultsFromToolResults }) => {
+      const results = extractSearchResultsFromToolResults(toolResults);
+      setSearchResults(results);
+    }).catch(() => {
+      setSearchResults([]);
+    });
+  }, [message.tool_calls, toolResults]);
+
   // Check if any tool calls are still loading
   const toolCallsLoading = useMemo(() => {
     if (!message.tool_calls || !toolResults) return true;
@@ -1093,8 +1112,14 @@ export default function MessageItem({
         ))
       ),
 
-      // Content
-      createElement(MarkdownMessage, { content: message.content || "", role: message.role }),
+      // Content - 使用增强版Markdown组件支持图片和引用
+      createElement(EnhancedMarkdownMessage, { 
+        content: message.content || "", 
+        role: message.role,
+        autoParseEnhancements: true,
+        enableAutoEnhancement: false, // 完全禁用自动增强，避免干扰流式渲染
+        searchResults: searchResults,
+      }),
 
       // Cursor for streaming - 如果内容为空，显示"正在输出"提示
       isStreaming &&

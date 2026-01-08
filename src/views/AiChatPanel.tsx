@@ -25,6 +25,7 @@ import TypingIndicator from "../components/TypingIndicator";
 import MemoryManager from "./MemoryManager";
 import ChatNavigation from "../components/ChatNavigation";
 import FlashcardReview, { type Flashcard } from "../components/FlashcardReview";
+import GlobalImagePreview from "../components/GlobalImagePreview";
 import { injectChatStyles } from "../styles/chat-animations";
 
 // DEBUG: Check if all components are defined
@@ -2829,6 +2830,8 @@ graph TD
     createElement(WebSearchSettingsModal, {
       isOpen: showWebSearchSettings,
       onClose: () => setShowWebSearchSettings(false),
-    })
+    }),
+    // Global Image Preview Modal
+    createElement(GlobalImagePreview)
   );
 }

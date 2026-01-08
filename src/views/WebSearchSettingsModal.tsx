@@ -74,7 +74,13 @@ export default function WebSearchSettingsModal({ isOpen, onClose }: Props) {
     setSaving(true);
     try {
       await updateAiChatSettings("app", getAiChatPluginName(), {
-        webSearch: { enabled: true, maxResults, instances },
+        webSearch: { 
+          enabled: true, 
+          maxResults, 
+          instances,
+          imageSearchEnabled: true,
+          maxImageResults: 3,
+        },
       });
       orca.notify("success", "设置已保存");
       onClose();
