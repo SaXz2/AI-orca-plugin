@@ -3,6 +3,7 @@ import { journalExportDataCache } from "../services/ai-tools";
 import { openImagePreview, createImagePreviewItem } from "../services/image-preview-service";
 import LocalGraph from "./LocalGraph";
 import MindMapRenderer from "./MindMapRenderer";
+import type { SourceGroup, WebSearchSource } from "../utils/source-attribution";
 import {
   codeBlockContainerStyle,
   codeBlockHeaderStyle,
@@ -70,6 +71,11 @@ function resolveImageFilePath(src: string): string {
 interface Props {
   content: string;
   role: "user" | "assistant" | "tool";
+  sourceGroups?: SourceGroup[];
+  sourceResults?: WebSearchSource[];
+  activeSourceGroupId?: string | null;
+  onHoverSourceGroup?: (groupId: string, anchorRect?: DOMRect) => void;
+  onLeaveSourceGroup?: () => void;
 }
 
 // Helper component for Code Block with Copy
@@ -323,6 +329,114 @@ function JournalExportBlock({ content }: { content: string }) {
       "💡 导出后可使用 ChatGPT、Claude 等 AI 工具进行分析"
     )
   );
+}
+
+function SourceBadgeGroup({
+  groups,
+  activeGroupId,
+  onHover,
+  onLeave,
+}: {
+  groups: SourceGroup[];
+  activeGroupId?: string | null;
+  onHover?: (groupId: string, anchorRect?: DOMRect) => void;
+  onLeave?: () => void;
+}) {
+  if (!groups.length) return null;
+
+  return createElement(
+    "span",
+    {
+      style: {
+        display: "inline-flex",
+        alignItems: "center",
+        gap: "6px",
+        marginLeft: "6px",
+        flexWrap: "wrap",
+        verticalAlign: "baseline",
+      },
+      onMouseLeave: () => {
+        onLeave?.();
+      },
+    },
+    ...groups.map((group) =>
+      createElement(
+        "button",
+        {
+          key: group.id,
+          style: {
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "4px",
+            padding: "2px 8px",
+            borderRadius: "999px",
+            border: "1px solid var(--orca-color-border)",
+            background: activeGroupId === group.id ? "var(--orca-color-primary)" : "var(--orca-color-bg-3)",
+            color: activeGroupId === group.id ? "var(--orca-color-text-inverse)" : "var(--orca-color-text-2)",
+            fontSize: "11px",
+            cursor: "pointer",
+          },
+          onMouseEnter: (e: any) => {
+            const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+            onHover?.(group.id, rect);
+          },
+          onClick: (e: any) => {
+            e.stopPropagation();
+            const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+            onHover?.(group.id, rect);
+          },
+          title: group.sources.map((s) => s.domain || s.title).join("\n"),
+        },
+        group.label
+      )
+    )
+  );
+}
+
+function hasMeaningfulInlineText(children: MarkdownInlineNode[]): boolean {
+  return children.some((child) => {
+    switch (child.type) {
+      case "text":
+        return child.content.trim().length > 0;
+      case "code":
+        return child.content.trim().length > 0;
+      case "bold":
+      case "italic":
+      case "link":
+        return hasMeaningfulInlineText(child.children);
+      default:
+        return false;
+    }
+  });
+}
+
+function extractCitationNumbersFromInlineNodes(children: MarkdownInlineNode[]): number[] {
+  const numbers: number[] = [];
+  const seen = new Set<number>();
+  const pushNumber = (value: number) => {
+    if (seen.has(value)) return;
+    seen.add(value);
+    numbers.push(value);
+  };
+
+  const walk = (nodes: MarkdownInlineNode[]) => {
+    nodes.forEach((node) => {
+      if (node.type === "text") {
+        const matches = node.content.matchAll(/\[(\d+)\]/g);
+        for (const match of matches) {
+          const value = parseInt(match[1], 10);
+          if (!Number.isNaN(value)) pushNumber(value);
+        }
+        return;
+      }
+      if (node.type === "bold" || node.type === "italic" || node.type === "link") {
+        walk(node.children);
+      }
+    });
+  };
+
+  walk(children);
+  return numbers;
 }
 
 // Table view types
@@ -1251,9 +1365,14 @@ function renderInlineNode(node: MarkdownInlineNode, key: number): any {
   }
 }
 
-function renderBlockNode(node: MarkdownNode, key: number): any {
-  switch (node.type) {
-    case "heading": {
+function renderBlockNode(
+  node: MarkdownNode,
+  key: number,
+  options?: { renderSourceBadges?: (citationNumbers: number[]) => any },
+  rawNode?: MarkdownNode
+): any {
+    switch (node.type) {
+      case "heading": {
       const HeadingTag = `h${node.level}` as any;
       // 生成标题的文本内容用于创建 ID
       const headingText = node.children
@@ -1278,62 +1397,86 @@ function renderBlockNode(node: MarkdownNode, key: number): any {
       );
     }
 
-    case "paragraph": {
-      const cleanedChildren = cleanupDotPunctuation(node.children);
-      return createElement(
-        "p",
-        {
-          key,
-          style: paragraphStyle,
-        },
-        ...cleanedChildren.map((child, i) => renderInlineNode(child, i)),
-      );
-    }
-
-    case "list": {
-      const ListTag = (node.ordered ? "ol" : "ul") as any;
-      const listClass = node.ordered ? "md-list md-list-ordered" : "md-list md-list-unordered";
-
-      // 递归渲染列表项
-      const renderListItem = (item: any, itemIndex: number): any => {
+      case "paragraph": {
+        const cleanedChildren = cleanupDotPunctuation(node.children);
+        const rawChildren =
+          rawNode && rawNode.type === "paragraph"
+            ? rawNode.children
+            : node.children;
+        const citationNumbers = extractCitationNumbersFromInlineNodes(rawChildren);
+        const badges = options?.renderSourceBadges
+          ? options.renderSourceBadges(citationNumbers)
+          : null;
+        const showBadges = !!badges && hasMeaningfulInlineText(cleanedChildren);
         return createElement(
-          "li",
+          "p",
           {
-            key: itemIndex,
-            className: "md-list-item",
+            key,
+            style: paragraphStyle,
           },
-          // 渲染项目内容
-          ...item.content.map((child: any, i: number) => renderInlineNode(child, i)),
-          // 渲染嵌套子列表
-          item.children && item.children.length > 0 && createElement(
-            ListTag,
-            {
-              className: listClass + " md-list-nested",
-            },
-            ...item.children.map((subItem: any, subIndex: number) => renderListItem(subItem, subIndex))
-          )
+          ...cleanedChildren.map((child, i) => renderInlineNode(child, i)),
+          showBadges ? badges : null,
         );
-      };
+      }
 
-      return createElement(
-        ListTag,
-        {
-          key,
-          className: listClass,
-        },
-        ...node.items.map((item, itemIndex) => renderListItem(item, itemIndex)),
-      );
-    }
+      case "list": {
+        const ListTag = (node.ordered ? "ol" : "ul") as any;
+        const listClass = node.ordered ? "md-list md-list-ordered" : "md-list md-list-unordered";
+        const rawList = rawNode && rawNode.type === "list" ? rawNode : node;
 
-    case "quote":
-      return createElement(
-        "blockquote",
-        {
-          key,
-          style: blockQuoteStyle,
-        },
-        ...node.children.map((child, i) => renderBlockNode(child, i)),
-      );
+        // 递归渲染列表项
+        const renderListItem = (item: any, itemIndex: number, rawItem?: any): any => {
+          const rawContent = rawItem?.content || item.content;
+          const citationNumbers = extractCitationNumbersFromInlineNodes(rawContent);
+          const badges = options?.renderSourceBadges
+            ? options.renderSourceBadges(citationNumbers)
+            : null;
+          const showBadges = !!badges && hasMeaningfulInlineText(item.content);
+          return createElement(
+            "li",
+            {
+              key: itemIndex,
+              className: "md-list-item",
+            },
+            // 渲染项目内容
+            ...item.content.map((child: any, i: number) => renderInlineNode(child, i)),
+            showBadges ? badges : null,
+            // 渲染嵌套子列表
+            item.children && item.children.length > 0 && createElement(
+              ListTag,
+              {
+                className: listClass + " md-list-nested",
+              },
+              ...item.children.map((subItem: any, subIndex: number) =>
+                renderListItem(subItem, subIndex, rawItem?.children?.[subIndex])
+              )
+            )
+          );
+        };
+
+        return createElement(
+          ListTag,
+          {
+            key,
+            className: listClass,
+          },
+          ...node.items.map((item, itemIndex) =>
+            renderListItem(item, itemIndex, rawList.items[itemIndex])
+          ),
+        );
+      }
+
+      case "quote":
+        return createElement(
+          "blockquote",
+          {
+            key,
+            style: blockQuoteStyle,
+          },
+          ...node.children.map((child, i) =>
+            renderBlockNode(child, i, options, rawNode && rawNode.type === "quote" ? rawNode.children[i] : undefined)
+          ),
+        );
 
     case "codeblock":
       // 特殊处理 journal-export 代码块
@@ -1414,7 +1557,15 @@ function renderBlockNode(node: MarkdownNode, key: number): any {
   }
 }
 
-export default function MarkdownMessage({ content, role }: Props) {
+export default function MarkdownMessage({
+  content,
+  role,
+  sourceGroups,
+  sourceResults,
+  activeSourceGroupId,
+  onHoverSourceGroup,
+  onLeaveSourceGroup,
+}: Props) {
   // 预处理：清理 AI 输出中多余的标注符号
   const cleanedContent = useMemo(() => {
     let text = content;
@@ -1452,13 +1603,53 @@ export default function MarkdownMessage({ content, role }: Props) {
   }, [content]);
   
   const nodes = useMemo(() => parseMarkdown(cleanedContent), [cleanedContent]);
+  const rawNodes = useMemo(() => parseMarkdown(content), [content]);
+  const sourceGroupByUrl = useMemo(() => {
+    const map = new Map<string, SourceGroup>();
+    if (sourceGroups) {
+      sourceGroups.forEach((group) => {
+        group.sources.forEach((source) => {
+          map.set(source.url, group);
+        });
+      });
+    }
+    return map;
+  }, [sourceGroups]);
+
+  const renderSourceBadges = (citationNumbers: number[]) => {
+    if (role !== "assistant") return null;
+    if (!sourceGroups || sourceGroups.length === 0) return null;
+    if (!sourceResults || sourceResults.length === 0) return null;
+    if (!citationNumbers || citationNumbers.length === 0) return null;
+
+    const groupsForBlock: SourceGroup[] = [];
+    const seenGroups = new Set<string>();
+    citationNumbers.forEach((number) => {
+      const source = sourceResults[number - 1];
+      if (!source) return;
+      const group = sourceGroupByUrl.get(source.url);
+      if (!group || seenGroups.has(group.id)) return;
+      seenGroups.add(group.id);
+      groupsForBlock.push(group);
+    });
+
+    if (groupsForBlock.length === 0) return null;
+    return createElement(SourceBadgeGroup, {
+      groups: groupsForBlock,
+      activeGroupId: activeSourceGroupId,
+      onHover: onHoverSourceGroup,
+      onLeave: onLeaveSourceGroup,
+    });
+  };
 
   return createElement(
     "div",
     {
       style: markdownContainerStyle(role),
     },
-    ...nodes.map((node: MarkdownNode, index: number) => renderBlockNode(node, index)),
+      ...nodes.map((node: MarkdownNode, index: number) =>
+        renderBlockNode(node, index, { renderSourceBadges }, rawNodes[index])
+      ),
   );
 }
 

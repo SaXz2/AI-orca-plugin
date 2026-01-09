@@ -53,13 +53,14 @@ import {
 } from "../services/session-service";
 import { exportSessionAsFile, saveSessionToJournal, saveMessagesToJournal } from "../services/export-service";
 import { sessionStore, updateSessionStore, clearSessionStore } from "../store/session-store";
-import { TOOLS, FLASHCARD_TOOL, executeTool, getToolsForDraggedContext, getTools } from "../services/ai-tools";
+import { TOOLS, FLASHCARD_TOOL, executeTool, getToolsForDraggedContext, getTools, extractSearchResultsFromToolResults } from "../services/ai-tools";
 import { getToolStatus, isToolDisabled, shouldAskForTool, isAgenticRAGEnabled, getAgenticRAGConfig } from "../store/tool-store";
 import { nowId, safeText } from "../utils/text-utils";
 import { buildConversationMessages } from "../services/message-builder";
 import { streamChatWithRetry, type ToolCallInfo } from "../services/chat-stream-handler";
 import { executeAgenticRAG, formatRAGSteps, getToolDisplayName } from "../services/agentic-rag-service";
 import { clearSummaryCache } from "../services/compression-service";
+import { normalizeWebSearchResults, type WebSearchSource } from "../utils/source-attribution";
 import {
   panelContainerStyle,
   headerStyle,
@@ -1336,6 +1337,31 @@ graph TD
       
       const conversation: Message[] = [...baseMessages.filter((m) => !m.localOnly), userMsgWithContextAssets];
 
+      let aggregatedSearchResults: WebSearchSource[] = [];
+      const mergeSearchResults = (incoming: WebSearchSource[]) => {
+        if (!incoming.length) return;
+        const seen = new Set(aggregatedSearchResults.map((r) => r.url));
+        incoming.forEach((result) => {
+          if (!result.url || seen.has(result.url)) return;
+          seen.add(result.url);
+          aggregatedSearchResults.push(result);
+        });
+      };
+      const captureSearchResults = (toolMessages: Message[]) => {
+        if (!toolMessages.length) return;
+        const toolMap = new Map<string, { content: string; name: string }>();
+        toolMessages.forEach((m) => {
+          if (m.tool_call_id) {
+            toolMap.set(m.tool_call_id, { content: m.content, name: m.name || "" });
+          }
+        });
+        const results = normalizeWebSearchResults(extractSearchResultsFromToolResults(toolMap));
+        mergeSearchResults(results);
+      };
+      const getSearchResultsForMessage = () => (
+        aggregatedSearchResults.length > 0 ? aggregatedSearchResults : undefined
+      );
+
       // Stream initial response with timeout protection
       let currentContent = "";
       let currentReasoning = "";
@@ -1527,6 +1553,7 @@ graph TD
               reasoning: currentReasoning,
               createdAt: reasoningCreatedAt!,
               model,
+              searchResults: getSearchResultsForMessage(),
             }]);
           } else {
             currentReasoning += chunk.reasoning;
@@ -1545,6 +1572,7 @@ graph TD
               content: chunk.content, 
               createdAt: assistantCreatedAt,
               model,
+              searchResults: getSearchResultsForMessage(),
             }]);
             currentContent = chunk.content;
             reasoningMessageId = assistantId; // 复用这个 ID 作为 assistant ID
@@ -1560,6 +1588,7 @@ graph TD
               content: chunk.content, 
               createdAt: assistantCreatedAt,
               model,
+              searchResults: getSearchResultsForMessage(),
             }]);
             currentContent = chunk.content;
             reasoningMessageId = assistantId; // 更新为 assistant ID
@@ -1588,6 +1617,7 @@ graph TD
             content: "(empty response)", 
             createdAt: assistantCreatedAt,
             model,
+            searchResults: getSearchResultsForMessage(),
           }]);
         } else {
           // 完全空响应
@@ -1597,6 +1627,7 @@ graph TD
             content: "(empty response)", 
             createdAt: assistantCreatedAt,
             model,
+            searchResults: getSearchResultsForMessage(),
           }]);
         }
       } else if (!currentContent && toolCalls.length > 0) {
@@ -1607,6 +1638,7 @@ graph TD
           content: "", 
           createdAt: assistantCreatedAt,
           model,
+          searchResults: getSearchResultsForMessage(),
         }]);
       }
 
@@ -1616,6 +1648,7 @@ graph TD
 	        content: currentContent,
 	        createdAt: assistantCreatedAt,
 	        tool_calls: toolCalls.length > 0 ? toolCalls : undefined,
+          searchResults: getSearchResultsForMessage(),
 	      });
 
 		      // Handle tool calls with multi-round support
@@ -1715,6 +1748,7 @@ graph TD
         }
         
         // 如果已经处理了直接渲染的结果，跳过后续 AI 调用
+        captureSearchResults(toolResultMessages);
         if (currentToolCalls.length === 0 && toolResultMessages.some(m => m.content.includes("```journal-export"))) {
           break;
         }
@@ -1778,6 +1812,7 @@ graph TD
                   reasoning: chunk.reasoning,
                   createdAt: nextReasoningCreatedAt!,
                   model,
+                  searchResults: getSearchResultsForMessage(),
                 }]);
               } else {
                 nextReasoning += chunk.reasoning;
@@ -1796,6 +1831,7 @@ graph TD
                   content: chunk.content, 
                   createdAt: nextAssistantCreatedAt,
                   model,
+                  searchResults: getSearchResultsForMessage(),
                 }]);
                 nextContent = chunk.content;
                 nextReasoningMessageId = nextAssistantId;
@@ -1811,6 +1847,7 @@ graph TD
                   content: chunk.content, 
                   createdAt: nextAssistantCreatedAt,
                   model,
+                  searchResults: getSearchResultsForMessage(),
                 }]);
                 nextContent = chunk.content;
                 nextReasoningMessageId = nextAssistantId;
@@ -1841,6 +1878,7 @@ graph TD
             content: "(empty response)", 
             createdAt: nextAssistantCreatedAt,
             model,
+            searchResults: getSearchResultsForMessage(),
           }]);
         }
 
@@ -1853,13 +1891,14 @@ graph TD
           const toolFallback = allToolResultMessages.map((m) => m.content).join("\n\n").trim();
           const fallbackText = toolFallback || "(empty response from API)";
           if (nextReasoningMessageId) {
-            updateMessage(nextReasoningMessageId, { content: fallbackText });
+            updateMessage(nextReasoningMessageId, { content: fallbackText, searchResults: getSearchResultsForMessage() });
           } else {
             setMessages((prev) => [...prev, { 
               id: nextAssistantId, 
               role: "assistant", 
               content: fallbackText, 
-              createdAt: nextAssistantCreatedAt 
+              createdAt: nextAssistantCreatedAt,
+              searchResults: getSearchResultsForMessage(),
             }]);
           }
           nextContent = fallbackText;
@@ -1871,6 +1910,7 @@ graph TD
           content: nextContent,
           createdAt: nextAssistantCreatedAt,
           tool_calls: nextToolCalls.length > 0 ? nextToolCalls : undefined,
+          searchResults: getSearchResultsForMessage(),
         });
 
         // Check if model wants to call more tools

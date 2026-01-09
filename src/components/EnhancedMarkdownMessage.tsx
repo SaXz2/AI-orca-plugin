@@ -9,6 +9,7 @@
 import MarkdownMessage from "./MarkdownMessage";
 import ImageGallery, { type ImageItem } from "./ImageGallery";
 import CitationList, { type Citation } from "./CitationList";
+import type { SourceGroup, WebSearchSource } from "../utils/source-attribution";
 
 const React = window.React as unknown as {
   createElement: typeof window.React.createElement;
@@ -26,6 +27,11 @@ interface EnhancedMarkdownMessageProps {
   // 可选的图片和引用数据
   images?: ImageItem[];
   citations?: Citation[];
+  sourceGroups?: SourceGroup[];
+  sourceResults?: WebSearchSource[];
+  activeSourceGroupId?: string | null;
+  onHoverSourceGroup?: (groupId: string, anchorRect?: DOMRect) => void;
+  onLeaveSourceGroup?: () => void;
   // 是否自动解析内容中的图片和引用
   autoParseEnhancements?: boolean;
 }
@@ -135,6 +141,11 @@ export default function EnhancedMarkdownMessage({
   role,
   images: providedImages,
   citations: providedCitations,
+  sourceGroups,
+  sourceResults,
+  activeSourceGroupId,
+  onHoverSourceGroup,
+  onLeaveSourceGroup,
   autoParseEnhancements = true,
 }: EnhancedMarkdownMessageProps) {
   
@@ -268,6 +279,11 @@ export default function EnhancedMarkdownMessage({
     createElement(MarkdownMessage, {
       content: cleanedContent,
       role,
+      sourceGroups,
+      sourceResults,
+      activeSourceGroupId,
+      onHoverSourceGroup,
+      onLeaveSourceGroup,
     }),
     // 引用列表（在内容之后，默认折叠）
     finalCitations.length > 0 && createElement(CitationList, {
