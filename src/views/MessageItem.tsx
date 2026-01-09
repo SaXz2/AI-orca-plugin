@@ -1084,6 +1084,7 @@ export default function MessageItem({
   const [sourceResults, setSourceResults] = useState<WebSearchSource[]>([]);
   const [activeSourceGroupId, setActiveSourceGroupId] = useState<string | null>(null);
   const [sourceAnchor, setSourceAnchor] = useState<SourceAnchor | null>(null);
+  const [activeBadgeKey, setActiveBadgeKey] = useState<string | null>(null);
   const clearSourcePanelTimer = useCallback(() => {
     if (closeSourcePanelTimerRef.current) {
       window.clearTimeout(closeSourcePanelTimerRef.current);
@@ -1096,13 +1097,15 @@ export default function MessageItem({
     closeSourcePanelTimerRef.current = window.setTimeout(() => {
       if (sourcePanelHoverRef.current) return;
       setActiveSourceGroupId(null);
+      setActiveBadgeKey(null);
       setSourceAnchor(null);
     }, 160);
   }, [clearSourcePanelTimer]);
 
-  const handleHoverSourceGroup = useCallback((groupId: string, anchorRect?: DOMRect) => {
+  const handleHoverSourceGroup = useCallback((groupId: string, anchorRect?: DOMRect, badgeKey?: string) => {
     clearSourcePanelTimer();
     setActiveSourceGroupId(groupId);
+    setActiveBadgeKey(badgeKey || null);
     const rowRect = messageRowRef.current?.getBoundingClientRect();
     if (rowRect && anchorRect) {
       setSourceAnchor({
@@ -1132,7 +1135,10 @@ export default function MessageItem({
       setSourceResults(normalized);
       setActiveSourceGroupId((prev) => {
         const next = prev && groups.some(g => g.id === prev) ? prev : null;
-        if (!next) setSourceAnchor(null);
+        if (!next) {
+          setSourceAnchor(null);
+          setActiveBadgeKey(null);
+        }
         return next;
       });
       return;
@@ -1142,6 +1148,7 @@ export default function MessageItem({
       setSourceGroups([]);
       setSourceResults([]);
       setActiveSourceGroupId(null);
+      setActiveBadgeKey(null);
       setSourceAnchor(null);
       return;
     }
@@ -1154,13 +1161,17 @@ export default function MessageItem({
       setSourceResults(results);
       setActiveSourceGroupId((prev) => {
         const next = prev && groups.some(g => g.id === prev) ? prev : null;
-        if (!next) setSourceAnchor(null);
+        if (!next) {
+          setSourceAnchor(null);
+          setActiveBadgeKey(null);
+        }
         return next;
       });
     }).catch(() => {
       setSourceGroups([]);
       setSourceResults([]);
       setActiveSourceGroupId(null);
+      setActiveBadgeKey(null);
       setSourceAnchor(null);
     });
   }, [message.id, message.searchResults, message.tool_calls, toolResults]);
@@ -1455,6 +1466,7 @@ export default function MessageItem({
           sourceGroups: sourceGroups,
           sourceResults: sourceResults,
           activeSourceGroupId: activeSourceGroupId,
+          activeBadgeKey: activeBadgeKey,
           onHoverSourceGroup: handleHoverSourceGroup,
           onLeaveSourceGroup: handleLeaveSourceGroup,
         }),
@@ -1645,6 +1657,7 @@ export default function MessageItem({
             sourcePanelHoverRef.current = false;
             clearSourcePanelTimer();
             setActiveSourceGroupId(null);
+            setActiveBadgeKey(null);
             setSourceAnchor(null);
           },
         }),

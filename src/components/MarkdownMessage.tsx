@@ -74,7 +74,8 @@ interface Props {
   sourceGroups?: SourceGroup[];
   sourceResults?: WebSearchSource[];
   activeSourceGroupId?: string | null;
-  onHoverSourceGroup?: (groupId: string, anchorRect?: DOMRect) => void;
+  activeBadgeKey?: string | null;
+  onHoverSourceGroup?: (groupId: string, anchorRect?: DOMRect, badgeKey?: string) => void;
   onLeaveSourceGroup?: () => void;
 }
 
@@ -334,12 +335,16 @@ function JournalExportBlock({ content }: { content: string }) {
 function SourceBadgeGroup({
   groups,
   activeGroupId,
+  activeBadgeKey,
+  badgeScopeId,
   onHover,
   onLeave,
 }: {
   groups: SourceGroup[];
   activeGroupId?: string | null;
-  onHover?: (groupId: string, anchorRect?: DOMRect) => void;
+  activeBadgeKey?: string | null;
+  badgeScopeId: string;
+  onHover?: (groupId: string, anchorRect?: DOMRect, badgeKey?: string) => void;
   onLeave?: () => void;
 }) {
   if (!groups.length) return null;
@@ -359,8 +364,10 @@ function SourceBadgeGroup({
         onLeave?.();
       },
     },
-    ...groups.map((group) =>
-      createElement(
+    ...groups.map((group) => {
+      const badgeKey = `${badgeScopeId}:${group.id}`;
+      const isActive = activeBadgeKey ? activeBadgeKey === badgeKey : false;
+      return createElement(
         "button",
         {
           key: group.id,
@@ -371,25 +378,24 @@ function SourceBadgeGroup({
             padding: "2px 8px",
             borderRadius: "999px",
             border: "1px solid var(--orca-color-border)",
-            background: activeGroupId === group.id ? "var(--orca-color-primary)" : "var(--orca-color-bg-3)",
-            color: activeGroupId === group.id ? "var(--orca-color-text-inverse)" : "var(--orca-color-text-2)",
+            background: isActive ? "var(--orca-color-primary)" : "var(--orca-color-bg-3)",
+            color: isActive ? "var(--orca-color-text-inverse)" : "var(--orca-color-text-2)",
             fontSize: "11px",
             cursor: "pointer",
           },
           onMouseEnter: (e: any) => {
             const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-            onHover?.(group.id, rect);
+            onHover?.(group.id, rect, badgeKey);
           },
           onClick: (e: any) => {
             e.stopPropagation();
             const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-            onHover?.(group.id, rect);
+            onHover?.(group.id, rect, badgeKey);
           },
-          title: group.sources.map((s) => s.domain || s.title).join("\n"),
         },
         group.label
-      )
-    )
+      );
+    })
   );
 }
 
@@ -1368,7 +1374,7 @@ function renderInlineNode(node: MarkdownInlineNode, key: number): any {
 function renderBlockNode(
   node: MarkdownNode,
   key: number,
-  options?: { renderSourceBadges?: (citationNumbers: number[]) => any },
+  options?: { renderSourceBadges?: (citationNumbers: number[], scopeId: string) => any },
   rawNode?: MarkdownNode
 ): any {
     switch (node.type) {
@@ -1405,7 +1411,7 @@ function renderBlockNode(
             : node.children;
         const citationNumbers = extractCitationNumbersFromInlineNodes(rawChildren);
         const badges = options?.renderSourceBadges
-          ? options.renderSourceBadges(citationNumbers)
+          ? options.renderSourceBadges(citationNumbers, `p-${key}`)
           : null;
         const showBadges = !!badges && hasMeaningfulInlineText(cleanedChildren);
         return createElement(
@@ -1425,11 +1431,11 @@ function renderBlockNode(
         const rawList = rawNode && rawNode.type === "list" ? rawNode : node;
 
         // 递归渲染列表项
-        const renderListItem = (item: any, itemIndex: number, rawItem?: any): any => {
+        const renderListItem = (item: any, itemIndex: number, rawItem?: any, scopeId?: string): any => {
           const rawContent = rawItem?.content || item.content;
           const citationNumbers = extractCitationNumbersFromInlineNodes(rawContent);
           const badges = options?.renderSourceBadges
-            ? options.renderSourceBadges(citationNumbers)
+            ? options.renderSourceBadges(citationNumbers, scopeId || `li-${key}-${itemIndex}`)
             : null;
           const showBadges = !!badges && hasMeaningfulInlineText(item.content);
           return createElement(
@@ -1448,7 +1454,12 @@ function renderBlockNode(
                 className: listClass + " md-list-nested",
               },
               ...item.children.map((subItem: any, subIndex: number) =>
-                renderListItem(subItem, subIndex, rawItem?.children?.[subIndex])
+                renderListItem(
+                  subItem,
+                  subIndex,
+                  rawItem?.children?.[subIndex],
+                  `${scopeId || `li-${key}-${itemIndex}`}-${subIndex}`
+                )
               )
             )
           );
@@ -1461,7 +1472,7 @@ function renderBlockNode(
             className: listClass,
           },
           ...node.items.map((item, itemIndex) =>
-            renderListItem(item, itemIndex, rawList.items[itemIndex])
+            renderListItem(item, itemIndex, rawList.items[itemIndex], `li-${key}-${itemIndex}`)
           ),
         );
       }
@@ -1563,6 +1574,7 @@ export default function MarkdownMessage({
   sourceGroups,
   sourceResults,
   activeSourceGroupId,
+  activeBadgeKey,
   onHoverSourceGroup,
   onLeaveSourceGroup,
 }: Props) {
@@ -1616,7 +1628,7 @@ export default function MarkdownMessage({
     return map;
   }, [sourceGroups]);
 
-  const renderSourceBadges = (citationNumbers: number[]) => {
+  const renderSourceBadges = (citationNumbers: number[], scopeId: string) => {
     if (role !== "assistant") return null;
     if (!sourceGroups || sourceGroups.length === 0) return null;
     if (!sourceResults || sourceResults.length === 0) return null;
@@ -1637,6 +1649,8 @@ export default function MarkdownMessage({
     return createElement(SourceBadgeGroup, {
       groups: groupsForBlock,
       activeGroupId: activeSourceGroupId,
+      activeBadgeKey: activeBadgeKey,
+      badgeScopeId: scopeId,
       onHover: onHoverSourceGroup,
       onLeave: onLeaveSourceGroup,
     });

@@ -30,7 +30,8 @@ interface EnhancedMarkdownMessageProps {
   sourceGroups?: SourceGroup[];
   sourceResults?: WebSearchSource[];
   activeSourceGroupId?: string | null;
-  onHoverSourceGroup?: (groupId: string, anchorRect?: DOMRect) => void;
+  activeBadgeKey?: string | null;
+  onHoverSourceGroup?: (groupId: string, anchorRect?: DOMRect, badgeKey?: string) => void;
   onLeaveSourceGroup?: () => void;
   // 是否自动解析内容中的图片和引用
   autoParseEnhancements?: boolean;
@@ -144,6 +145,7 @@ export default function EnhancedMarkdownMessage({
   sourceGroups,
   sourceResults,
   activeSourceGroupId,
+  activeBadgeKey,
   onHoverSourceGroup,
   onLeaveSourceGroup,
   autoParseEnhancements = true,
@@ -282,6 +284,7 @@ export default function EnhancedMarkdownMessage({
       sourceGroups,
       sourceResults,
       activeSourceGroupId,
+      activeBadgeKey,
       onHoverSourceGroup,
       onLeaveSourceGroup,
     }),
