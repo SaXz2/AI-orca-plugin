@@ -26,6 +26,9 @@ import MemoryManager from "./MemoryManager";
 import ChatNavigation from "../components/ChatNavigation";
 import FlashcardReview, { type Flashcard } from "../components/FlashcardReview";
 import GlobalImagePreview from "../components/GlobalImagePreview";
+import TodoistModals from "./TodoistModals";
+import TodoistSettingsModal from "./TodoistSettingsModal";
+import { todoistModalStore } from "../store/todoist-store";
 import { injectChatStyles } from "../styles/chat-animations";
 import {
   getAiChatSettings,
@@ -54,6 +57,7 @@ import {
 import { exportSessionAsFile, saveSessionToJournal, saveMessagesToJournal } from "../services/export-service";
 import { sessionStore, updateSessionStore, clearSessionStore } from "../store/session-store";
 import { TOOLS, FLASHCARD_TOOL, executeTool, getToolsForDraggedContext, getTools, extractSearchResultsFromToolResults } from "../services/ai-tools";
+import { TODOIST_TOOLS, executeTodoistTool, isTodoistTool } from "../services/todoist-tools";
 import { getToolStatus, isToolDisabled, shouldAskForTool, isAgenticRAGEnabled, getAgenticRAGConfig } from "../store/tool-store";
 import { nowId, safeText } from "../utils/text-utils";
 import { buildConversationMessages } from "../services/message-builder";
@@ -287,6 +291,9 @@ export default function AiChatPanel({ panelId }: PanelProps) {
 
   // Web search settings modal state
   const [showWebSearchSettings, setShowWebSearchSettings] = useState(false);
+
+  // Todoist settings modal state
+  const [showTodoistSettings, setShowTodoistSettings] = useState(false);
 
   // Message selection mode state (for batch save)
   const [selectionMode, setSelectionMode] = useState(false);
@@ -701,6 +708,45 @@ export default function AiChatPanel({ panelId }: PanelProps) {
   async function handleSend(content: string, files?: FileRef[], historyOverride?: Message[]) {
     if (!content && (!files || files.length === 0)) return;
     
+    // ─────────────────────────────────────────────────────────────────────
+    // Todoist 命令拦截（不发送给 AI，直接执行）
+    // ─────────────────────────────────────────────────────────────────────
+    const trimmedContent = content.trim();
+    
+    // /todoist - 查看今日任务
+    if (trimmedContent === "/todoist" || trimmedContent.startsWith("/todoist ")) {
+      todoistModalStore.viewMode = "today";
+      todoistModalStore.showTaskList = true;
+      return;
+    }
+    
+    // /todoist-add - 添加任务
+    if (trimmedContent === "/todoist-add" || trimmedContent.startsWith("/todoist-add ")) {
+      const taskContent = trimmedContent.replace(/^\/todoist-add\s*/, "").trim();
+      todoistModalStore.addTaskContent = taskContent;
+      todoistModalStore.showAddTask = true;
+      return;
+    }
+    
+    // /todoist-done - 标记完成
+    if (trimmedContent === "/todoist-done" || trimmedContent.startsWith("/todoist-done ")) {
+      todoistModalStore.showTaskList = true;
+      return;
+    }
+    
+    // /todoist-all - 查看全部任务
+    if (trimmedContent === "/todoist-all" || trimmedContent.startsWith("/todoist-all ")) {
+      todoistModalStore.viewMode = "all";
+      todoistModalStore.showTaskList = true;
+      return;
+    }
+    
+    // /todoist-ai - 启用 Todoist AI 工具模式（不拦截，继续发送给 AI）
+    let enableTodoistTools = false;
+    if (trimmedContent.startsWith("/todoist-ai")) {
+      enableTodoistTools = true;
+    }
+    
     // 如果正在生成，先停止当前生成
     if (sending) {
       if (abortRef.current) abortRef.current.abort();
@@ -851,6 +897,22 @@ graph TD
 2. 根据内容选择合适的图表类型（flowchart、sequence、mindmap 等）
 3. 节点文字简洁明了
 4. 连线标注清晰`;
+	    }
+
+	    // /todoist-ai - Todoist AI 模式
+	    if (content.includes("/todoist-ai")) {
+	      processedContent = processedContent.replace(/\/todoist-ai/g, "").trim();
+	      systemPrompt += `\n\n【Todoist 任务管理模式】
+你现在可以使用 Todoist 工具来帮助用户管理任务：
+- todoist_get_tasks: 获取任务列表（today=今日，all=全部）
+- todoist_create_task: 创建新任务（支持自然语言日期如"明天下午3点"）
+- todoist_complete_task: 标记任务完成
+
+使用指南：
+1. 用户问任务相关问题时，先调用 todoist_get_tasks 获取任务列表
+2. 创建任务时，从用户的话中提取任务内容和截止日期
+3. 完成任务时，需要先获取任务列表找到对应的 task_id
+4. 回复时用友好的语气，告诉用户操作结果`;
 	    }
 
 	    // /localgraph - 链接关系图谱（直接渲染图谱，不走 AI）
@@ -1394,7 +1456,13 @@ graph TD
       const hasHighPriorityContext = highPriorityContexts.length > 0;
       // 根据用户工具设置过滤工具列表（排除禁用的工具）
       // 使用 getTools() 动态获取工具列表（包含联网搜索工具，如果已启用）
-      const baseTools = hasHighPriorityContext ? getToolsForDraggedContext() : getTools();
+      let baseTools = hasHighPriorityContext ? getToolsForDraggedContext() : getTools();
+      
+      // 如果启用了 Todoist AI 模式，注入 Todoist 工具
+      if (enableTodoistTools) {
+        baseTools = [...baseTools, ...TODOIST_TOOLS];
+      }
+      
       const filteredTools = baseTools.filter(tool => !isToolDisabled(tool.function.name));
       const toolsToUse = includeTools && filteredTools.length > 0 ? filteredTools : undefined;
 
@@ -1424,12 +1492,14 @@ graph TD
               { id: nowId(), role: "user", content: prompt, createdAt: Date.now() }
             ];
             
+            // 注意：这里不使用 chatMode: "ask"，因为 Agentic RAG 内部有工具调用能力
+            // 使用 "agent" 模式或不指定，避免 ASK_MODE_INSTRUCTION 被加入
             const { standard: ragApiMessages } = await buildConversationMessages({
               messages: ragMessages,
-              systemPrompt: "你是一个智能检索规划助手。请严格按照要求返回 JSON 格式。",
+              systemPrompt: "你是一个智能检索规划助手，具备联网搜索和笔记检索能力。请严格按照要求返回 JSON 格式。",
               contextText: "",
               customMemory: "",
-              chatMode: "ask",
+              chatMode: "agent", // 使用 agent 模式，避免 Ask 模式限制
             });
             
             let result = "";
@@ -1716,8 +1786,13 @@ graph TD
                    setTimeout(() => reject(new Error(`Tool execution timed out after ${TOOL_TIMEOUT_MS / 1000}s`)), TOOL_TIMEOUT_MS);
                  });
                  
+                 // 检查是否是 Todoist 工具
+                 const toolExecutor = isTodoistTool(toolName) 
+                   ? executeTodoistTool(toolName, args)
+                   : executeTool(toolName, args);
+                 
                  result = await Promise.race([
-                   executeTool(toolName, args),
+                   toolExecutor,
                    timeoutPromise
                  ]);
                } catch (err: any) {
@@ -2703,6 +2778,19 @@ graph TD
         },
         createElement("i", { className: "ti ti-plus" })
       ),
+      // Todoist Button
+      createElement(
+        Button,
+        {
+          variant: "plain",
+          onClick: () => {
+            todoistModalStore.viewMode = "today";
+            todoistModalStore.showTaskList = true;
+          },
+          title: "Todoist 今日任务",
+        },
+        createElement("i", { className: "ti ti-checkbox" })
+      ),
       // Chat History
       createElement(ChatHistoryMenu, {
         sessions,
@@ -2726,6 +2814,7 @@ graph TD
         onOpenMemoryManager: handleOpenMemoryManager,
         onOpenCompressionSettings: () => setShowCompressionSettings(true),
         onOpenWebSearchSettings: () => setShowWebSearchSettings(true),
+        onOpenTodoistSettings: () => setShowTodoistSettings(true),
         onExportMarkdown: () => {
           if (messages.length === 0) {
             orca.notify("warn", "没有可导出的消息");
@@ -2809,7 +2898,14 @@ graph TD
       isOpen: showWebSearchSettings,
       onClose: () => setShowWebSearchSettings(false),
     }),
+    // Todoist Settings Modal
+    createElement(TodoistSettingsModal, {
+      visible: showTodoistSettings,
+      onClose: () => setShowTodoistSettings(false),
+    }),
     // Global Image Preview Modal
-    createElement(GlobalImagePreview)
+    createElement(GlobalImagePreview),
+    // Todoist Modals
+    createElement(TodoistModals)
   );
 }

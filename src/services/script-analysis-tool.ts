@@ -3,7 +3,7 @@
  * 
  * 为 AI 提供数据分析能力的工具定义和实现。
  * 让 AI 可以通过执行代码来分析数据、进行计算。
- * 支持 JavaScript 和 Python（通过 Pyodide）
+ * 支持 JavaScript 代码执行
  */
 
 import type { OpenAITool } from "./openai-client";
@@ -17,11 +17,6 @@ import {
   analyzeWordFrequency,
   type ScriptExecutionResult,
 } from "./script-executor-service";
-import {
-  executePython,
-  isPyodideLoaded,
-  isPyodideLoading,
-} from "./pyodide-executor";
 
 /**
  * 笔记统计分析工具定义
@@ -203,84 +198,6 @@ export const CODE_INTERPRETER_TOOL: OpenAITool = {
         code: {
           type: "string",
           description: "要执行的 JavaScript 代码",
-        },
-      },
-      required: ["code"],
-    },
-  },
-};
-
-/**
- * Python 代码执行工具 - 使用 Pyodide 在浏览器中运行 Python
- */
-export const PYTHON_INTERPRETER_TOOL: OpenAITool = {
-  type: "function",
-  function: {
-    name: "runPython",
-    description: `执行 Python 代码来完成计算、数据处理等任务。
-
-【特点】
-- 使用 Pyodide 在浏览器中运行真正的 Python
-- 无需用户安装 Python，开箱即用
-- 首次使用需要加载运行时（约10MB，会缓存）
-
-【何时使用】
-- 复杂数学计算、科学计算
-- 数据分析和处理
-- 字符串处理、正则表达式
-- 任何需要 Python 语法的场景
-- 用户明确要求用 Python
-
-【可用功能】
-- Python 标准库（math, datetime, json, re, collections 等）
-- 可加载 numpy, pandas 等科学计算库
-- print() 输出结果
-
-【代码示例】
-\`\`\`python
-# BMI 计算
-weight = 70  # kg
-height = 1.75  # m
-bmi = weight / (height ** 2)
-if bmi < 18.5:
-    category = "偏瘦"
-elif bmi < 24:
-    category = "正常"
-elif bmi < 28:
-    category = "偏胖"
-else:
-    category = "肥胖"
-print(f"BMI: {bmi:.2f}, 分类: {category}")
-\`\`\`
-
-\`\`\`python
-# 等额本息贷款计算
-from math import pow
-
-principal = 1000000  # 贷款本金 100万
-annual_rate = 0.042  # 年利率 4.2%
-months = 360  # 贷款期限 30年
-
-monthly_rate = annual_rate / 12
-monthly_payment = principal * monthly_rate * pow(1 + monthly_rate, months) / (pow(1 + monthly_rate, months) - 1)
-total_payment = monthly_payment * months
-total_interest = total_payment - principal
-
-print(f"月供: {monthly_payment:.2f} 元")
-print(f"总还款: {total_payment:.2f} 元")
-print(f"总利息: {total_interest:.2f} 元")
-\`\`\`
-
-【注意】
-- 首次执行需要加载 Pyodide（约5-10秒）
-- 不能访问本地文件系统
-- 用 print() 输出结果`,
-    parameters: {
-      type: "object",
-      properties: {
-        code: {
-          type: "string",
-          description: "要执行的 Python 代码",
         },
       },
       required: ["code"],
@@ -474,58 +391,11 @@ ${result.output || "(无输出)"}
 }
 
 /**
- * 执行 Python 代码 - 使用 Pyodide
- */
-export async function executePythonTool(args: {
-  code: string;
-}): Promise<string> {
-  const { code } = args;
-
-  if (!code || code.trim() === "") {
-    return "❌ 请提供要执行的 Python 代码";
-  }
-
-  console.log("[PythonInterpreter] Executing Python code");
-
-  // 提示用户正在加载（首次会比较慢）
-  const isLoaded = isPyodideLoaded();
-  const loadingHint = isLoaded ? "" : "\n\n⏳ 首次运行需要加载 Python 运行时，请稍候...";
-
-  try {
-    const result = await executePython(code);
-
-    if (!result.success) {
-      return `❌ Python 执行失败
-
-**错误：**
-\`\`\`
-${result.error}
-\`\`\`
-
-**执行时间：** ${result.executionTime}ms`;
-    }
-
-    return `✅ Python 执行成功
-
-**执行时间：** ${result.executionTime}ms
-
-**结果：**
-\`\`\`
-${result.output}
-\`\`\``;
-  } catch (e: any) {
-    console.error("[PythonInterpreter] Error:", e);
-    return `❌ Python 执行失败：${e.message}`;
-  }
-}
-
-/**
  * 获取所有脚本分析相关工具
  */
 export function getScriptAnalysisTools(): OpenAITool[] {
   return [
-    PYTHON_INTERPRETER_TOOL,  // Python 执行（功能最强，放第一个）
-    CODE_INTERPRETER_TOOL,    // JavaScript 执行（更快，无需加载）
+    CODE_INTERPRETER_TOOL,    // JavaScript 执行
     NOTES_STATS_TOOL,
     KEYWORD_SEARCH_TOOL,
     WORD_FREQUENCY_TOOL,
@@ -541,9 +411,6 @@ export async function handleScriptAnalysisTool(
   args: any
 ): Promise<string | null> {
   switch (toolName) {
-    case "runPython":
-      return executePythonTool(args);
-    
     case "runCode":
       return executeCodeInterpreterTool(args);
     

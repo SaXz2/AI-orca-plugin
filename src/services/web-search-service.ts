@@ -23,7 +23,7 @@ export interface SearchResponse {
 // 搜索引擎类型定义
 // ═══════════════════════════════════════════════════════════════════════════
 
-export type SearchProvider = "tavily" | "bing" | "duckduckgo" | "brave" | "searxng" | "google";
+export type SearchProvider = "tavily" | "bing" | "duckduckgo" | "brave" | "searxng" | "google" | "serpapi";
 
 export interface TavilyConfig {
   apiKey: string;
@@ -366,13 +366,18 @@ async function searchBrave(
 // SearXNG (开源元搜索引擎，免费无需 API Key)
 // ═══════════════════════════════════════════════════════════════════════════
 
-// 公共 SearXNG 实例列表（按稳定性排序）
-// 注意：很多公共实例会限制 API 访问，建议自建或使用其他搜索引擎
+// 公共 SearXNG 实例列表（从 searx.space 选取活跃且允许 API 访问的实例）
 const SEARXNG_PUBLIC_INSTANCES = [
-  "https://searx.be",
-  "https://search.sapti.me",
-  "https://searx.tuxcloud.net",
+  "https://search.inetol.net",
+  "https://searx.tiekoetter.com",
+  "https://search.hbubli.cc",
+  "https://searx.juancord.xyz",
+  "https://search.leptons.xyz",
+  "https://searx.daetalytica.io",
+  "https://searx.oakleycord.dev",
   "https://search.mdosch.de",
+  "https://searx.colbster937.dev",
+  "https://searx.perennialte.ch",
 ];
 
 async function searchSearXNG(
@@ -894,6 +899,8 @@ export function isInstanceConfigured(instance: SearchProviderInstance): boolean 
       return true; // 不需要 API Key，使用公共实例
     case "google":
       return !!instance.googleApiKey?.trim() && !!instance.googleSearchEngineId?.trim();
+    case "serpapi":
+      return !!instance.serpapiApiKey?.trim();
     default:
       return false;
   }
@@ -910,6 +917,7 @@ export function getProviderDisplayName(provider: SearchProvider): string {
     case "brave": return "Brave";
     case "searxng": return "SearXNG";
     case "google": return "Google";
+    case "serpapi": return "SerpApi";
     default: return provider;
   }
 }

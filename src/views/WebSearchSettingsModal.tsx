@@ -16,11 +16,12 @@ const { Button } = orca.components;
 
 interface Props { isOpen: boolean; onClose: () => void; }
 
-const PROVIDERS: { value: SearchProvider; label: string; needsKey: boolean }[] = [
+const PROVIDERS: { value: SearchProvider; label: string; needsKey: boolean; imageOnly?: boolean }[] = [
   { value: "google", label: "Google", needsKey: true },
   { value: "tavily", label: "Tavily", needsKey: true },
   { value: "brave", label: "Brave", needsKey: true },
   { value: "bing", label: "Bing", needsKey: true },
+  { value: "serpapi", label: "SerpApi (图片)", needsKey: true, imageOnly: true },
   { value: "searxng", label: "SearXNG (免费)", needsKey: false },
   { value: "duckduckgo", label: "DuckDuckGo (免费)", needsKey: false },
 ];
@@ -334,7 +335,34 @@ export default function WebSearchSettingsModal({ isOpen, onClose }: Props) {
                   href: "https://searx.space", 
                   style: { color: "var(--orca-color-primary)", textDecoration: "none" },
                   onClick: (e: any) => { e.preventDefault(); orca.invokeBackend("shell-open", "https://searx.space"); }
-                }, "公共实例列表")))
+                }, "公共实例列表"))),
+            
+            // SerpApi 设置（图片搜索）
+            inst.provider === "serpapi" && createElement("div", null,
+              createElement("div", { style: { marginBottom: 8 } },
+                createElement("div", { style: { ...label, fontSize: 12, marginBottom: 4 } }, "API Key"),
+                createElement("input", { 
+                  type: "password", style: input,
+                  value: inst.serpapiApiKey || "",
+                  onChange: (e: any) => updateInstance(inst.id, { serpapiApiKey: e.target.value }),
+                  placeholder: "SerpApi API Key"
+                })),
+              createElement("div", { style: { display: "flex", gap: 12 } },
+                createElement("div", { style: { flex: 1 } },
+                  createElement("div", { style: { ...label, fontSize: 12, marginBottom: 4 } }, "国家"),
+                  createElement("select", { style: { ...select, width: "100%" }, value: inst.serpapiGl || "cn", onChange: (e: any) => updateInstance(inst.id, { serpapiGl: e.target.value }) },
+                    createElement("option", { value: "cn" }, "中国"), createElement("option", { value: "us" }, "美国"), createElement("option", { value: "jp" }, "日本"))),
+                createElement("div", { style: { flex: 1 } },
+                  createElement("div", { style: { ...label, fontSize: 12, marginBottom: 4 } }, "语言"),
+                  createElement("select", { style: { ...select, width: "100%" }, value: inst.serpapiHl || "zh-cn", onChange: (e: any) => updateInstance(inst.id, { serpapiHl: e.target.value }) },
+                    createElement("option", { value: "zh-cn" }, "中文"), createElement("option", { value: "en" }, "English")))),
+              createElement("div", { style: { marginTop: 6, fontSize: 11, color: "var(--orca-color-text-3)" } },
+                "🖼️ 专用于图片搜索，免费 100 次/月 → ",
+                createElement("a", { 
+                  href: "https://serpapi.com", 
+                  style: { color: "var(--orca-color-primary)", textDecoration: "none" },
+                  onClick: (e: any) => { e.preventDefault(); orca.invokeBackend("shell-open", "https://serpapi.com"); }
+                }, "serpapi.com")))
           )
         ))
       ),

@@ -70,6 +70,12 @@ const SLASH_COMMANDS: SlashCommandDef[] = [
   { command: "/localgraph", description: "显示页面的链接关系图谱", icon: "ti ti-share", category: "visualization" },
   { command: "/mindmap", description: "显示块及子块的思维导图", icon: "ti ti-binary-tree", category: "visualization" },
   { command: "/diagram", description: "生成流程图或示意图", icon: "ti ti-chart-dots", category: "visualization" },
+  // Todoist 任务管理类
+  { command: "/todoist", description: "查看今日 Todoist 任务", icon: "ti ti-checkbox", category: "todoist" },
+  { command: "/todoist-all", description: "查看全部未完成任务", icon: "ti ti-list-check", category: "todoist" },
+  { command: "/todoist-add", description: "添加新任务（支持自然语言日期）", icon: "ti ti-plus", category: "todoist" },
+  { command: "/todoist-done", description: "选择并标记任务完成", icon: "ti ti-circle-check", category: "todoist" },
+  { command: "/todoist-ai", description: "AI 模式管理任务（自然语言）", icon: "ti ti-robot", category: "todoist" },
 ];
 
 // 分类显示名称
@@ -77,6 +83,7 @@ const CATEGORY_LABELS: Record<SlashCommandCategory, string> = {
   format: "格式",
   style: "回答风格",
   visualization: "可视化",
+  todoist: "Todoist 任务",
 };
 
 const { useSnapshot } = (window as any).Valtio as {
@@ -238,7 +245,7 @@ export default function ChatInput({
     items.push(...recentCmds);
     
     const grouped = groupCommandsByCategory(filteredCommands as SlashCommandType[]);
-    const categories: SlashCommandCategory[] = ["format", "style", "visualization"];
+    const categories: SlashCommandCategory[] = ["format", "style", "visualization", "todoist"];
     for (const category of categories) {
       const cmds = grouped[category];
       for (const cmd of cmds) {
@@ -696,7 +703,7 @@ export default function ChatInput({
             
             // 按分类分组显示
             const grouped = groupCommandsByCategory(filteredCommands as SlashCommandType[]);
-            const categories: SlashCommandCategory[] = ["format", "style", "visualization"];
+            const categories: SlashCommandCategory[] = ["format", "style", "visualization", "todoist"];
             
             for (const category of categories) {
               const cmds = grouped[category];

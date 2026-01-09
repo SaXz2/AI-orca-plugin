@@ -15,6 +15,7 @@ interface HeaderMenuProps {
   onOpenMemoryManager: () => void;
   onOpenCompressionSettings?: () => void;
   onOpenWebSearchSettings?: () => void;
+  onOpenTodoistSettings?: () => void;
   onExportMarkdown?: () => void;
   onSaveToJournal?: () => void;
   onToggleSelectionMode?: () => void;
@@ -29,6 +30,7 @@ export default function HeaderMenu({
   onOpenMemoryManager,
   onOpenCompressionSettings,
   onOpenWebSearchSettings,
+  onOpenTodoistSettings,
   onExportMarkdown,
   onSaveToJournal,
   onToggleSelectionMode,
@@ -186,6 +188,18 @@ export default function HeaderMenu({
           },
           createElement("i", { className: "ti ti-world" }),
           "联网搜索"
+        ),
+        // Todoist Settings
+        onOpenTodoistSettings && createElement(
+          "div",
+          {
+            style: menuItemStyle,
+            onClick: () => handleItemClick(onOpenTodoistSettings),
+            onMouseEnter: (e: any) => (e.currentTarget.style.background = "var(--orca-color-bg-2)"),
+            onMouseLeave: (e: any) => (e.currentTarget.style.background = "transparent"),
+          },
+          createElement("i", { className: "ti ti-checkbox" }),
+          "Todoist"
         ),
         // Divider
         createElement("div", {

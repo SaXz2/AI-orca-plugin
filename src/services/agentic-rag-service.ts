@@ -146,9 +146,22 @@ function buildPlanningPrompt(
     ? `\n\n【已发现的关键信息】\n${memory.keyFindings.slice(-3).map(f => `- ${f}`).join("\n")}`
     : "";
 
+  // 检查是否已经尝试过本地检索但没有结果
+  const localSearchFailed = memory.failedStrategies.size > 0 && 
+    Array.from(memory.failedStrategies.keys()).some(k => 
+      k.startsWith("searchBlocksByText:") || k.startsWith("searchBlocksByTag:") || k.startsWith("getRecentJournals:")
+    );
+
   const webSearchNote = enableWebSearch
-    ? "\n- webSearch: 联网搜索外部信息（需要最新资讯时使用）"
+    ? "\n- webSearch: 联网搜索外部信息（当本地笔记找不到答案、需要外部知识或最新资讯时使用）"
     : "";
+
+  // 根据是否有本地搜索失败，调整决策规则
+  const webSearchGuidance = enableWebSearch && localSearchFailed
+    ? `\n8. **重要**：本地笔记中未找到相关信息，请使用 webSearch 联网搜索获取答案`
+    : (enableWebSearch 
+        ? `\n8. 如果问题涉及外部知识（人物、事件、概念等）且本地笔记可能没有，优先使用 webSearch`
+        : "");
 
   return `你是一个智能检索规划助手。分析用户问题，决定下一步检索策略。
 
@@ -171,10 +184,10 @@ ${stepsSummary}${triedStrategies}${failedInfo}${findingsInfo}
 1. 首次收到问题时，必须先检索相关信息，不要直接说"信息不足"
 2. 如果问题涉及用户个人笔记/日记/学习记录，优先使用 getRecentJournals 或 searchBlocksByText
 3. 如果问题涉及特定标签，使用 searchBlocksByTag
-4. 如果需要最新外部信息（新闻、技术更新等），使用 webSearch
-5. 如果之前的检索没有结果，尝试换一个工具或调整参数（如换关键词）
+4. 如果问题涉及外部知识（人物、动漫、游戏、历史、科学等），且启用了 webSearch，应该使用 webSearch
+5. 如果之前的本地检索没有结果，且问题需要外部知识，必须使用 webSearch（如果可用）
 6. 不要重复使用完全相同的工具和参数组合
-7. 只有在已经执行过检索且确实没有相关信息时，才返回 canAnswer
+7. 只有在已经执行过检索且确实没有相关信息时，才返回 canAnswer${webSearchGuidance}
 
 请返回 JSON 格式的决策（不要包含其他内容）：
 {
@@ -255,6 +268,11 @@ function buildAnswerPrompt(
     ? `\n\n【关键发现摘要】\n${memory.keyFindings.map(f => `- ${f}`).join("\n")}`
     : "";
 
+  // 检查是否有成功的检索
+  const hasSuccessfulRetrieval = steps.some(s => 
+    s.type === "retrieve" && s.result && !s.result.includes("Error") && !s.result.includes("No ")
+  );
+
   return `基于检索到的信息，回答用户问题。
 
 【用户问题】
@@ -274,7 +292,13 @@ ${collectedContext || "(无检索结果)"}
 4. 引用笔记时保留 [标题](orca-block:id) 格式
 5. 使用中文回答
 6. 不要包含 "thoughts"、"answer" 等字段，直接输出回答内容
-7. 如果有多个相关笔记，可以综合整理后回答`;
+7. 如果有多个相关笔记，可以综合整理后回答
+
+【禁止事项】
+- 绝对不要说"无法访问互联网"、"无法联网搜索"、"无法为您搜索"等
+- 不要说"我处于XX模式"、"我目前只能提供信息"等
+- 不要建议用户"自己去搜索引擎搜索"
+- 如果没有找到信息，直接说"在笔记中未找到相关信息"即可`;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -349,8 +373,39 @@ function extractJSON(text: string): any {
 /**
  * 根据问题内容构建默认检索计划
  */
-function buildDefaultPlan(userQuery: string): any {
+function buildDefaultPlan(userQuery: string, enableWebSearch: boolean = false): any {
   const queryLower = userQuery.toLowerCase();
+  
+  // 检测是否是需要外部知识的问题（人物、动漫、游戏、历史、科学等）
+  const externalKnowledgePatterns = [
+    /谁是|是谁|什么是|是什么/,  // 定义类问题
+    /介绍一下|讲讲|说说/,  // 介绍类问题
+    /红A|Fate|动漫|番剧|游戏|电影|小说|漫画/i,  // 娱乐内容
+    /历史|科学|技术|编程|代码/,  // 知识类
+    /最新|新闻|消息|更新/,  // 时效性内容
+  ];
+  
+  const needsExternalKnowledge = externalKnowledgePatterns.some(p => p.test(userQuery));
+  
+  // 如果启用了 webSearch 且问题需要外部知识，优先使用 webSearch
+  if (enableWebSearch && needsExternalKnowledge) {
+    // 提取搜索关键词
+    const keywords = userQuery
+      .replace(/[？?！!。，,、：:""''（）()【】\[\]谁是什么介绍一下讲讲说说]/g, " ")
+      .trim()
+      .split(/\s+/)
+      .filter(w => w.length > 1)
+      .slice(0, 5)
+      .join(" ");
+    
+    return {
+      needsRetrieval: true,
+      tool: "webSearch",
+      args: { query: keywords || userQuery.substring(0, 30) },
+      reasoning: "问题涉及外部知识，需要联网搜索获取信息",
+      expectedInfo: `关于 "${keywords || userQuery.substring(0, 30)}" 的信息`,
+    };
+  }
   
   // 日记相关
   if (queryLower.includes("日记") || queryLower.includes("最近") || queryLower.includes("今天")) {
@@ -490,7 +545,7 @@ export async function executeAgenticRAG(
     // 如果解析失败且是第一次迭代，使用默认检索策略
     if (!plan && iteration === 1) {
       console.log("[AgenticRAG] Planning parse failed, using default retrieval strategy");
-      plan = buildDefaultPlan(userQuery);
+      plan = buildDefaultPlan(userQuery, enableWebSearch);
       addReasoning("planning", "使用默认策略", `⚠️ AI 规划解析失败，使用默认策略\n`);
     }
     

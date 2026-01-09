@@ -118,6 +118,10 @@ interface ToolStore {
   agenticRAGConfig: AgenticRAGConfig;
   /** 脚本分析开关（数据分析能力） */
   scriptAnalysisEnabled: boolean;
+  /** Wikipedia 搜索开关 */
+  wikipediaEnabled: boolean;
+  /** 汇率查询开关 */
+  currencyEnabled: boolean;
 }
 
 export const toolStore = proxy<ToolStore>({
@@ -131,6 +135,8 @@ export const toolStore = proxy<ToolStore>({
     enableReflection: true,
   },
   scriptAnalysisEnabled: false,
+  wikipediaEnabled: true,
+  currencyEnabled: true,
 });
 
 /**
@@ -283,6 +289,52 @@ export function isScriptAnalysisEnabled(): boolean {
 }
 
 /**
+ * 切换 Wikipedia 开关
+ */
+export function toggleWikipedia(): void {
+  toolStore.wikipediaEnabled = !toolStore.wikipediaEnabled;
+  saveToolSettings();
+}
+
+/**
+ * 设置 Wikipedia 状态
+ */
+export function setWikipediaEnabled(enabled: boolean): void {
+  toolStore.wikipediaEnabled = enabled;
+  saveToolSettings();
+}
+
+/**
+ * 获取 Wikipedia 状态
+ */
+export function isWikipediaEnabled(): boolean {
+  return toolStore.wikipediaEnabled;
+}
+
+/**
+ * 切换汇率查询开关
+ */
+export function toggleCurrency(): void {
+  toolStore.currencyEnabled = !toolStore.currencyEnabled;
+  saveToolSettings();
+}
+
+/**
+ * 设置汇率查询状态
+ */
+export function setCurrencyEnabled(enabled: boolean): void {
+  toolStore.currencyEnabled = enabled;
+  saveToolSettings();
+}
+
+/**
+ * 获取汇率查询状态
+ */
+export function isCurrencyEnabled(): boolean {
+  return toolStore.currencyEnabled;
+}
+
+/**
  * 保存工具设置到本地存储
  */
 function saveToolSettings(): void {
@@ -294,6 +346,8 @@ function saveToolSettings(): void {
       agenticRAGEnabled: toolStore.agenticRAGEnabled,
       agenticRAGConfig: toolStore.agenticRAGConfig,
       scriptAnalysisEnabled: toolStore.scriptAnalysisEnabled,
+      wikipediaEnabled: toolStore.wikipediaEnabled,
+      currencyEnabled: toolStore.currencyEnabled,
     };
     localStorage.setItem("ai-chat-tool-settings", JSON.stringify(settings));
   } catch (e) {
@@ -317,6 +371,8 @@ export function loadToolSettings(): void {
           toolStore.imageSearchEnabled = parsed.imageSearchEnabled ?? true;
           toolStore.agenticRAGEnabled = parsed.agenticRAGEnabled ?? false;
           toolStore.scriptAnalysisEnabled = parsed.scriptAnalysisEnabled ?? false;
+          toolStore.wikipediaEnabled = parsed.wikipediaEnabled ?? true;
+          toolStore.currencyEnabled = parsed.currencyEnabled ?? true;
           if (parsed.agenticRAGConfig) {
             toolStore.agenticRAGConfig = {
               ...toolStore.agenticRAGConfig,

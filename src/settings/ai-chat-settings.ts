@@ -92,7 +92,7 @@ export const CURRENCY_SYMBOLS: Record<CurrencyType, string> = {
 };
 
 /** 搜索引擎类型 */
-export type SearchProvider = "tavily" | "bing" | "duckduckgo" | "brave" | "searxng" | "google";
+export type SearchProvider = "tavily" | "bing" | "duckduckgo" | "brave" | "searxng" | "google" | "serpapi";
 
 /** 单个搜索引擎实例配置 */
 export type SearchProviderInstance = {
@@ -115,9 +115,11 @@ export type SearchProviderInstance = {
   braveApiKey?: string;
   braveCountry?: string;
   braveSearchLang?: string;
+  braveSafeSearch?: "off" | "moderate" | "strict";  // 图片搜索安全级别
   // SearXNG
   searxngInstanceUrl?: string;
   searxngLanguage?: string;
+  searxngSafeSearch?: 0 | 1 | 2;  // 图片搜索安全级别
   // Google Custom Search
   googleApiKey?: string;           // Google Cloud API Key
   googleSearchEngineId?: string;   // Programmable Search Engine ID (cx)
@@ -125,6 +127,10 @@ export type SearchProviderInstance = {
   googleHl?: string;               // 界面语言，如 "zh-CN", "en"
   googleLr?: string;               // 搜索结果语言，如 "lang_zh-CN"
   googleSafe?: "off" | "active";   // 安全搜索
+  // SerpApi (Google Images)
+  serpapiApiKey?: string;
+  serpapiGl?: string;              // 国家代码
+  serpapiHl?: string;              // 语言
 };
 
 /** 联网搜索配置 - 支持多引擎故障转移 */

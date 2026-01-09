@@ -156,7 +156,7 @@ export default function EnhancedMarkdownMessage({
     let contentToUse = rawContent;
     
     // 只有当内容包含工具调用标记时才进行清理
-    if (contentToUse.includes('<｜DSML｜') || contentToUse.includes('<function_calls>')) {
+    if (contentToUse.includes('<｜DSML｜') || contentToUse.includes('<function_calls>') || contentToUse.includes('<orca-tool')) {
       // 清理完整的工具调用块 - 匹配从开始到结束的完整结构
       contentToUse = contentToUse.replace(/<｜DSML｜function_calls>[\s\S]*?<\/｜DSML｜function_calls>/g, '');
       
@@ -172,6 +172,10 @@ export default function EnhancedMarkdownMessage({
       // 清理其他可能的工具调用格式
       contentToUse = contentToUse.replace(/<function_calls>[\s\S]*?<\/function_calls>/g, '');
       contentToUse = contentToUse.replace(/<invoke[\s\S]*?<\/invoke>/g, '');
+      
+      // 清理 orca-tool 格式的工具调用标记（自闭合和成对标签）
+      contentToUse = contentToUse.replace(/<orca-tool[^>]*><\/orca-tool>/g, '');
+      contentToUse = contentToUse.replace(/<orca-tool[^>]*\/>/g, '');
       
       // 清理多余的空行和空白
       contentToUse = contentToUse.replace(/\n{3,}/g, '\n\n').trim();

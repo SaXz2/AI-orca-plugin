@@ -29,11 +29,19 @@ import type {
 } from "../utils/query-types";
 import { uiStore } from "../store/ui-store";
 import { searchWeb, formatSearchResults, type SearchConfig } from "./web-search-service";
-import { isImageSearchEnabled, isScriptAnalysisEnabled, isWebSearchEnabled } from "../store/tool-store";
+import { isImageSearchEnabled, isScriptAnalysisEnabled, isWebSearchEnabled, isWikipediaEnabled, isCurrencyEnabled } from "../store/tool-store";
 import { 
   getScriptAnalysisTools, 
   handleScriptAnalysisTool 
 } from "./script-analysis-tool";
+import {
+  searchWikipedia,
+  formatWikipediaResult,
+  convertCurrency,
+  formatCurrencyResult,
+  getExchangeRates,
+  formatExchangeRates,
+} from "./utility-tools";
 
 // 辅助函数：从URL提取域名
 function extractDomain(url: string): string {
@@ -921,12 +929,95 @@ export const IMAGE_SEARCH_TOOL: OpenAITool = {
 };
 
 /**
+ * Wikipedia 搜索工具
+ */
+export const WIKIPEDIA_TOOL: OpenAITool = {
+  type: "function",
+  function: {
+    name: "wikipedia",
+    description: `查询 Wikipedia 百科获取权威知识。
+
+【何时使用】
+- 用户询问人物、历史事件、科学概念、地理位置等百科知识
+- 需要权威、准确的背景信息
+- 用户问"什么是"、"谁是"、"介绍一下"等问题
+
+【参数】
+- query: 搜索关键词
+- lang: 语言代码，默认 zh（中文），可选 en（英文）、ja（日文）等
+
+【注意】
+- 优先使用中文 Wikipedia，如果没有结果会自动尝试英文
+- 返回结果包含摘要和链接，可能包含图片`,
+    parameters: {
+      type: "object",
+      properties: {
+        query: {
+          type: "string",
+          description: "搜索关键词",
+        },
+        lang: {
+          type: "string",
+          description: "语言代码，默认 zh（中文）",
+        },
+      },
+      required: ["query"],
+    },
+  },
+};
+
+/**
+ * 汇率转换工具
+ */
+export const CURRENCY_TOOL: OpenAITool = {
+  type: "function",
+  function: {
+    name: "currency",
+    description: `查询实时汇率或进行货币转换。
+
+【何时使用】
+- 用户询问汇率，如"美元兑人民币多少"
+- 用户需要货币转换，如"100美元等于多少人民币"
+- 用户问某种货币的汇率
+
+【参数】
+- amount: 金额（可选，默认1）
+- from: 源货币（支持代码如 USD、CNY，或中文如"美元"、"人民币"）
+- to: 目标货币（可选，不填则返回多种货币汇率）
+
+【支持的货币】
+USD(美元)、CNY(人民币)、EUR(欧元)、GBP(英镑)、JPY(日元)、
+HKD(港币)、KRW(韩元)、TWD(台币)、AUD(澳元)、CAD(加元)等`,
+    parameters: {
+      type: "object",
+      properties: {
+        amount: {
+          type: "number",
+          description: "金额，默认1",
+        },
+        from: {
+          type: "string",
+          description: "源货币代码或名称，如 USD、美元",
+        },
+        to: {
+          type: "string",
+          description: "目标货币代码或名称（可选）",
+        },
+      },
+      required: ["from"],
+    },
+  },
+};
+
+/**
  * 获取工具列表（根据联网搜索开关动态添加）
  */
 export function getTools(webSearchEnabled?: boolean, scriptAnalysisEnabled?: boolean): OpenAITool[] {
   const tools = [...TOOLS];
   const webSearchOn = webSearchEnabled ?? isWebSearchEnabled();
   const imageSearchOn = isImageSearchEnabled();
+  const wikipediaOn = isWikipediaEnabled();
+  const currencyOn = isCurrencyEnabled();
   
   // Add search tools when web search is enabled (image search is optional).
   if (webSearchOn) {
@@ -934,6 +1025,16 @@ export function getTools(webSearchEnabled?: boolean, scriptAnalysisEnabled?: boo
       tools.push(IMAGE_SEARCH_TOOL);
     }
     tools.push(WEB_SEARCH_TOOL);
+  }
+  
+  // Wikipedia 工具（独立开关）
+  if (wikipediaOn) {
+    tools.push(WIKIPEDIA_TOOL);
+  }
+  
+  // 汇率工具（独立开关）
+  if (currencyOn) {
+    tools.push(CURRENCY_TOOL);
   }
   
   // 如果脚本分析已开启，添加脚本分析工具
@@ -2334,7 +2435,7 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
         return `Error searching web: ${err.message}`;
       }
     } else if (toolName === "imageSearch") {
-      // 图像搜索工具
+      // 图像搜索工具 - 支持多引擎故障转移
       const query = args.query; // 将query定义移到try块外面
       try {
         if (!query) {
@@ -2354,88 +2455,188 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
         }
         
         const maxResults = Math.min(args.maxResults || 3, 6);
-        
-        // 尝试使用配置的搜索引擎进行图像搜索
-        // 优先级：Google Images > Bing Images > DuckDuckGo Images
         const instances = webConfig.instances || [];
         
-        // 查找支持图像搜索的引擎
-        let imageConfig: any = null;
-        let provider: "google" | "bing" | "duckduckgo" = "duckduckgo"; // 默认使用免费的DuckDuckGo
+        // 构建图像搜索引擎列表（按优先级排序）
+        // 优先级：Google > SerpApi > Bing > Brave > SearXNG > DuckDuckGo
+        type ImageSearchAttempt = {
+          provider: "google" | "bing" | "duckduckgo" | "serpapi" | "brave" | "searxng";
+          config: any;
+          name: string;
+        };
         
-        // 优先使用Google Images（如果配置了）
-        const googleInstance = instances.find(i => i.provider === "google" && i.enabled && i.googleApiKey && i.googleSearchEngineId);
-        if (googleInstance) {
-          provider = "google";
-          imageConfig = {
+        const searchAttempts: ImageSearchAttempt[] = [];
+        
+        // 添加所有配置的 Google 实例
+        const googleInstances = instances.filter(i => i.provider === "google" && i.enabled && i.googleApiKey && i.googleSearchEngineId);
+        for (const inst of googleInstances) {
+          searchAttempts.push({
             provider: "google",
-            maxResults,
-            google: {
-              apiKey: googleInstance.googleApiKey!,
-              searchEngineId: googleInstance.googleSearchEngineId!,
-              gl: googleInstance.googleGl,
-              hl: googleInstance.googleHl || "zh-CN",
-              safe: googleInstance.googleSafe || "off",
+            name: inst.name || "Google Images",
+            config: {
+              provider: "google",
+              maxResults,
+              google: {
+                apiKey: inst.googleApiKey!,
+                searchEngineId: inst.googleSearchEngineId!,
+                gl: inst.googleGl,
+                hl: inst.googleHl || "zh-CN",
+                safe: inst.googleSafe || "off",
+              },
             },
-          };
-        } else {
-          // 尝试使用Bing Images
-          const bingInstance = instances.find(i => i.provider === "bing" && i.enabled && i.bingApiKey);
-          if (bingInstance) {
-            provider = "bing";
-            imageConfig = {
+          });
+        }
+        
+        // 添加所有配置的 SerpApi 实例
+        const serpapiInstances = instances.filter(i => i.provider === "serpapi" && i.enabled && i.serpapiApiKey);
+        for (const inst of serpapiInstances) {
+          searchAttempts.push({
+            provider: "serpapi",
+            name: inst.name || "SerpApi",
+            config: {
+              provider: "serpapi",
+              maxResults,
+              serpapi: {
+                apiKey: inst.serpapiApiKey!,
+                gl: inst.serpapiGl || "cn",
+                hl: inst.serpapiHl || "zh-cn",
+              },
+            },
+          });
+        }
+        
+        // 添加所有配置的 Bing 实例
+        const bingInstances = instances.filter(i => i.provider === "bing" && i.enabled && i.bingApiKey);
+        for (const inst of bingInstances) {
+          searchAttempts.push({
+            provider: "bing",
+            name: inst.name || "Bing Images",
+            config: {
               provider: "bing",
               maxResults,
               bing: {
-                apiKey: bingInstance.bingApiKey!,
-                mkt: bingInstance.bingMarket || "zh-CN",
+                apiKey: inst.bingApiKey!,
+                mkt: inst.bingMarket || "zh-CN",
                 safeSearch: "Moderate",
               },
-            };
-          } else {
-            // 使用免费的DuckDuckGo Images
-            provider = "duckduckgo";
-            imageConfig = {
-              provider: "duckduckgo",
+            },
+          });
+        }
+        
+        // 添加所有配置的 Brave 实例（真正的搜索引擎图片搜索）
+        const braveInstances = instances.filter(i => i.provider === "brave" && i.enabled && i.braveApiKey);
+        for (const inst of braveInstances) {
+          searchAttempts.push({
+            provider: "brave",
+            name: inst.name || "Brave Images",
+            config: {
+              provider: "brave",
               maxResults,
-              duckduckgo: {
-                region: "cn-zh",
-                safeSearch: "moderate",
+              brave: {
+                apiKey: inst.braveApiKey!,
+                country: inst.braveCountry || "US",
+                safeSearch: inst.braveSafeSearch || "moderate",
               },
-            };
-          }
+            },
+          });
         }
         
-        
-        const response = await searchImages(query, imageConfig);
-        
-        if (response.results.length === 0) {
-          return `未找到与"${query}"相关的图片。\n\n💡 建议：\n- 尝试使用更具体的关键词\n- 如果使用DuckDuckGo遇到问题，建议配置Google Images或Bing Images API\n- 可以尝试问"给我看看[具体内容]的照片"`;
+        // 添加 SearXNG 图片搜索（免费元搜索引擎）
+        const searxngInstances = instances.filter(i => i.provider === "searxng" && i.enabled);
+        for (const inst of searxngInstances) {
+          searchAttempts.push({
+            provider: "searxng",
+            name: inst.name || "SearXNG Images",
+            config: {
+              provider: "searxng",
+              maxResults,
+              searxng: {
+                instanceUrl: inst.searxngInstanceUrl,
+                safeSearch: inst.searxngSafeSearch ?? 1,
+              },
+            },
+          });
+        }
+        // 如果没有配置 SearXNG 实例，添加一个默认的（使用公共实例）
+        if (searxngInstances.length === 0) {
+          searchAttempts.push({
+            provider: "searxng",
+            name: "SearXNG Images (公共)",
+            config: {
+              provider: "searxng",
+              maxResults,
+              searxng: {
+                safeSearch: 1,
+              },
+            },
+          });
         }
         
-        // 格式化结果，包含图片的Markdown显示
-        const lines: string[] = [];
-        lines.push(`🖼️ 找到 ${response.results.length} 张与"${query}"相关的图片:\n`);
-        
-        response.results.forEach((img, i) => {
-          lines.push(`${i + 1}. ![${img.title}](${img.url})`);
-          if (img.sourceUrl && img.sourceUrl !== img.url) {
-            lines.push(`   📄 来源: [${extractDomain(img.sourceUrl)}](${img.sourceUrl})`);
-          }
-          if (img.width && img.height) {
-            lines.push(`   📐 尺寸: ${img.width}×${img.height}${img.size ? ` (${img.size})` : ""}`);
-          }
-          lines.push("");
+        // 添加 DuckDuckGo 作为最后的备选（不太可靠）
+        searchAttempts.push({
+          provider: "duckduckgo",
+          name: "DuckDuckGo Images",
+          config: {
+            provider: "duckduckgo",
+            maxResults,
+            duckduckgo: {
+              region: "cn-zh",
+              safeSearch: "moderate",
+            },
+          },
         });
         
-        lines.push(`\n🔍 图片搜索由 ${response.provider} 提供`);
-        if (response.responseTime) {
-          lines.push(`⏱️ 搜索耗时: ${response.responseTime}ms`);
+        // 依次尝试每个搜索引擎，直到成功
+        let lastError: Error | null = null;
+        const failedProviders: string[] = [];
+        
+        for (const attempt of searchAttempts) {
+          try {
+            console.log(`[imageSearch] Trying ${attempt.name}...`);
+            const response = await searchImages(query, attempt.config);
+            
+            if (response.results.length === 0) {
+              console.log(`[imageSearch] ${attempt.name} returned no results, trying next...`);
+              failedProviders.push(`${attempt.name} (无结果)`);
+              continue;
+            }
+            
+            // 成功！格式化结果
+            const lines: string[] = [];
+            lines.push(`🖼️ 找到 ${response.results.length} 张与"${query}"相关的图片:\n`);
+            
+            response.results.forEach((img, i) => {
+              lines.push(`${i + 1}. ![${img.title}](${img.url})`);
+              if (img.sourceUrl && img.sourceUrl !== img.url) {
+                lines.push(`   📄 来源: [${extractDomain(img.sourceUrl)}](${img.sourceUrl})`);
+              }
+              if (img.width && img.height) {
+                lines.push(`   📐 尺寸: ${img.width}×${img.height}${img.size ? ` (${img.size})` : ""}`);
+              }
+              lines.push("");
+            });
+            
+            lines.push(`\n🔍 图片搜索由 ${response.provider} 提供`);
+            if (failedProviders.length > 0) {
+              lines.push(`⚠️ 已跳过: ${failedProviders.join(", ")}`);
+            }
+            if (response.responseTime) {
+              lines.push(`⏱️ 搜索耗时: ${response.responseTime}ms`);
+            }
+            
+            return lines.join("\n");
+          } catch (err: any) {
+            console.warn(`[imageSearch] ${attempt.name} failed:`, err.message);
+            lastError = err;
+            failedProviders.push(`${attempt.name} (${err.message})`);
+            // 继续尝试下一个引擎
+          }
         }
         
-        return lines.join("\n");
-      } catch (err: any) {
+        // 所有引擎都失败了
+        return `❌ 图片搜索失败\n\n**尝试的搜索引擎：**\n${failedProviders.map(p => `- ${p}`).join("\n")}\n\n**建议：**\n- 检查 API Key 是否有效\n- 检查 API 配额是否用完\n- 尝试添加更多搜索引擎作为备选\n- 可以直接问我关于"${query}"的描述`;
         
+      } catch (err: any) {
         // 提供更友好的错误信息和解决方案
         const errorMessage = err.message || "未知错误";
         
@@ -2444,6 +2645,49 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
         }
         
         return `❌ 图片搜索失败: ${errorMessage}\n\n💡 建议：\n- 检查网络连接\n- 尝试配置其他搜索引擎（Google Images或Bing Images）\n- 可以直接问我关于"${query}"的描述`;
+      }
+    } else if (toolName === "wikipedia") {
+      // Wikipedia 搜索工具
+      try {
+        const query = args.query;
+        const lang = args.lang || "zh";
+        
+        if (!query) {
+          return "Error: 请提供搜索关键词";
+        }
+        
+        const result = await searchWikipedia(query, lang);
+        
+        if (!result) {
+          return `未在 Wikipedia 中找到关于"${query}"的内容。`;
+        }
+        
+        return formatWikipediaResult(result);
+      } catch (err: any) {
+        return `Wikipedia 查询失败: ${err.message}`;
+      }
+    } else if (toolName === "currency") {
+      // 汇率转换工具
+      try {
+        const amount = args.amount || 1;
+        const from = args.from;
+        const to = args.to;
+        
+        if (!from) {
+          return "Error: 请提供源货币";
+        }
+        
+        if (to) {
+          // 货币转换
+          const result = await convertCurrency(amount, from, to);
+          return formatCurrencyResult(result);
+        } else {
+          // 获取多种货币汇率
+          const rates = await getExchangeRates(from);
+          return formatExchangeRates(from.toUpperCase(), rates);
+        }
+      } catch (err: any) {
+        return `汇率查询失败: ${err.message}`;
       }
     } else if (toolName === "generateFlashcards") {
       // 闪卡生成工具 - 返回结构化数据供前端处理

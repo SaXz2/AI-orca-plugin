@@ -1,6 +1,6 @@
 /**
  * Image Search Service
- * 支持多个图像搜索引擎：Google Images, Bing Images, DuckDuckGo Images
+ * 支持真正的搜索引擎图片搜索：Google Images, Bing Images, SerpApi, Brave Images, SearXNG Images
  */
 
 export interface ImageResult {
@@ -21,7 +21,7 @@ export interface ImageSearchResponse {
   provider: string;
 }
 
-export type ImageSearchProvider = "google" | "bing" | "duckduckgo";
+export type ImageSearchProvider = "google" | "bing" | "duckduckgo" | "serpapi" | "brave" | "searxng";
 
 export interface GoogleImageConfig {
   apiKey: string;
@@ -42,12 +42,32 @@ export interface DuckDuckGoImageConfig {
   safeSearch?: "off" | "moderate" | "strict";
 }
 
+export interface SerpApiImageConfig {
+  apiKey: string;
+  gl?: string;  // 国家代码
+  hl?: string;  // 语言
+}
+
+export interface BraveImageConfig {
+  apiKey: string;
+  country?: string;
+  safeSearch?: "off" | "moderate" | "strict";
+}
+
+export interface SearXNGImageConfig {
+  instanceUrl?: string;  // 自定义实例 URL
+  safeSearch?: 0 | 1 | 2;  // 0=off, 1=moderate, 2=strict
+}
+
 export interface ImageSearchConfig {
   provider: ImageSearchProvider;
   maxResults?: number;
   google?: GoogleImageConfig;
   bing?: BingImageConfig;
   duckduckgo?: DuckDuckGoImageConfig;
+  serpapi?: SerpApiImageConfig;
+  brave?: BraveImageConfig;
+  searxng?: SearXNGImageConfig;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -242,6 +262,7 @@ async function searchBingImages(
 
 // ═══════════════════════════════════════════════════════════════════════════
 // DuckDuckGo Images (免费，无需 API Key)
+// 使用 DuckDuckGo 的图片搜索 API
 // ═══════════════════════════════════════════════════════════════════════════
 
 async function searchDuckDuckGoImages(
@@ -249,109 +270,380 @@ async function searchDuckDuckGoImages(
   maxResults: number,
   config: DuckDuckGoImageConfig
 ): Promise<ImageSearchResponse> {
-  const { region = "wt-wt", safeSearch = "moderate" } = config;
   const startTime = Date.now();
 
   console.log(`[DuckDuckGo Images] Searching: ${query}`);
 
   try {
-    // 方法1: 尝试使用DuckDuckGo的即时答案API
-    const instantAnswerUrl = new URL("https://api.duckduckgo.com/");
-    instantAnswerUrl.searchParams.set("q", query);
-    instantAnswerUrl.searchParams.set("format", "json");
-    instantAnswerUrl.searchParams.set("no_html", "1");
-    instantAnswerUrl.searchParams.set("skip_disambig", "1");
-
-    const instantResponse = await fetch(instantAnswerUrl.toString(), {
+    // 步骤1: 获取 vqd token（DuckDuckGo 的搜索令牌）
+    const tokenUrl = `https://duckduckgo.com/?q=${encodeURIComponent(query)}`;
+    const tokenResponse = await fetch(tokenUrl, {
       headers: {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "application/json, text/plain, */*",
-        "Accept-Language": "en-US,en;q=0.9,zh-CN;q=0.8,zh;q=0.7",
-        "Referer": "https://duckduckgo.com/",
-        "Origin": "https://duckduckgo.com",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
       },
     });
 
-    if (instantResponse.ok) {
-      const instantData = await instantResponse.json();
-      
-      // 从即时答案中提取图片
+    if (!tokenResponse.ok) {
+      throw new Error(`获取 DuckDuckGo token 失败: ${tokenResponse.status}`);
+    }
+
+    const html = await tokenResponse.text();
+    
+    // 从 HTML 中提取 vqd token
+    const vqdMatch = html.match(/vqd=["']?([^"'&]+)/i) || 
+                     html.match(/vqd\\x3d([^\\&]+)/) ||
+                     html.match(/vqd%3D([^%&]+)/);
+    
+    if (!vqdMatch) {
+      // 备用方案：尝试从即时答案 API 获取图片
+      return await searchDuckDuckGoInstantAnswer(query, maxResults, startTime);
+    }
+
+    const vqd = vqdMatch[1];
+    console.log(`[DuckDuckGo Images] Got vqd token: ${vqd.substring(0, 10)}...`);
+
+    // 步骤2: 使用 vqd token 调用图片搜索 API
+    const imageApiUrl = new URL("https://duckduckgo.com/i.js");
+    imageApiUrl.searchParams.set("l", "us-en");
+    imageApiUrl.searchParams.set("o", "json");
+    imageApiUrl.searchParams.set("q", query);
+    imageApiUrl.searchParams.set("vqd", vqd);
+    imageApiUrl.searchParams.set("f", ",,,,,");
+    imageApiUrl.searchParams.set("p", "1");
+
+    const imageResponse = await fetch(imageApiUrl.toString(), {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "application/json, text/javascript, */*; q=0.01",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Referer": "https://duckduckgo.com/",
+      },
+    });
+
+    if (!imageResponse.ok) {
+      throw new Error(`DuckDuckGo 图片 API 错误: ${imageResponse.status}`);
+    }
+
+    const data = await imageResponse.json();
+    const results: ImageResult[] = [];
+
+    if (data.results && Array.isArray(data.results)) {
+      for (const item of data.results.slice(0, maxResults)) {
+        if (item.image) {
+          results.push({
+            title: item.title || query,
+            url: item.image,
+            thumbnailUrl: item.thumbnail || item.image,
+            sourceUrl: item.url || "",
+            width: item.width,
+            height: item.height,
+          });
+        }
+      }
+    }
+
+    if (results.length > 0) {
+      console.log(`[DuckDuckGo Images] Found ${results.length} results`);
+      return {
+        query,
+        provider: "DuckDuckGo Images",
+        results,
+        responseTime: Date.now() - startTime,
+      };
+    }
+
+    // 如果没有结果，尝试备用方案
+    return await searchDuckDuckGoInstantAnswer(query, maxResults, startTime);
+
+  } catch (error: any) {
+    console.error("[DuckDuckGo Images] Search failed:", error);
+    throw new Error(`DuckDuckGo图像搜索失败: ${error.message}`);
+  }
+}
+
+/**
+ * DuckDuckGo 即时答案 API 备用方案
+ */
+async function searchDuckDuckGoInstantAnswer(
+  query: string,
+  maxResults: number,
+  startTime: number
+): Promise<ImageSearchResponse> {
+  const instantAnswerUrl = new URL("https://api.duckduckgo.com/");
+  instantAnswerUrl.searchParams.set("q", query);
+  instantAnswerUrl.searchParams.set("format", "json");
+  instantAnswerUrl.searchParams.set("no_html", "1");
+  instantAnswerUrl.searchParams.set("skip_disambig", "1");
+
+  const instantResponse = await fetch(instantAnswerUrl.toString(), {
+    headers: {
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+      "Accept": "application/json",
+    },
+  });
+
+  if (!instantResponse.ok) {
+    throw new Error("DuckDuckGo 即时答案 API 失败");
+  }
+
+  const instantData = await instantResponse.json();
+  const results: ImageResult[] = [];
+
+  // 从即时答案中提取图片
+  if (instantData.RelatedTopics) {
+    for (const topic of instantData.RelatedTopics.slice(0, maxResults)) {
+      if (topic.Icon && topic.Icon.URL) {
+        results.push({
+          title: topic.Text || query,
+          url: topic.Icon.URL.startsWith("http") ? topic.Icon.URL : `https://duckduckgo.com${topic.Icon.URL}`,
+          thumbnailUrl: topic.Icon.URL.startsWith("http") ? topic.Icon.URL : `https://duckduckgo.com${topic.Icon.URL}`,
+          sourceUrl: topic.FirstURL || "",
+        });
+      }
+    }
+  }
+
+  if (results.length < maxResults && instantData.Image) {
+    const imgUrl = instantData.Image.startsWith("http") ? instantData.Image : `https://duckduckgo.com${instantData.Image}`;
+    results.push({
+      title: instantData.Heading || query,
+      url: imgUrl,
+      thumbnailUrl: imgUrl,
+      sourceUrl: instantData.AbstractURL || "",
+    });
+  }
+
+  if (results.length === 0) {
+    throw new Error("DuckDuckGo 未找到相关图片");
+  }
+
+  console.log(`[DuckDuckGo Images] Found ${results.length} results via instant answer`);
+  return {
+    query,
+    provider: "DuckDuckGo Images",
+    results: results.slice(0, maxResults),
+    responseTime: Date.now() - startTime,
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SerpApi (Google Images via SerpApi) - 免费100次/月
+// https://serpapi.com/
+// ═══════════════════════════════════════════════════════════════════════════
+
+const SERPAPI_URL = "https://serpapi.com/search.json";
+
+async function searchSerpApiImages(
+  query: string,
+  maxResults: number,
+  config: SerpApiImageConfig
+): Promise<ImageSearchResponse> {
+  const { apiKey, gl = "cn", hl = "zh-cn" } = config;
+
+  if (!apiKey) {
+    throw new Error("SerpApi API Key 未配置");
+  }
+
+  const startTime = Date.now();
+  const url = new URL(SERPAPI_URL);
+  url.searchParams.set("api_key", apiKey);
+  url.searchParams.set("engine", "google_images");
+  url.searchParams.set("q", query);
+  url.searchParams.set("gl", gl);
+  url.searchParams.set("hl", hl);
+  url.searchParams.set("num", String(maxResults));
+
+  console.log(`[SerpApi Images] Searching: ${query}`);
+
+  const response = await fetch(url.toString());
+
+  if (!response.ok) {
+    if (response.status === 401) throw new Error("SerpApi API Key 无效");
+    if (response.status === 429) throw new Error("SerpApi API 调用次数已达上限");
+    throw new Error(`SerpApi API 错误: ${response.status}`);
+  }
+
+  const data = await response.json();
+  const results: ImageResult[] = [];
+
+  if (data.images_results) {
+    for (const item of data.images_results.slice(0, maxResults)) {
+      results.push({
+        title: item.title || "",
+        url: item.original || item.thumbnail || "",
+        thumbnailUrl: item.thumbnail || item.original || "",
+        sourceUrl: item.link || item.source || "",
+        width: item.original_width,
+        height: item.original_height,
+      });
+    }
+  }
+
+  console.log(`[SerpApi Images] Found ${results.length} results`);
+
+  return {
+    query,
+    provider: "SerpApi (Google Images)",
+    results,
+    responseTime: Date.now() - startTime,
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Brave Images API - 真正的搜索引擎图片搜索
+// https://brave.com/search/api/
+// 免费 2000 次/月
+// ═══════════════════════════════════════════════════════════════════════════
+
+const BRAVE_IMAGES_API_URL = "https://api.search.brave.com/res/v1/images/search";
+
+async function searchBraveImages(
+  query: string,
+  maxResults: number,
+  config: BraveImageConfig
+): Promise<ImageSearchResponse> {
+  const { apiKey, country = "US", safeSearch = "moderate" } = config;
+
+  if (!apiKey) {
+    throw new Error("Brave API Key 未配置");
+  }
+
+  const startTime = Date.now();
+  const url = new URL(BRAVE_IMAGES_API_URL);
+  url.searchParams.set("q", query);
+  url.searchParams.set("count", String(Math.min(maxResults, 100)));
+  url.searchParams.set("country", country);
+  url.searchParams.set("safesearch", safeSearch);
+
+  console.log(`[Brave Images] Searching: ${query}`);
+
+  const response = await fetch(url.toString(), {
+    headers: {
+      "Accept": "application/json",
+      "X-Subscription-Token": apiKey,
+    },
+  });
+
+  if (!response.ok) {
+    if (response.status === 401) throw new Error("Brave API Key 无效");
+    if (response.status === 429) throw new Error("Brave API 调用次数已达上限");
+    throw new Error(`Brave Images API 错误: ${response.status}`);
+  }
+
+  const data = await response.json();
+  const results: ImageResult[] = [];
+
+  if (data.results) {
+    for (const item of data.results.slice(0, maxResults)) {
+      results.push({
+        title: item.title || query,
+        url: item.properties?.url || item.thumbnail?.src || "",
+        thumbnailUrl: item.thumbnail?.src || item.properties?.url || "",
+        sourceUrl: item.url || "",
+        width: item.properties?.width,
+        height: item.properties?.height,
+      });
+    }
+  }
+
+  console.log(`[Brave Images] Found ${results.length} results`);
+
+  return {
+    query,
+    provider: "Brave Images",
+    results,
+    responseTime: Date.now() - startTime,
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SearXNG Images - 开源元搜索引擎图片搜索（免费，无需 API Key）
+// 聚合多个搜索引擎的图片结果
+// ═══════════════════════════════════════════════════════════════════════════
+
+// 公共 SearXNG 实例列表（从 searx.space 选取活跃且支持 JSON API 的实例）
+const SEARXNG_IMAGE_INSTANCES = [
+  "https://search.inetol.net",
+  "https://searx.tiekoetter.com",
+  "https://search.hbubli.cc",
+  "https://searx.juancord.xyz",
+  "https://search.leptons.xyz",
+  "https://searx.daetalytica.io",
+  "https://searx.oakleycord.dev",
+  "https://search.mdosch.de",
+  "https://searx.colbster937.dev",
+  "https://searx.perennialte.ch",
+];
+
+async function searchSearXNGImages(
+  query: string,
+  maxResults: number,
+  config: SearXNGImageConfig
+): Promise<ImageSearchResponse> {
+  const { instanceUrl, safeSearch = 1 } = config;
+  const startTime = Date.now();
+
+  const instances = instanceUrl ? [instanceUrl] : SEARXNG_IMAGE_INSTANCES;
+  let lastError: Error | null = null;
+
+  for (const instance of instances) {
+    try {
+      const cleanInstance = instance.replace(/\/+$/, "");
+      const url = new URL(`${cleanInstance}/search`);
+      url.searchParams.set("q", query);
+      url.searchParams.set("format", "json");
+      url.searchParams.set("categories", "images");
+      url.searchParams.set("safesearch", String(safeSearch));
+
+      console.log(`[SearXNG Images] Trying ${cleanInstance} for: ${query}`);
+
+      const response = await fetch(url.toString(), {
+        headers: {
+          "Accept": "application/json",
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const data = await response.json();
       const results: ImageResult[] = [];
-      
-      // 检查是否有相关主题的图片
-      if (instantData.RelatedTopics) {
-        for (const topic of instantData.RelatedTopics.slice(0, maxResults)) {
-          if (topic.Icon && topic.Icon.URL) {
+
+      if (data.results) {
+        for (const item of data.results.slice(0, maxResults)) {
+          if (item.img_src || item.thumbnail_src) {
             results.push({
-              title: topic.Text || query,
-              url: topic.Icon.URL,
-              thumbnailUrl: topic.Icon.URL,
-              sourceUrl: topic.FirstURL || "",
+              title: item.title || query,
+              url: item.img_src || item.thumbnail_src || "",
+              thumbnailUrl: item.thumbnail_src || item.img_src || "",
+              sourceUrl: item.url || "",
+              width: item.img_width,
+              height: item.img_height,
             });
           }
         }
       }
 
-      // 检查主要结果的图片
-      if (results.length < maxResults && instantData.Image) {
-        results.push({
-          title: instantData.Heading || query,
-          url: instantData.Image,
-          thumbnailUrl: instantData.Image,
-          sourceUrl: instantData.AbstractURL || "",
-        });
-      }
-
       if (results.length > 0) {
-        console.log(`[DuckDuckGo Images] Found ${results.length} results via instant answer`);
+        console.log(`[SearXNG Images] Found ${results.length} results from ${cleanInstance}`);
         return {
           query,
-          provider: "DuckDuckGo Images",
-          results: results.slice(0, maxResults),
+          provider: "SearXNG Images",
+          results,
           responseTime: Date.now() - startTime,
         };
       }
+    } catch (error: any) {
+      lastError = error;
+      console.warn(`[SearXNG Images] ${instance} failed:`, error.message);
     }
-
-    // 方法2: 如果即时答案没有图片，返回占位符结果
-    console.log(`[DuckDuckGo Images] No images found via instant answer, using fallback`);
-    
-    // 生成一些通用的占位符图片（来自可靠的图片服务）
-    const fallbackResults: ImageResult[] = [];
-    
-    // 使用Unsplash的搜索API作为备选（免费且可靠）
-    try {
-      const unsplashUrl = new URL("https://source.unsplash.com/featured/");
-      unsplashUrl.searchParams.set("q", query);
-      
-      for (let i = 0; i < Math.min(maxResults, 3); i++) {
-        const imageUrl = `${unsplashUrl.toString()}&sig=${i}`;
-        fallbackResults.push({
-          title: `${query} - 图片 ${i + 1}`,
-          url: imageUrl,
-          thumbnailUrl: imageUrl,
-          sourceUrl: "https://unsplash.com/",
-          width: 800,
-          height: 600,
-        });
-      }
-    } catch (unsplashError) {
-      console.warn("[DuckDuckGo Images] Unsplash fallback failed:", unsplashError);
-    }
-
-    return {
-      query,
-      provider: "DuckDuckGo Images (Fallback)",
-      results: fallbackResults,
-      responseTime: Date.now() - startTime,
-    };
-
-  } catch (error: any) {
-    console.error("[DuckDuckGo Images] All methods failed:", error);
-    
-    // 最后的备选方案：返回提示用户配置其他搜索引擎的消息
-    throw new Error(`DuckDuckGo图像搜索暂时不可用。建议配置Google Images或Bing Images API以获得更好的图片搜索体验。错误详情: ${error.message}`);
   }
+
+  throw new Error(lastError?.message || "所有 SearXNG 实例都不可用");
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -373,6 +665,17 @@ export async function searchImages(query: string, config: ImageSearchConfig): Pr
       
       case "duckduckgo":
         return await searchDuckDuckGoImages(query, maxResults, config.duckduckgo || {});
+      
+      case "serpapi":
+        if (!config.serpapi) throw new Error("SerpApi 配置缺失");
+        return await searchSerpApiImages(query, maxResults, config.serpapi);
+      
+      case "brave":
+        if (!config.brave) throw new Error("Brave Images 配置缺失");
+        return await searchBraveImages(query, maxResults, config.brave);
+      
+      case "searxng":
+        return await searchSearXNGImages(query, maxResults, config.searxng || {});
       
       default:
         throw new Error(`不支持的图像搜索引擎: ${provider}`);
