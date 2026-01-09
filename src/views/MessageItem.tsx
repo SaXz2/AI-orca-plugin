@@ -325,30 +325,54 @@ function SourceCardPanel({
             borderRadius: 10,
             padding: "8px 10px",
             background: "var(--orca-color-bg-2)",
-            cursor: "pointer",
             maxHeight: isNarrow ? "none" : panelMaxHeight,
             overflow: "hidden",
-          },
-          onClick: (e: any) => {
-            e.stopPropagation();
-            openExternalUrl(activeSource.url);
           },
         },
         createElement(
           "div",
           {
             style: {
-              fontSize: "13px",
-              fontWeight: 600,
-              color: "var(--orca-color-text-1)",
-              marginBottom: 4,
-              display: "-webkit-box",
-              WebkitLineClamp: 2,
-              WebkitBoxOrient: "vertical",
-              overflow: "hidden",
+              display: "flex",
+              alignItems: "flex-start",
+              gap: 8,
+              marginBottom: 6,
             },
           },
-          activeSource.title
+          createElement(
+            "div",
+            {
+              style: {
+                flex: 1,
+                fontSize: "13px",
+                fontWeight: 600,
+                color: "var(--orca-color-text-1)",
+                display: "-webkit-box",
+                WebkitLineClamp: 2,
+                WebkitBoxOrient: "vertical",
+                overflow: "hidden",
+              },
+            },
+            activeSource.title
+          ),
+          createElement(
+            "button",
+            {
+              style: {
+                background: "transparent",
+                border: "none",
+                color: "var(--orca-color-text-3)",
+                cursor: "pointer",
+                padding: 2,
+              },
+              onClick: (e: any) => {
+                e.stopPropagation();
+                openExternalUrl(activeSource.url);
+              },
+              title: "Open source",
+            },
+            createElement("i", { className: "ti ti-external-link", style: { fontSize: "13px" } })
+          )
         ),
         createElement(
           "div",
@@ -376,10 +400,11 @@ function SourceCardPanel({
                 WebkitLineClamp: 2,
                 WebkitBoxOrient: "vertical",
                 overflow: "hidden",
+                marginBottom: 6,
               },
             },
             activeSource.snippet
-          )
+          ),
       )
   );
 }

@@ -16,6 +16,8 @@ import {
   setToolStatus,
   setCategoryStatus,
   closeToolPanel,
+  toggleImageSearch,
+  toggleWebSearch,
   TOOL_CATEGORIES,
   TOOL_DISPLAY_NAMES,
   type ToolStatus,
@@ -164,6 +166,91 @@ export default function ToolPanel() {
             style: { color: STATUS_CONFIG[status].color, fontSize: 12 },
           }),
           STATUS_CONFIG[status].label
+        )
+      )
+    ),
+    createElement(
+      "div",
+      {
+        style: {
+          padding: "8px 12px",
+          borderBottom: "1px solid var(--orca-color-border)",
+          display: "flex",
+          flexDirection: "column",
+          gap: 6,
+        },
+      },
+      createElement(
+        "div",
+        { style: { fontSize: 11, color: "var(--orca-color-text-3)" } },
+        "Search toggles"
+      ),
+      createElement(
+        "div",
+        { style: { display: "flex", alignItems: "center", justifyContent: "space-between" } },
+        createElement(
+          "span",
+          { style: { fontSize: 12, color: "var(--orca-color-text-1)" } },
+          "Web search"
+        ),
+        createElement(
+          "button",
+          {
+            onClick: toggleWebSearch,
+            style: {
+              background: snap.webSearchEnabled
+                ? "var(--orca-color-primary-bg, rgba(0, 123, 255, 0.12))"
+                : "transparent",
+              border: snap.webSearchEnabled
+                ? "1px solid var(--orca-color-primary)"
+                : "1px solid var(--orca-color-border)",
+              color: snap.webSearchEnabled ? "var(--orca-color-primary)" : "var(--orca-color-text-2)",
+              borderRadius: 999,
+              fontSize: 11,
+              padding: "2px 10px",
+              cursor: "pointer",
+            },
+          },
+          snap.webSearchEnabled ? "On" : "Off"
+        )
+      ),
+      createElement(
+        "div",
+        { style: { display: "flex", alignItems: "center", justifyContent: "space-between" } },
+        createElement(
+          "div",
+          { style: { display: "flex", flexDirection: "column" } },
+          createElement(
+            "span",
+            { style: { fontSize: 12, color: "var(--orca-color-text-1)" } },
+            "Image search"
+          ),
+          !snap.webSearchEnabled &&
+            createElement(
+              "span",
+              { style: { fontSize: 10, color: "var(--orca-color-text-3)" } },
+              "Requires web search"
+            )
+        ),
+        createElement(
+          "button",
+          {
+            onClick: toggleImageSearch,
+            style: {
+              background: snap.imageSearchEnabled
+                ? "var(--orca-color-primary-bg, rgba(0, 123, 255, 0.12))"
+                : "transparent",
+              border: snap.imageSearchEnabled
+                ? "1px solid var(--orca-color-primary)"
+                : "1px solid var(--orca-color-border)",
+              color: snap.imageSearchEnabled ? "var(--orca-color-primary)" : "var(--orca-color-text-2)",
+              borderRadius: 999,
+              fontSize: 11,
+              padding: "2px 10px",
+              cursor: "pointer",
+            },
+          },
+          snap.imageSearchEnabled ? "On" : "Off"
         )
       )
     ),

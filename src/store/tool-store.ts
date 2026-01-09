@@ -110,6 +110,8 @@ interface ToolStore {
   showPanel: boolean;
   /** 联网搜索开关 */
   webSearchEnabled: boolean;
+  /** 图像搜索开关 */
+  imageSearchEnabled: boolean;
   /** Agentic RAG 开关（深度检索模式） */
   agenticRAGEnabled: boolean;
   /** Agentic RAG 配置 */
@@ -122,6 +124,7 @@ export const toolStore = proxy<ToolStore>({
   toolStatus: {},
   showPanel: false,
   webSearchEnabled: false,
+  imageSearchEnabled: true,
   agenticRAGEnabled: false,
   agenticRAGConfig: {
     maxIterations: 5,
@@ -196,6 +199,29 @@ export function isWebSearchEnabled(): boolean {
 }
 
 /**
+ * 切换图像搜索开关
+ */
+export function toggleImageSearch(): void {
+  toolStore.imageSearchEnabled = !toolStore.imageSearchEnabled;
+  saveToolSettings();
+}
+
+/**
+ * 设置图像搜索状态
+ */
+export function setImageSearchEnabled(enabled: boolean): void {
+  toolStore.imageSearchEnabled = enabled;
+  saveToolSettings();
+}
+
+/**
+ * 获取图像搜索状态
+ */
+export function isImageSearchEnabled(): boolean {
+  return toolStore.imageSearchEnabled;
+}
+
+/**
  * 切换 Agentic RAG 开关
  */
 export function toggleAgenticRAG(): void {
@@ -264,6 +290,7 @@ function saveToolSettings(): void {
     const settings = {
       toolStatus: toolStore.toolStatus,
       webSearchEnabled: toolStore.webSearchEnabled,
+      imageSearchEnabled: toolStore.imageSearchEnabled,
       agenticRAGEnabled: toolStore.agenticRAGEnabled,
       agenticRAGConfig: toolStore.agenticRAGConfig,
       scriptAnalysisEnabled: toolStore.scriptAnalysisEnabled,
@@ -287,6 +314,7 @@ export function loadToolSettings(): void {
         if (parsed.toolStatus) {
           toolStore.toolStatus = parsed.toolStatus;
           toolStore.webSearchEnabled = parsed.webSearchEnabled ?? false;
+          toolStore.imageSearchEnabled = parsed.imageSearchEnabled ?? true;
           toolStore.agenticRAGEnabled = parsed.agenticRAGEnabled ?? false;
           toolStore.scriptAnalysisEnabled = parsed.scriptAnalysisEnabled ?? false;
           if (parsed.agenticRAGConfig) {

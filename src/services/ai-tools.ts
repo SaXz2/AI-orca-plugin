@@ -29,7 +29,7 @@ import type {
 } from "../utils/query-types";
 import { uiStore } from "../store/ui-store";
 import { searchWeb, formatSearchResults, type SearchConfig } from "./web-search-service";
-import { isWebSearchEnabled, isScriptAnalysisEnabled } from "../store/tool-store";
+import { isImageSearchEnabled, isScriptAnalysisEnabled, isWebSearchEnabled } from "../store/tool-store";
 import { 
   getScriptAnalysisTools, 
   handleScriptAnalysisTool 
@@ -925,12 +925,15 @@ export const IMAGE_SEARCH_TOOL: OpenAITool = {
  */
 export function getTools(webSearchEnabled?: boolean, scriptAnalysisEnabled?: boolean): OpenAITool[] {
   const tools = [...TOOLS];
+  const webSearchOn = webSearchEnabled ?? isWebSearchEnabled();
+  const imageSearchOn = isImageSearchEnabled();
   
-  // 如果联网搜索已开启，添加 imageSearch 和 webSearch 工具
-  // 注意：imageSearch 放在前面，让AI优先考虑使用图片搜索
-  if (webSearchEnabled ?? isWebSearchEnabled()) {
-    tools.push(IMAGE_SEARCH_TOOL);  // 图片搜索放在前面
-    tools.push(WEB_SEARCH_TOOL);    // 网页搜索放在后面
+  // Add search tools when web search is enabled (image search is optional).
+  if (webSearchOn) {
+    if (imageSearchOn) {
+      tools.push(IMAGE_SEARCH_TOOL);
+    }
+    tools.push(WEB_SEARCH_TOOL);
   }
   
   // 如果脚本分析已开启，添加脚本分析工具
