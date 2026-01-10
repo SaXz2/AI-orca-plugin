@@ -18,7 +18,6 @@ function injectBlockStyles(): void {
     style.id = STYLE_ID;
     style.textContent = chatAnimations;
     document.head.appendChild(style);
-    console.log("[ai-chat-renderer] Block styles injected");
   }
 }
 
@@ -39,7 +38,6 @@ export function registerAiChatRenderer(): void {
     [], // 无资源字段
     true // useChildren - 允许子块
   );
-  console.log("[ai-chat-renderer] Registered block renderer:", BLOCK_TYPE);
   
   // 注册 plain 格式转换器（用于搜索）
   orca.converters.registerBlock(
@@ -109,8 +107,6 @@ export function registerAiChatRenderer(): void {
       return md;
     }
   );
-  
-  console.log("[ai-chat-renderer] Registered block converters:", BLOCK_TYPE);
 }
 
 /**
@@ -139,7 +135,6 @@ export function unregisterAiChatRenderer(): void {
     // ignore
   }
   // 不移除样式，保持对话块正常显示
-  console.log("[ai-chat-renderer] Unregistered block renderer:", BLOCK_TYPE);
 }
 
 /**

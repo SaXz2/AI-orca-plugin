@@ -16,6 +16,10 @@ import {
   setToolStatus,
   setCategoryStatus,
   closeToolPanel,
+  toggleImageSearch,
+  toggleWebSearch,
+  toggleWikipedia,
+  toggleCurrency,
   TOOL_CATEGORIES,
   TOOL_DISPLAY_NAMES,
   type ToolStatus,
@@ -164,6 +168,146 @@ export default function ToolPanel() {
             style: { color: STATUS_CONFIG[status].color, fontSize: 12 },
           }),
           STATUS_CONFIG[status].label
+        )
+      )
+    ),
+    createElement(
+      "div",
+      {
+        style: {
+          padding: "8px 12px",
+          borderBottom: "1px solid var(--orca-color-border)",
+          display: "flex",
+          flexDirection: "column",
+          gap: 6,
+        },
+      },
+      createElement(
+        "div",
+        { style: { fontSize: 11, color: "var(--orca-color-text-3)" } },
+        "外部工具"
+      ),
+      // 第一行：Web search + Image search
+      createElement(
+        "div",
+        { style: { display: "flex", gap: 8, flexWrap: "wrap" } },
+        createElement(
+          "div",
+          { style: { display: "flex", alignItems: "center", gap: 6 } },
+          createElement(
+            "span",
+            { style: { fontSize: 12, color: "var(--orca-color-text-1)" } },
+            "🌐 联网"
+          ),
+          createElement(
+            "button",
+            {
+              onClick: toggleWebSearch,
+              style: {
+                background: snap.webSearchEnabled
+                  ? "var(--orca-color-primary-bg, rgba(0, 123, 255, 0.12))"
+                  : "transparent",
+                border: snap.webSearchEnabled
+                  ? "1px solid var(--orca-color-primary)"
+                  : "1px solid var(--orca-color-border)",
+                color: snap.webSearchEnabled ? "var(--orca-color-primary)" : "var(--orca-color-text-2)",
+                borderRadius: 999,
+                fontSize: 11,
+                padding: "2px 8px",
+                cursor: "pointer",
+              },
+            },
+            snap.webSearchEnabled ? "On" : "Off"
+          )
+        ),
+        createElement(
+          "div",
+          { style: { display: "flex", alignItems: "center", gap: 6 } },
+          createElement(
+            "span",
+            { style: { fontSize: 12, color: snap.webSearchEnabled ? "var(--orca-color-text-1)" : "var(--orca-color-text-3)" } },
+            "🖼️ 图片"
+          ),
+          createElement(
+            "button",
+            {
+              onClick: toggleImageSearch,
+              disabled: !snap.webSearchEnabled,
+              style: {
+                background: snap.imageSearchEnabled && snap.webSearchEnabled
+                  ? "var(--orca-color-primary-bg, rgba(0, 123, 255, 0.12))"
+                  : "transparent",
+                border: snap.imageSearchEnabled && snap.webSearchEnabled
+                  ? "1px solid var(--orca-color-primary)"
+                  : "1px solid var(--orca-color-border)",
+                color: snap.imageSearchEnabled && snap.webSearchEnabled ? "var(--orca-color-primary)" : "var(--orca-color-text-2)",
+                borderRadius: 999,
+                fontSize: 11,
+                padding: "2px 8px",
+                cursor: snap.webSearchEnabled ? "pointer" : "not-allowed",
+                opacity: snap.webSearchEnabled ? 1 : 0.5,
+              },
+            },
+            snap.imageSearchEnabled ? "On" : "Off"
+          )
+        ),
+        createElement(
+          "div",
+          { style: { display: "flex", alignItems: "center", gap: 6 } },
+          createElement(
+            "span",
+            { style: { fontSize: 12, color: "var(--orca-color-text-1)" } },
+            "📚 百科"
+          ),
+          createElement(
+            "button",
+            {
+              onClick: toggleWikipedia,
+              style: {
+                background: snap.wikipediaEnabled
+                  ? "var(--orca-color-primary-bg, rgba(0, 123, 255, 0.12))"
+                  : "transparent",
+                border: snap.wikipediaEnabled
+                  ? "1px solid var(--orca-color-primary)"
+                  : "1px solid var(--orca-color-border)",
+                color: snap.wikipediaEnabled ? "var(--orca-color-primary)" : "var(--orca-color-text-2)",
+                borderRadius: 999,
+                fontSize: 11,
+                padding: "2px 8px",
+                cursor: "pointer",
+              },
+            },
+            snap.wikipediaEnabled ? "On" : "Off"
+          )
+        ),
+        createElement(
+          "div",
+          { style: { display: "flex", alignItems: "center", gap: 6 } },
+          createElement(
+            "span",
+            { style: { fontSize: 12, color: "var(--orca-color-text-1)" } },
+            "💱 汇率"
+          ),
+          createElement(
+            "button",
+            {
+              onClick: toggleCurrency,
+              style: {
+                background: snap.currencyEnabled
+                  ? "var(--orca-color-primary-bg, rgba(0, 123, 255, 0.12))"
+                  : "transparent",
+                border: snap.currencyEnabled
+                  ? "1px solid var(--orca-color-primary)"
+                  : "1px solid var(--orca-color-border)",
+                color: snap.currencyEnabled ? "var(--orca-color-primary)" : "var(--orca-color-text-2)",
+                borderRadius: 999,
+                fontSize: 11,
+                padding: "2px 8px",
+                cursor: "pointer",
+              },
+            },
+            snap.currencyEnabled ? "On" : "Off"
+          )
         )
       )
     ),

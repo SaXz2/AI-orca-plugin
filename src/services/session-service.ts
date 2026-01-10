@@ -1,6 +1,7 @@
 import { getAiChatPluginName } from "../ui/ai-chat-ui";
 import { getAiChatSettings } from "../settings/ai-chat-settings";
 import type { ContextRef } from "../store/context-store";
+import type { WebSearchSource } from "../utils/source-attribution";
 
 /**
  * Image reference for messages (stores path, not base64)
@@ -58,6 +59,9 @@ export type Message = {
   }>;
   tool_call_id?: string;
   name?: string;
+  // 自动增强相关
+  searchResults?: WebSearchSource[]; // 搜索结果（用于自动增强）
+  autoEnhanced?: boolean; // 是否已自动增强
 };
 
 /**

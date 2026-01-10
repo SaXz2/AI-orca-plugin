@@ -12,6 +12,7 @@
  */
 
 import MarkdownMessage from "../components/MarkdownMessage";
+import EnhancedMarkdownMessage from "../components/EnhancedMarkdownMessage";
 import ToolStatusIndicator from "../components/ToolStatusIndicator";
 import SuggestedReplies from "../components/SuggestedReplies";
 import ExtractMemoryButton from "./ExtractMemoryButton";
@@ -29,6 +30,7 @@ import {
 import type { Message } from "../services/session-service";
 import type { ToolCallInfo } from "../services/chat-stream-handler";
 import { formatTokenCount } from "../utils/token-utils";
+import { groupSourcesByDomain, normalizeWebSearchResults, type SourceGroup, type WebSearchSource } from "../utils/source-attribution";
 import {
   displaySettingsStore,
   fontSizeMap,
@@ -37,23 +39,16 @@ import {
   shouldRenderTimestamp,
 } from "../store/display-settings-store";
 
-// DEBUG: Check if all components are defined
-console.log("[MessageItem] Component imports check:", {
-  MarkdownMessage: typeof MarkdownMessage,
-  ToolStatusIndicator: typeof ToolStatusIndicator,
-  SuggestedReplies: typeof SuggestedReplies,
-  ExtractMemoryButton: typeof ExtractMemoryButton,
-});
-
 const React = window.React as unknown as {
   createElement: typeof window.React.createElement;
   useState: <T>(initial: T | (() => T)) => [T, (next: T | ((prev: T) => T)) => void];
   useCallback: <T extends (...args: any[]) => any>(fn: T, deps: any[]) => T;
   useMemo: <T>(factory: () => T, deps: any[]) => T;
   useEffect: (effect: () => void | (() => void), deps?: any[]) => void;
+  useRef: <T>(initial: T) => { current: T };
   Fragment: typeof window.React.Fragment;
 };
-const { createElement, useState, useCallback, useMemo, useEffect, Fragment } = React;
+const { createElement, useState, useCallback, useMemo, useEffect, useRef, Fragment } = React;
 
 const { ContextMenu, Menu, MenuText } = orca.components;
 
@@ -135,6 +130,283 @@ function parseReasoningSteps(reasoning: string): { steps: string[]; summary: str
   }
 
   return { steps, summary };
+}
+
+function openExternalUrl(url: string) {
+  if (!url) return;
+  try {
+    orca.invokeBackend("shell-open", url);
+  } catch {
+    window.open(url, "_blank", "noopener,noreferrer");
+  }
+}
+
+type SourceAnchor = {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+  width: number;
+  height: number;
+  rowWidth: number;
+  rowHeight: number;
+};
+
+function SourceCardPanel({
+  group,
+  anchor,
+  onClose,
+  onHoverStart,
+  onHoverEnd,
+}: {
+  group: SourceGroup;
+  anchor: SourceAnchor | null;
+  onClose: () => void;
+  onHoverStart: () => void;
+  onHoverEnd: () => void;
+}) {
+  const isNarrow = typeof window !== "undefined" && window.innerWidth < 900;
+  const panelWidth = 260;
+  const edgePadding = 12;
+  const panelMaxHeight = 220;
+  const offsetGap = 8;
+  const totalSources = group.sources.length;
+  const [activeIndex, setActiveIndex] = useState(0);
+  const clampedIndex = totalSources > 0 ? Math.min(activeIndex, totalSources - 1) : 0;
+  const activeSource = totalSources > 0 ? group.sources[clampedIndex] : null;
+  const canNavigate = totalSources > 1;
+
+  useEffect(() => {
+    setActiveIndex(0);
+  }, [group.id]);
+
+  let top = edgePadding;
+  let left = edgePadding;
+
+  if (anchor) {
+    const spaceBelow = anchor.rowHeight - anchor.bottom;
+    const spaceAbove = anchor.top;
+    const openAbove = !isNarrow && spaceBelow < 180 && spaceAbove > spaceBelow;
+
+    top = openAbove
+      ? Math.max(edgePadding, anchor.top - panelMaxHeight - offsetGap)
+      : anchor.bottom + offsetGap;
+
+    if (!isNarrow) {
+      left = anchor.left;
+      if (left + panelWidth > anchor.rowWidth - edgePadding) {
+        left = Math.max(edgePadding, anchor.rowWidth - panelWidth - edgePadding);
+      }
+      if (left < edgePadding) left = edgePadding;
+    }
+  }
+
+  const containerStyle: React.CSSProperties = {
+    position: "absolute",
+    top,
+    left: isNarrow ? edgePadding : left,
+    right: isNarrow ? edgePadding : "auto",
+    width: isNarrow ? `calc(100% - ${edgePadding * 2}px)` : panelWidth,
+    maxWidth: isNarrow ? `calc(100% - ${edgePadding * 2}px)` : panelWidth,
+    background: "var(--orca-color-bg-1)",
+    border: "1px solid var(--orca-color-border)",
+    borderRadius: 12,
+    boxShadow: "0 8px 24px rgba(0,0,0,0.08)",
+    padding: 10,
+    zIndex: 20,
+  };
+
+  return createElement(
+    "div",
+    {
+      style: containerStyle,
+      onMouseEnter: onHoverStart,
+      onMouseLeave: onHoverEnd,
+      onClick: (e: any) => e.stopPropagation(),
+    },
+    createElement(
+      "div",
+      {
+        style: {
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          marginBottom: 8,
+        },
+      },
+      createElement(
+        "div",
+        {
+          style: {
+            fontSize: "12px",
+            fontWeight: 600,
+            color: "var(--orca-color-text-2)",
+            flex: 1,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          },
+          title: activeSource?.domain || group.label,
+        },
+        activeSource?.domain || group.label
+      ),
+      canNavigate &&
+        createElement(
+          "div",
+          {
+            style: {
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 4,
+              color: "var(--orca-color-text-3)",
+              fontSize: "11px",
+            },
+          },
+          createElement(
+            "button",
+            {
+              style: {
+                background: "transparent",
+                border: "none",
+                color: "var(--orca-color-text-3)",
+                cursor: "pointer",
+                padding: 2,
+              },
+              onClick: (e: any) => {
+                e.stopPropagation();
+                setActiveIndex((prev) => (prev - 1 + totalSources) % totalSources);
+              },
+              title: "Previous",
+            },
+            createElement("i", { className: "ti ti-chevron-left", style: { fontSize: "13px" } })
+          ),
+          createElement("span", null, `${clampedIndex + 1}/${totalSources}`),
+          createElement(
+            "button",
+            {
+              style: {
+                background: "transparent",
+                border: "none",
+                color: "var(--orca-color-text-3)",
+                cursor: "pointer",
+                padding: 2,
+              },
+              onClick: (e: any) => {
+                e.stopPropagation();
+                setActiveIndex((prev) => (prev + 1) % totalSources);
+              },
+              title: "Next",
+            },
+            createElement("i", { className: "ti ti-chevron-right", style: { fontSize: "13px" } })
+          )
+        ),
+      createElement(
+        "button",
+        {
+          style: {
+            background: "transparent",
+            border: "none",
+            color: "var(--orca-color-text-3)",
+            cursor: "pointer",
+            padding: 2,
+          },
+          onClick: onClose,
+          title: "Close",
+        },
+        createElement("i", { className: "ti ti-x", style: { fontSize: "14px" } })
+      )
+    ),
+    activeSource &&
+      createElement(
+        "div",
+        {
+          style: {
+            border: "1px solid var(--orca-color-border)",
+            borderRadius: 10,
+            padding: "8px 10px",
+            background: "var(--orca-color-bg-2)",
+            maxHeight: isNarrow ? "none" : panelMaxHeight,
+            overflow: "hidden",
+          },
+        },
+        createElement(
+          "div",
+          {
+            style: {
+              display: "flex",
+              alignItems: "flex-start",
+              gap: 8,
+              marginBottom: 6,
+            },
+          },
+          createElement(
+            "div",
+            {
+              style: {
+                flex: 1,
+                fontSize: "13px",
+                fontWeight: 600,
+                color: "var(--orca-color-text-1)",
+                display: "-webkit-box",
+                WebkitLineClamp: 2,
+                WebkitBoxOrient: "vertical",
+                overflow: "hidden",
+              },
+            },
+            activeSource.title
+          ),
+          createElement(
+            "button",
+            {
+              style: {
+                background: "transparent",
+                border: "none",
+                color: "var(--orca-color-text-3)",
+                cursor: "pointer",
+                padding: 2,
+              },
+              onClick: (e: any) => {
+                e.stopPropagation();
+                openExternalUrl(activeSource.url);
+              },
+              title: "Open source",
+            },
+            createElement("i", { className: "ti ti-external-link", style: { fontSize: "13px" } })
+          )
+        ),
+        createElement(
+          "div",
+          {
+            style: {
+              fontSize: "11px",
+              color: "var(--orca-color-text-3)",
+              marginBottom: activeSource.snippet ? 6 : 0,
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+            },
+          },
+          activeSource.domain || activeSource.url
+        ),
+        activeSource.snippet &&
+          createElement(
+            "div",
+            {
+              style: {
+                fontSize: "12px",
+                color: "var(--orca-color-text-2)",
+                lineHeight: 1.4,
+                display: "-webkit-box",
+                WebkitLineClamp: 2,
+                WebkitBoxOrient: "vertical",
+                overflow: "hidden",
+                marginBottom: 6,
+              },
+            },
+            activeSource.snippet
+          ),
+      )
+  );
 }
 
 /**
@@ -731,6 +1003,25 @@ function CollapsibleToolCalls({
  */
 function ToolResultItem({ message }: { message: Message }) {
   const toolName = message.name || "Unknown Tool";
+  
+  // 如果包含 journal-export 代码块，使用 MarkdownMessage 渲染
+  const hasJournalExport = message.content.includes("```journal-export");
+  console.log("[ToolResultItem] content:", message.content.substring(0, 100), "hasJournalExport:", hasJournalExport);
+  
+  if (hasJournalExport) {
+    return createElement(
+      "div",
+      { style: { ...messageRowStyle("assistant"), justifyContent: "flex-start" } },
+      createElement(
+        "div",
+        { style: { maxWidth: "90%", width: "100%" } },
+        createElement(MarkdownMessage, {
+          content: message.content,
+          role: "tool",
+        })
+      )
+    );
+  }
 
   return createElement(
     "div",
@@ -768,6 +1059,9 @@ export default function MessageItem({
 }: MessageItemProps) {
   const [isHovered, setIsHovered] = useState(false);
   const [isExtractDropdownOpen, setIsExtractDropdownOpen] = useState(false);
+  const messageRowRef = useRef<HTMLDivElement | null>(null);
+  const sourcePanelHoverRef = useRef(false);
+  const closeSourcePanelTimerRef = useRef<number | null>(null);
   const isUser = message.role === "user";
   const isTool = message.role === "tool";
   const isAssistant = message.role === "assistant";
@@ -810,11 +1104,122 @@ export default function MessageItem({
     return selection && selection.toString().length > 0;
   }, []);
 
+  // Extract search results from tool results for auto-enhancement
+  const [sourceGroups, setSourceGroups] = useState<SourceGroup[]>([]);
+  const [sourceResults, setSourceResults] = useState<WebSearchSource[]>([]);
+  const [activeSourceGroupId, setActiveSourceGroupId] = useState<string | null>(null);
+  const [sourceAnchor, setSourceAnchor] = useState<SourceAnchor | null>(null);
+  const [activeBadgeKey, setActiveBadgeKey] = useState<string | null>(null);
+  const clearSourcePanelTimer = useCallback(() => {
+    if (closeSourcePanelTimerRef.current) {
+      window.clearTimeout(closeSourcePanelTimerRef.current);
+      closeSourcePanelTimerRef.current = null;
+    }
+  }, []);
+
+  const scheduleCloseSourcePanel = useCallback(() => {
+    clearSourcePanelTimer();
+    closeSourcePanelTimerRef.current = window.setTimeout(() => {
+      if (sourcePanelHoverRef.current) return;
+      setActiveSourceGroupId(null);
+      setActiveBadgeKey(null);
+      setSourceAnchor(null);
+    }, 160);
+  }, [clearSourcePanelTimer]);
+
+  const handleHoverSourceGroup = useCallback((groupId: string, anchorRect?: DOMRect, badgeKey?: string) => {
+    clearSourcePanelTimer();
+    setActiveSourceGroupId(groupId);
+    setActiveBadgeKey(badgeKey || null);
+    const rowRect = messageRowRef.current?.getBoundingClientRect();
+    if (rowRect && anchorRect) {
+      setSourceAnchor({
+        left: anchorRect.left - rowRect.left,
+        top: anchorRect.top - rowRect.top,
+        right: anchorRect.right - rowRect.left,
+        bottom: anchorRect.bottom - rowRect.top,
+        width: anchorRect.width,
+        height: anchorRect.height,
+        rowWidth: rowRect.width,
+        rowHeight: rowRect.height,
+      });
+      return;
+    }
+    setSourceAnchor(null);
+  }, [clearSourcePanelTimer]);
+
+  const handleLeaveSourceGroup = useCallback(() => {
+    scheduleCloseSourcePanel();
+  }, [scheduleCloseSourcePanel]);
+  
+  useEffect(() => {
+    if (message.searchResults && message.searchResults.length > 0) {
+      const normalized = normalizeWebSearchResults(message.searchResults);
+      const groups = groupSourcesByDomain(normalized);
+      setSourceGroups(groups);
+      setSourceResults(normalized);
+      setActiveSourceGroupId((prev) => {
+        const next = prev && groups.some(g => g.id === prev) ? prev : null;
+        if (!next) {
+          setSourceAnchor(null);
+          setActiveBadgeKey(null);
+        }
+        return next;
+      });
+      return;
+    }
+
+    if (!message.tool_calls || !toolResults) {
+      setSourceGroups([]);
+      setSourceResults([]);
+      setActiveSourceGroupId(null);
+      setActiveBadgeKey(null);
+      setSourceAnchor(null);
+      return;
+    }
+    
+    // Import and extract search results
+    import("../services/ai-tools").then(({ extractSearchResultsFromToolResults }) => {
+      const results = normalizeWebSearchResults(extractSearchResultsFromToolResults(toolResults));
+      const groups = groupSourcesByDomain(results);
+      setSourceGroups(groups);
+      setSourceResults(results);
+      setActiveSourceGroupId((prev) => {
+        const next = prev && groups.some(g => g.id === prev) ? prev : null;
+        if (!next) {
+          setSourceAnchor(null);
+          setActiveBadgeKey(null);
+        }
+        return next;
+      });
+    }).catch(() => {
+      setSourceGroups([]);
+      setSourceResults([]);
+      setActiveSourceGroupId(null);
+      setActiveBadgeKey(null);
+      setSourceAnchor(null);
+    });
+  }, [message.id, message.searchResults, message.tool_calls, toolResults]);
+  
+  useEffect(() => {
+    return () => {
+      if (closeSourcePanelTimerRef.current) {
+        window.clearTimeout(closeSourcePanelTimerRef.current);
+      }
+    };
+  }, []);
+
   // Check if any tool calls are still loading
   const toolCallsLoading = useMemo(() => {
     if (!message.tool_calls || !toolResults) return true;
     return message.tool_calls.some((tc) => !toolResults.has(tc.id));
   }, [message.tool_calls, toolResults]);
+
+  const activeSourceGroup = useMemo(
+    () => sourceGroups.find((group) => group.id === activeSourceGroupId) || null,
+    [sourceGroups, activeSourceGroupId]
+  );
+  const showSourcePanel = isAssistant && !!activeSourceGroup;
 
   // Special handling for tool result messages (standalone)
   if (isTool) {
@@ -833,6 +1238,7 @@ export default function MessageItem({
   const messageRowWithSettings: React.CSSProperties = {
     ...messageRowStyle(message.role),
     marginBottom: `${getMessageGap(displaySettings.compactMode)}px`,
+    position: "relative",
   };
 
   // Apply display settings to message bubble
@@ -841,10 +1247,12 @@ export default function MessageItem({
     padding: getBubblePadding(displaySettings.compactMode),
     fontSize: fontSizeMap[displaySettings.fontSize],
   };
+  const messageBubbleWithSources: React.CSSProperties = messageBubbleWithSettings;
 
   return createElement(
     "div",
     {
+      ref: messageRowRef,
       style: { ...messageRowWithSettings, ...selectionModeStyle },
       "data-message-index": messageIndex,
       "data-message-id": message.id,
@@ -901,7 +1309,7 @@ export default function MessageItem({
       (open: (e: any) => void) => createElement(
         "div",
         {
-          style: messageBubbleWithSettings,
+          style: messageBubbleWithSources,
           className: `message-bubble-${message.role}`,
           onContextMenu: open,
         },
@@ -1074,8 +1482,19 @@ export default function MessageItem({
         ))
       ),
 
-      // Content
-      createElement(MarkdownMessage, { content: message.content || "", role: message.role }),
+      // Content - 使用增强版Markdown组件支持图片和引用
+        createElement(EnhancedMarkdownMessage, { 
+          content: message.content || "", 
+          role: message.role,
+          autoParseEnhancements: true,
+          enableAutoEnhancement: false, // 完全禁用自动增强，避免干扰流式渲染
+          sourceGroups: sourceGroups,
+          sourceResults: sourceResults,
+          activeSourceGroupId: activeSourceGroupId,
+          activeBadgeKey: activeBadgeKey,
+          onHoverSourceGroup: handleHoverSourceGroup,
+          onLeaveSourceGroup: handleLeaveSourceGroup,
+        }),
 
       // Cursor for streaming - 如果内容为空，显示"正在输出"提示
       isStreaming &&
@@ -1246,6 +1665,27 @@ export default function MessageItem({
             )
           )
         ),
+
+      showSourcePanel && activeSourceGroup &&
+        createElement(SourceCardPanel, {
+          group: activeSourceGroup,
+          anchor: sourceAnchor,
+          onHoverStart: () => {
+            sourcePanelHoverRef.current = true;
+            clearSourcePanelTimer();
+          },
+          onHoverEnd: () => {
+            sourcePanelHoverRef.current = false;
+            scheduleCloseSourcePanel();
+          },
+          onClose: () => {
+            sourcePanelHoverRef.current = false;
+            clearSourcePanelTimer();
+            setActiveSourceGroupId(null);
+            setActiveBadgeKey(null);
+            setSourceAnchor(null);
+          },
+        }),
 
       // Action Bar
       createElement(

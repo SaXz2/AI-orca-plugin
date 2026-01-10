@@ -122,7 +122,6 @@ export default function ScrollToBottomButton({
         className: "ti ti-arrow-down",
         style: iconStyle,
       }),
-      createElement("span", null, "跳转到最新"),
       newMessageCount && newMessageCount > 0
         ? createElement("span", { style: badgeStyle }, newMessageCount > 99 ? "99+" : newMessageCount)
         : null

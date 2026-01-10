@@ -24,11 +24,23 @@
  * - 语义断点：检测话题结束，避免逻辑中间截断
  * - Token 对齐：64 Token 边界填充，最大化缓存命中
  * - 元数据标记：消息范围追溯，支持原文召回
+ * 
+ * v2 更新：
+ * - 使用新的 tokenizer 模块（多模型支持）
+ * - 使用 semantic-breakpoint 模块（更鲁棒的断点检测）
+ * - 使用 compression-config 模块（配置 Schema 校验）
+ * - 改进的填充策略（避免重复字符）
  */
 
 import type { Message } from "./session-service";
 import { openAIChatCompletionsStream, type OpenAIChatMessage } from "./openai-client";
 import { estimateTokens } from "../utils/token-utils";
+import { alignToTokenBoundary } from "../utils/tokenizer/alignment";
+import {
+  detectBreakpoint,
+  isLowPriorityMessage,
+  findManualMarkers,
+} from "./semantic-breakpoint";
 import {
   type CompressionStrategyConfig,
   type CompressionStrategyType,
@@ -38,6 +50,11 @@ import {
   clearStrategyState,
   compressionStrategyDebug,
 } from "./compression-strategy";
+import {
+  type CompressionConfigSchema,
+  DEFAULT_CONFIG as CONFIG_DEFAULTS,
+  printConfig,
+} from "./compression-config";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 类型定义
@@ -226,7 +243,6 @@ function getSessionConfig(sessionId: string, modelName: string): SessionConfig &
     modelName,
   });
   
-  console.log(`[compression] Session ${sessionId} using ${strategyConfig.strategy} strategy (threshold: ${config.compressionThreshold}, alignment: ${config.enableTokenAlignment})`);
   
   return { ...config, strategy: strategyConfig.strategy };
 }
@@ -420,8 +436,8 @@ const MILESTONE_DISTILL_PROMPT = `你是对话压缩专家。将以下多个里�
 // ═══════════════════════════════════════════════════════════════════════════
 
 function isLowPriority(content: string): boolean {
-  if (!content || content.trim().length < 3) return true;
-  return LOW_PRIORITY_PATTERNS.some(p => p.test(content.trim()));
+  // 使用新的语义断点模块
+  return isLowPriorityMessage({ content, role: "user" } as Message);
 }
 
 function calculateTokens(messages: Message[]): number {
@@ -491,33 +507,14 @@ function findSafeRecentBoundary(
 
 /**
  * 检测语义断点（是否适合在此处压缩）
+ * 使用新的 semantic-breakpoint 模块
  * 返回 true 表示可以安全压缩
  */
 function isSemanticBreakPoint(lastMessage: Message | undefined): boolean {
-  if (!lastMessage || !lastMessage.content) return true;
+  if (!lastMessage) return true;
   
-  const content = lastMessage.content.trim();
-  
-  // 检查是否在逻辑连续中（不应截断）
-  for (const pattern of LOGIC_CONTINUATION_PATTERNS) {
-    if (pattern.test(content)) {
-      return false;
-    }
-  }
-  
-  // 检查是否为语义断点（适合截断）
-  for (const pattern of SEMANTIC_BREAK_PATTERNS) {
-    if (pattern.test(content)) {
-      return true;
-    }
-  }
-  
-  // 默认：如果是 assistant 消息且较长，认为是完整回复
-  if (lastMessage.role === "assistant" && content.length > 100) {
-    return true;
-  }
-  
-  return false;
+  const result = detectBreakpoint(lastMessage);
+  return result.isBreakpoint && result.confidence >= 0.6;
 }
 
 /**
@@ -621,36 +618,25 @@ function buildEntityMapText(entityMap: Map<string, EntityInfo>): string {
 }
 
 /**
- * Token 对齐填充（动态配置）
- * 使用 HTML 注释填充，避免空格干扰模型注意力
+ * Token 对齐填充（使用新的 alignment 模块）
  * 
  * @param text 要对齐的文本
  * @param enableAlignment 是否启用对齐（REASONING_FIRST 策略禁用）
  * @param alignUnit Token 对齐单位（默认 64）
+ * @param paddingStrategy 填充策略（默认 comment）
  */
-function alignToTokenBoundary(
+function alignToTokenBoundaryLocal(
   text: string, 
   enableAlignment: boolean = true,
   alignUnit: number = 64,
+  paddingStrategy: "comment" | "whitespace" | "marker" | "none" = "comment",
 ): string {
-  // 如果禁用对齐，直接返回
-  if (!enableAlignment || alignUnit <= 1) {
-    return text;
-  }
-  
-  const tokens = estimateTokens(text);
-  const remainder = tokens % alignUnit;
-  
-  if (remainder === 0) return text;
-  
-  // 计算需要填充的 Token 数
-  const paddingTokens = alignUnit - remainder;
-  // 使用 HTML 注释填充，避免空格干扰模型
-  // 粗略估计：1 Token ≈ 4 个字符
-  const paddingContent = "-".repeat(paddingTokens * 4);
-  const padding = `<!-- padding: ${paddingContent} -->`;
-  
-  return text.trimEnd() + "\n" + padding + "\n";
+  // 使用新的 alignment 模块
+  return alignToTokenBoundary(text, {
+    enabled: enableAlignment,
+    alignUnit,
+    paddingStrategy,
+  });
 }
 
 /**
@@ -662,6 +648,7 @@ function alignToTokenBoundary(
  * @param isMilestone 是否为里程碑
  * @param enableAlignment 是否启用 Token 对齐
  * @param alignUnit Token 对齐单位
+ * @param paddingStrategy 填充策略
  */
 function formatSummaryOutput(
   summary: string, 
@@ -670,6 +657,7 @@ function formatSummaryOutput(
   isMilestone: boolean = false,
   enableAlignment: boolean = true,
   alignUnit: number = 64,
+  paddingStrategy: "comment" | "whitespace" | "marker" | "none" = "comment",
 ): string {
   // 1. 统一换行符
   let cleaned = summary.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
@@ -686,8 +674,8 @@ function formatSummaryOutput(
   
   const formatted = `\n\n${label}\n${meta}\n${cleaned}${DEFAULT_CONFIG.blockEndMarker}`;
   
-  // 5. Token 对齐（使用传入的配置）
-  return alignToTokenBoundary(formatted, enableAlignment, alignUnit);
+  // 5. Token 对齐（使用新的对齐模块）
+  return alignToTokenBoundaryLocal(formatted, enableAlignment, alignUnit, paddingStrategy);
 }
 
 /**
@@ -731,7 +719,6 @@ function getDynamicSummaryMaxTokens(cache: SessionCache): number {
   
   // 如果中层已经很长，使用高密度模式
   if (middleTokens >= CONFIG.middleLayerTokenLimit) {
-    console.log(`[compression] Middle layer too long (${middleTokens} tokens), using compact mode`);
     return CONFIG.summaryMaxTokensCompact;
   }
   
@@ -806,7 +793,6 @@ async function generateSummary(
       }
     }
   } catch (error) {
-    console.error("[compression] Summary generation failed:", error);
     if (entities.length > 0) {
       result = `- 实体：${entities.join(" ")}`;
     }
@@ -862,7 +848,6 @@ async function mergeLayers(
       }
     }
   } catch (error) {
-    console.error("[compression] Milestone merge failed:", error);
     // 降级：简单拼接
     result = layers.map(l => l.summary.replace(/### 历史摘要 #\d+\n/, "")).join("\n");
   }
@@ -927,7 +912,6 @@ async function distillMilestones(
       }
     }
   } catch (error) {
-    console.error("[compression] Milestone distillation failed:", error);
     return null;
   }
 
@@ -988,7 +972,6 @@ export function calibrateTokenOffset(
         newFactor = Math.max(CONFIG.biasFactorMin, Math.min(CONFIG.biasFactorMax, newFactor));
         
         if (Math.abs(newFactor - cache.tokenBiasFactor) > 0.01) {
-          console.log(`[compression] Token bias factor adjusted: ${cache.tokenBiasFactor.toFixed(3)} -> ${newFactor.toFixed(3)} (avg bias: ${(averageBias * 100).toFixed(1)}%, samples: ${cache.biasCalibrationSamples})`);
           cache.tokenBiasFactor = newFactor;
           recordCalibrationAdjustment(sessionId);
         }
@@ -1010,7 +993,6 @@ export function calibrateTokenOffset(
 
   // 缓存未命中
   cache.consecutiveMisses++;
-  console.log(`[compression] Cache miss detected: expected=${expectedCacheTokens}, actual=${promptCacheHitTokens}, consecutive=${cache.consecutiveMisses}`);
 
   // 连续未命中超过阈值，触发校准
   if (cache.consecutiveMisses >= CONFIG.calibrationMissThreshold) {
@@ -1018,7 +1000,6 @@ export function calibrateTokenOffset(
     const newOffset = diff > 0 ? Math.ceil(diff / CONFIG.tokenAlignUnit) * CONFIG.tokenAlignUnit : 0;
     
     if (newOffset !== cache.calibrationOffset) {
-      console.log(`[compression] Calibrating token offset: ${cache.calibrationOffset} -> ${newOffset}`);
       cache.calibrationOffset = newOffset;
       cache.consecutiveMisses = 0;
       recordCalibrationAdjustment(sessionId);
@@ -1171,12 +1152,10 @@ export async function compressContext(
     if (shouldCompress) {
       // 硬截断：无论是否断点都必须压缩
       if (isHardLimit) {
-        console.log(`[compression] Hard limit reached (${totalTokens} tokens, threshold: ${sessionConfig.hardLimitThreshold}), forcing compression`);
         cache.pendingCompression = false;
       } else if (!isBreakPoint) {
         // 标记待压缩，延迟到下一个断点
         cache.pendingCompression = true;
-        console.log(`[compression] Pending: not at semantic break point`);
       } else {
         cache.pendingCompression = false;
       }
@@ -1184,7 +1163,6 @@ export async function compressContext(
       // 执行压缩（断点或硬截断）
       if (isBreakPoint || isHardLimit || cache.pendingCompression) {
         if (isBreakPoint || isHardLimit) {
-          console.log(`[compression] Creating new layer: ${newMessageCount} msgs, ${newTokens} tokens`);
           
           try {
             // 获取已知实体
@@ -1238,35 +1216,29 @@ export async function compressContext(
               cache.lastUpdateAt = Date.now();
               cache.pendingCompression = false;
               recordLayerCreation(sessionId);
-              console.log(`[compression] Layer #${cache.layers.length} created`);
               
               // 检查是否需要里程碑合并（使用动态配置）
               if (cache.layers.length >= sessionConfig.milestoneThreshold) {
-                console.log(`[compression] Triggering milestone merge for ${cache.layers.length} layers (threshold: ${sessionConfig.milestoneThreshold})`);
                 const milestone = await mergeLayers(cache.layers, apiConfig, alignmentConfig);
                 if (milestone) {
                   cache.milestones.push(milestone);
                   cache.layers = []; // 清空已合并的层
                   recordMilestoneCreation(sessionId);
-                  console.log(`[compression] Milestone #${cache.milestones.length} created, hit rate before: ${(metrics.cacheHits / metrics.totalRequests * 100).toFixed(1)}%`);
                   
                   // 检查是否需要里程碑再蒸馏（使用动态配置）
                   if (cache.milestones.length >= sessionConfig.milestoneDistillThreshold) {
-                    console.log(`[compression] Triggering milestone distillation for ${cache.milestones.length} milestones`);
                     const distilled = await distillMilestones(cache.milestones, apiConfig, alignmentConfig);
                     if (distilled) {
                       // 保留最新的里程碑，用蒸馏结果替换旧的
                       const latestMilestone = cache.milestones[cache.milestones.length - 1];
                       cache.milestones = [distilled, latestMilestone];
                       recordMilestoneDistillation(sessionId);
-                      console.log(`[compression] Milestones distilled: ${sessionConfig.milestoneDistillThreshold} -> 2`);
                     }
                   }
                 }
               }
             }
           } catch (error) {
-            console.error("[compression] Failed to generate summary:", error);
           }
         }
       }
@@ -1320,7 +1292,6 @@ export function clearSummaryCache(sessionId: string): void {
   sessionCache.delete(sessionId);
   sessionConfigCache.delete(sessionId);
   clearStrategyState(sessionId);
-  console.log(`[compression] Cache cleared for session: ${sessionId}`);
 }
 
 /**
@@ -1330,7 +1301,6 @@ export function clearAllSummaryCache(): void {
   const count = sessionCache.size;
   sessionCache.clear();
   sessionConfigCache.clear();
-  console.log(`[compression] All caches cleared (${count} sessions)`);
 }
 
 /**
@@ -1465,14 +1435,12 @@ export function triggerAsyncCompression(
 ): void {
   // 第一重检查：全局任务队列
   if (pendingCompressionTasks.has(sessionId)) {
-    console.log(`[compression] Async compression already queued for session ${sessionId}, skipping`);
     return;
   }
   
   // 第二重检查：会话级锁
   const cache = sessionCache.get(sessionId);
   if (cache?.asyncCompressionInProgress) {
-    console.log(`[compression] Async compression already in progress for session ${sessionId}, skipping`);
     return;
   }
   
@@ -1489,7 +1457,6 @@ export function triggerAsyncCompression(
     cache.asyncCompressionInProgress = true;
   }
   
-  console.log(`[compression] Triggering async compression for session ${sessionId}`);
   
   const task = (async () => {
     try {
@@ -1502,7 +1469,6 @@ export function triggerAsyncCompression(
       
       await compressContext(sessionId, messages, apiConfig);
     } catch (error) {
-      console.error("[compression] Async compression failed:", error);
     } finally {
       // 释放锁
       const finalCache = sessionCache.get(sessionId);
@@ -1573,9 +1539,7 @@ export async function getOrCreateSummary(
   recentMessages: Message[];
   needsCompression: boolean;
 }> {
-  console.log(`[compression] getOrCreateSummary called: sessionId=${sessionId}, messages=${messages.length}, keepRecent=${_keepRecent}`);
   const result = await compressContext(sessionId, messages, apiConfig);
-  console.log(`[compression] compressContext result: compressed=${result.stats.compressed}, totalTokens=${result.stats.totalTokens}, threshold=${CONFIG.compressionThreshold}`);
   // 合并实体映射和摘要文本
   const fullSummary = result.entityMapText + (result.summaryText || "");
   return {
@@ -1641,7 +1605,6 @@ export function prewarmCache(sessionId: string, data: SerializedCache): void {
   sessionCache.set(sessionId, cache);
   
   const totalTokens = calculateMiddleLayerTokens(cache);
-  console.log(`[compression] Cache prewarmed for session ${sessionId}: ${cache.milestones.length} milestones, ${cache.layers.length} layers, ${totalTokens} tokens`);
 }
 
 /**
@@ -1683,7 +1646,6 @@ export function prewarmMilestonesOnly(
   }
   
   sessionCache.set(sessionId, cache);
-  console.log(`[compression] Milestones prewarmed for session ${sessionId}: ${milestones.length} milestones`);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

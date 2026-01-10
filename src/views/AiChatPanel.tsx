@@ -19,24 +19,17 @@ import ErrorMessage from "../components/ErrorMessage";
 import ChatHistoryMenu from "./ChatHistoryMenu";
 import HeaderMenu from "./HeaderMenu";
 import CompressionSettingsModal from "./CompressionSettingsModal";
+import WebSearchSettingsModal from "./WebSearchSettingsModal";
 import EmptyState from "./EmptyState";
 import TypingIndicator from "../components/TypingIndicator";
 import MemoryManager from "./MemoryManager";
 import ChatNavigation from "../components/ChatNavigation";
 import FlashcardReview, { type Flashcard } from "../components/FlashcardReview";
+import GlobalImagePreview from "../components/GlobalImagePreview";
+import TodoistModals from "./TodoistModals";
+import TodoistSettingsModal from "./TodoistSettingsModal";
+import { todoistModalStore } from "../store/todoist-store";
 import { injectChatStyles } from "../styles/chat-animations";
-
-// DEBUG: Check if all components are defined
-console.log("[AiChatPanel] Component imports check:", {
-  DateSeparator: typeof DateSeparator,
-  ScrollToBottomButton: typeof ScrollToBottomButton,
-  ErrorMessage: typeof ErrorMessage,
-  TypingIndicator: typeof TypingIndicator,
-  ChatNavigation: typeof ChatNavigation,
-  MessageItem: typeof MessageItem,
-  EmptyState: typeof EmptyState,
-  MarkdownMessage: typeof MarkdownMessage,
-});
 import {
   getAiChatSettings,
   getModelApiConfig,
@@ -44,6 +37,7 @@ import {
   getSelectedProvider,
   updateAiChatSettings,
   validateCurrentConfig,
+  DEFAULT_SYSTEM_PROMPT,
   type AiChatSettings,
 } from "../settings/ai-chat-settings";
 import {
@@ -62,11 +56,15 @@ import {
 } from "../services/session-service";
 import { exportSessionAsFile, saveSessionToJournal, saveMessagesToJournal } from "../services/export-service";
 import { sessionStore, updateSessionStore, clearSessionStore } from "../store/session-store";
-import { TOOLS, FLASHCARD_TOOL, executeTool, getToolsForDraggedContext } from "../services/ai-tools";
-import { getToolStatus, isToolDisabled, shouldAskForTool } from "../store/tool-store";
+import { TOOLS, FLASHCARD_TOOL, executeTool, getToolsForDraggedContext, getTools, extractSearchResultsFromToolResults } from "../services/ai-tools";
+import { TODOIST_TOOLS, executeTodoistTool, isTodoistTool } from "../services/todoist-tools";
+import { getToolStatus, isToolDisabled, shouldAskForTool, isAgenticRAGEnabled, getAgenticRAGConfig } from "../store/tool-store";
 import { nowId, safeText } from "../utils/text-utils";
 import { buildConversationMessages } from "../services/message-builder";
 import { streamChatWithRetry, type ToolCallInfo } from "../services/chat-stream-handler";
+import { executeAgenticRAG, formatRAGSteps, getToolDisplayName } from "../services/agentic-rag-service";
+import { clearSummaryCache } from "../services/compression-service";
+import { normalizeWebSearchResults, type WebSearchSource } from "../utils/source-attribution";
 import {
   panelContainerStyle,
   headerStyle,
@@ -291,6 +289,12 @@ export default function AiChatPanel({ panelId }: PanelProps) {
   // Compression settings modal state
   const [showCompressionSettings, setShowCompressionSettings] = useState(false);
 
+  // Web search settings modal state
+  const [showWebSearchSettings, setShowWebSearchSettings] = useState(false);
+
+  // Todoist settings modal state
+  const [showTodoistSettings, setShowTodoistSettings] = useState(false);
+
   // Message selection mode state (for batch save)
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedMessageIds, setSelectedMessageIds] = useState<Set<string>>(new Set());
@@ -302,15 +306,24 @@ export default function AiChatPanel({ panelId }: PanelProps) {
 
   const listRef = useRef<HTMLDivElement | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  // 追踪用户是否在底部附近，用于决定流式输出时是否自动滚动
+  const isNearBottomRef = useRef(true);
 
   const scrollToBottom = useCallback(() => {
     smoothScrollToBottom(listRef.current);
   }, []);
 
+  // 智能滚动：只有当用户在底部附近时才自动滚动
+  const scrollToBottomIfNeeded = useCallback(() => {
+    if (isNearBottomRef.current) {
+      smoothScrollToBottom(listRef.current);
+    }
+  }, []);
+
   const updateMessage = useCallback((id: string, updates: Partial<Message>) => {
     setMessages((prev) => prev.map((m) => (m.id === id ? { ...m, ...updates } : m)));
-    queueMicrotask(scrollToBottom);
-  }, [scrollToBottom]);
+    queueMicrotask(scrollToBottomIfNeeded);
+  }, [scrollToBottomIfNeeded]);
 
   const displaySessionTitle = useMemo(() => {
     const title = (currentSession.title || "").trim();
@@ -335,16 +348,9 @@ export default function AiChatPanel({ panelId }: PanelProps) {
       );
       
       if (panelElement) {
-        console.log('[AiChatPanel] Setting panel metadata for panelId:', panelId);
         panelElement.setAttribute('data-panel-title', 'AI Chat');
         panelElement.setAttribute('data-panel-icon', '🤖');
         panelElement.setAttribute('data-panel-type', 'view');
-        console.log('[AiChatPanel] Panel metadata set successfully');
-      } else {
-        console.warn('[AiChatPanel] Could not find panel element for panelId:', panelId);
-        // 列出所有面板元素帮助调试
-        const allPanels = document.querySelectorAll('.orca-panel');
-        console.log('[AiChatPanel] Available panels:', Array.from(allPanels).map(p => p.getAttribute('data-panel-id')));
       }
     };
 
@@ -387,7 +393,6 @@ export default function AiChatPanel({ panelId }: PanelProps) {
             const state = active.flashcardState;
             // 只有还有未完成的卡片才恢复
             if (state.currentIndex < state.cards.length) {
-              console.log("[AiChatPanel] Restoring flashcard state:", state.currentIndex, "/", state.cards.length);
               setPendingFlashcards(state.cards as Flashcard[]);
               setFlashcardIndex(state.currentIndex);
               setFlashcardKeptCount(state.keptCount);
@@ -418,6 +423,11 @@ export default function AiChatPanel({ panelId }: PanelProps) {
     const settings = getAiChatSettings(pluginName);
     const defaultModel = settings.selectedModelId;
 
+    // 清理旧会话的压缩缓存（重要！防止旧对话摘要泄漏到新对话）
+    if (currentSession.id) {
+      clearSummaryCache(currentSession.id);
+    }
+
     // 创建全新的会话，确保 ID 是新的
     const newSession = { ...createNewSession(), model: defaultModel };
     setCurrentSession(newSession);
@@ -442,7 +452,7 @@ export default function AiChatPanel({ panelId }: PanelProps) {
     setFlashcardIndex(0);
     setFlashcardKeptCount(0);
     setFlashcardSkippedCount(0);
-  }, []);
+  }, [currentSession.id]);
 
   const handleSelectSession = useCallback(async (sessionId: string) => {
     const pluginName = getAiChatPluginName();
@@ -569,10 +579,6 @@ export default function AiChatPanel({ panelId }: PanelProps) {
         skippedCount: flashcardSkippedCount,
       } : undefined;
       
-      if (hasFlashcards) {
-        console.log("[AiChatPanel] Saving flashcard state:", flashcardIndex, "/", pendingFlashcards.length);
-      }
-      
       const sessionToCache: SavedSession = {
         ...currentSession,
         messages,
@@ -621,6 +627,9 @@ export default function AiChatPanel({ panelId }: PanelProps) {
       // Show button when user scrolls up more than 200px from bottom
       const distanceFromBottom = listEl.scrollHeight - listEl.scrollTop - listEl.clientHeight;
       setShowScrollToBottom(distanceFromBottom > 200);
+      // 更新 isNearBottomRef，用于决定流式输出时是否自动滚动
+      // 阈值设为 100px，比按钮显示阈值小，避免用户刚滚动一点就停止自动滚动
+      isNearBottomRef.current = distanceFromBottom < 100;
     };
 
     listEl.addEventListener("scroll", handleScroll, { passive: true });
@@ -630,6 +639,8 @@ export default function AiChatPanel({ panelId }: PanelProps) {
   const handleScrollToBottom = useCallback(() => {
     smoothScrollToBottom(listRef.current);
     setShowScrollToBottom(false);
+    // 点击滚动到底部按钮后，恢复自动滚动
+    isNearBottomRef.current = true;
   }, []);
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -697,6 +708,45 @@ export default function AiChatPanel({ panelId }: PanelProps) {
   async function handleSend(content: string, files?: FileRef[], historyOverride?: Message[]) {
     if (!content && (!files || files.length === 0)) return;
     
+    // ─────────────────────────────────────────────────────────────────────
+    // Todoist 命令拦截（不发送给 AI，直接执行）
+    // ─────────────────────────────────────────────────────────────────────
+    const trimmedContent = content.trim();
+    
+    // /todoist - 查看今日任务
+    if (trimmedContent === "/todoist" || trimmedContent.startsWith("/todoist ")) {
+      todoistModalStore.viewMode = "today";
+      todoistModalStore.showTaskList = true;
+      return;
+    }
+    
+    // /todoist-add - 添加任务
+    if (trimmedContent === "/todoist-add" || trimmedContent.startsWith("/todoist-add ")) {
+      const taskContent = trimmedContent.replace(/^\/todoist-add\s*/, "").trim();
+      todoistModalStore.addTaskContent = taskContent;
+      todoistModalStore.showAddTask = true;
+      return;
+    }
+    
+    // /todoist-done - 标记完成
+    if (trimmedContent === "/todoist-done" || trimmedContent.startsWith("/todoist-done ")) {
+      todoistModalStore.showTaskList = true;
+      return;
+    }
+    
+    // /todoist-all - 查看全部任务
+    if (trimmedContent === "/todoist-all" || trimmedContent.startsWith("/todoist-all ")) {
+      todoistModalStore.viewMode = "all";
+      todoistModalStore.showTaskList = true;
+      return;
+    }
+    
+    // /todoist-ai - 启用 Todoist AI 工具模式（不拦截，继续发送给 AI）
+    let enableTodoistTools = false;
+    if (trimmedContent.startsWith("/todoist-ai")) {
+      enableTodoistTools = true;
+    }
+    
     // 如果正在生成，先停止当前生成
     if (sending) {
       if (abortRef.current) abortRef.current.abort();
@@ -709,7 +759,7 @@ export default function AiChatPanel({ panelId }: PanelProps) {
 	    // 工具调用最大轮数：可在设置中配置；若缺失则默认 5（向后兼容）
 	    const MAX_TOOL_ROUNDS = settings.maxToolRounds || 5;
 	    // 系统提示词模板变量：支持 {maxToolRounds}，按当前 MAX_TOOL_ROUNDS 注入
-	    let systemPrompt = settings.systemPrompt.split("{maxToolRounds}").join(String(MAX_TOOL_ROUNDS));
+	    let systemPrompt = DEFAULT_SYSTEM_PROMPT.split("{maxToolRounds}").join(String(MAX_TOOL_ROUNDS));
 
 	    // 检测用户指令并追加格式要求
 	    let processedContent = content;
@@ -790,6 +840,81 @@ export default function AiChatPanel({ panelId }: PanelProps) {
 4. 对比项要一一对应，便于比较`;
 	    }
 
+	    // /list - 列表格式
+	    if (content.includes("/list")) {
+	      processedContent = processedContent.replace(/\/list/g, "").trim();
+	      systemPrompt += `\n\n【格式要求 - 列表】用户要求使用列表格式展示结果。请：
+1. 使用有序或无序列表呈现信息
+2. 每个列表项简洁明了
+3. 相关项目可以使用嵌套列表
+4. 如有链接，使用 [标题](orca-block:id) 格式`;
+	    }
+
+	    // /steps - 步骤格式
+	    if (content.includes("/steps")) {
+	      processedContent = processedContent.replace(/\/steps/g, "").trim();
+	      systemPrompt += `\n\n【格式要求 - 步骤】用户要求分步骤展示操作流程。请：
+1. 使用有序列表，每步一个编号
+2. 每步标题简洁，后面可以补充说明
+3. 步骤之间有清晰的逻辑顺序
+4. 如有注意事项，在相关步骤后用缩进说明`;
+	    }
+
+	    // /eli5 - 简单易懂解释
+	    if (content.includes("/eli5")) {
+	      processedContent = processedContent.replace(/\/eli5/g, "").trim();
+	      systemPrompt += `\n\n【回答风格 - 简单易懂】用户要求用简单易懂的方式解释。请：
+1. 避免专业术语，用日常用语
+2. 多用比喻和类比帮助理解
+3. 从基础概念讲起，循序渐进
+4. 举生活中的例子说明`;
+	    }
+
+	    // /formal - 正式专业语气
+	    if (content.includes("/formal")) {
+	      processedContent = processedContent.replace(/\/formal/g, "").trim();
+	      systemPrompt += `\n\n【回答风格 - 正式专业】用户要求使用正式专业的语气回答。请：
+1. 使用规范的书面语言
+2. 结构清晰，逻辑严谨
+3. 适当使用专业术语
+4. 保持客观中立的语气`;
+	    }
+
+	    // /diagram - 流程图/示意图
+	    if (content.includes("/diagram")) {
+	      processedContent = processedContent.replace(/\/diagram/g, "").trim();
+	      systemPrompt += `\n\n【格式要求 - 流程图】用户要求生成流程图或示意图。请使用 Mermaid 语法：
+\`\`\`mermaid
+graph TD
+    A[开始] --> B{判断条件}
+    B -->|是| C[执行操作1]
+    B -->|否| D[执行操作2]
+    C --> E[结束]
+    D --> E
+\`\`\`
+要求：
+1. 使用 mermaid 代码块
+2. 根据内容选择合适的图表类型（flowchart、sequence、mindmap 等）
+3. 节点文字简洁明了
+4. 连线标注清晰`;
+	    }
+
+	    // /todoist-ai - Todoist AI 模式
+	    if (content.includes("/todoist-ai")) {
+	      processedContent = processedContent.replace(/\/todoist-ai/g, "").trim();
+	      systemPrompt += `\n\n【Todoist 任务管理模式】
+你现在可以使用 Todoist 工具来帮助用户管理任务：
+- todoist_get_tasks: 获取任务列表（today=今日，all=全部）
+- todoist_create_task: 创建新任务（支持自然语言日期如"明天下午3点"）
+- todoist_complete_task: 标记任务完成
+
+使用指南：
+1. 用户问任务相关问题时，先调用 todoist_get_tasks 获取任务列表
+2. 创建任务时，从用户的话中提取任务内容和截止日期
+3. 完成任务时，需要先获取任务列表找到对应的 task_id
+4. 回复时用友好的语气，告诉用户操作结果`;
+	    }
+
 	    // /localgraph - 链接关系图谱（直接渲染图谱，不走 AI）
 	    if (content.includes("/localgraph")) {
 	      const graphQuery = processedContent.replace(/\/localgraph/g, "").trim();
@@ -817,15 +942,14 @@ export default function AiChatPanel({ panelId }: PanelProps) {
 	          } else {
 	            // 否则当作页面名称，需要查找对应的 blockId
 	            pageName = cleanedQuery;
-	            try {
-	              const block = await orca.invokeBackend("get-block-by-alias", cleanedQuery);
-	              if (block && block.id) {
-	                blockId = block.id;
-	              }
-	            } catch (err) {
-	              console.warn("[/localgraph] Failed to find page:", cleanedQuery, err);
-	            }
-	          }
+            try {
+              const block = await orca.invokeBackend("get-block-by-alias", cleanedQuery);
+              if (block && block.id) {
+                blockId = block.id;
+              }
+            } catch (err) {
+            }
+          }
 	        } else {
 	          // 使用当前打开的页面
 	          try {
@@ -895,15 +1019,14 @@ export default function AiChatPanel({ panelId }: PanelProps) {
 	          } else {
 	            // 否则当作页面名称，需要查找对应的 blockId
 	            pageName = cleanedQuery;
-	            try {
-	              const block = await orca.invokeBackend("get-block-by-alias", cleanedQuery);
-	              if (block && block.id) {
-	                blockId = block.id;
-	              }
-	            } catch (err) {
-	              console.warn("[/mindmap] Failed to find page:", cleanedQuery, err);
-	            }
-	          }
+            try {
+              const block = await orca.invokeBackend("get-block-by-alias", cleanedQuery);
+              if (block && block.id) {
+                blockId = block.id;
+              }
+            } catch (err) {
+            }
+          }
 	        } else {
 	          // 使用当前打开的页面
 	          try {
@@ -1007,8 +1130,6 @@ export default function AiChatPanel({ panelId }: PanelProps) {
 	        }
 	      } catch {}
 	      
-	      console.log("[Flashcard] Building messages for API with tool calling");
-	      
 	      // 使用专用的闪卡工具（不在普通 TOOLS 列表中）
 	      const { standard: apiMessages, fallback: apiMessagesFallback } = await buildConversationMessages({
 	        messages: conversationForFlashcard,
@@ -1027,8 +1148,9 @@ export default function AiChatPanel({ panelId }: PanelProps) {
 	      try {
 	        let toolCallResult: any = null;
 	        let textContent = "";
+	        let mergedToolCalls: ToolCallInfo[] = [];
 	        
-	        // 使用工具调用模式
+	        // Stream tool calls and content, then process the final tool args.
 	        for await (const chunk of streamChatWithRetry(
 	          {
 	            apiUrl: apiConfig.apiUrl,
@@ -1045,26 +1167,31 @@ export default function AiChatPanel({ panelId }: PanelProps) {
 	          if (chunk.type === "content") {
 	            textContent += chunk.content;
 	          } else if (chunk.type === "tool_calls" && chunk.toolCalls) {
-	            // 找到 generateFlashcards 工具调用
-	            for (const tc of chunk.toolCalls) {
-	              if (tc.function.name === "generateFlashcards") {
-	                console.log("[Flashcard] Tool call received:", tc.function.name);
-	                try {
-	                  const args = typeof tc.function.arguments === "string" 
-	                    ? JSON.parse(tc.function.arguments) 
-	                    : tc.function.arguments;
-	                  // 执行工具
-	                  const resultStr = await executeTool("generateFlashcards", args);
-	                  toolCallResult = JSON.parse(resultStr);
-	                } catch (e) {
-	                  console.error("[Flashcard] Tool execution error:", e);
-	                }
-	              }
+	            mergedToolCalls = chunk.toolCalls;
+	          } else if (chunk.type === "done") {
+	            if (!textContent && chunk.result.content) {
+	              textContent = chunk.result.content;
+	            }
+	            if (chunk.result.toolCalls?.length) {
+	              mergedToolCalls = chunk.result.toolCalls;
 	            }
 	          }
 	        }
 	        
-	        console.log("[Flashcard] Tool result:", toolCallResult);
+	        if (!toolCallResult && mergedToolCalls.length > 0) {
+	          for (const tc of mergedToolCalls) {
+	            if (tc.function.name === "generateFlashcards") {
+	              try {
+	                const args = typeof tc.function.arguments === "string"
+	                  ? JSON.parse(tc.function.arguments)
+	                  : tc.function.arguments;
+	                const resultStr = await executeTool("generateFlashcards", args);
+	                toolCallResult = JSON.parse(resultStr);
+	              } catch (e) {
+	              }
+	            }
+	          }
+	        }
 	        
 	        // 检查工具调用结果
 	        if (toolCallResult && toolCallResult.success && toolCallResult.cards) {
@@ -1099,7 +1226,6 @@ export default function AiChatPanel({ panelId }: PanelProps) {
 	          setMessages((prev) => [...prev, assistantMsg]);
 	        }
 	      } catch (err: any) {
-	        console.error("[Flashcard] Error:", err);
 	        const msg = String(err?.message ?? err ?? "生成闪卡失败");
 	        orca.notify("error", msg);
 	        const assistantMsg: Message = {
@@ -1156,6 +1282,8 @@ export default function AiChatPanel({ panelId }: PanelProps) {
         setMessages((prev) => [...prev, userMsg]);
     }
     
+    // 用户发送消息时，重置为自动滚动状态并滚动到底部
+    isNearBottomRef.current = true;
     queueMicrotask(scrollToBottom);
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -1271,6 +1399,31 @@ export default function AiChatPanel({ panelId }: PanelProps) {
       
       const conversation: Message[] = [...baseMessages.filter((m) => !m.localOnly), userMsgWithContextAssets];
 
+      let aggregatedSearchResults: WebSearchSource[] = [];
+      const mergeSearchResults = (incoming: WebSearchSource[]) => {
+        if (!incoming.length) return;
+        const seen = new Set(aggregatedSearchResults.map((r) => r.url));
+        incoming.forEach((result) => {
+          if (!result.url || seen.has(result.url)) return;
+          seen.add(result.url);
+          aggregatedSearchResults.push(result);
+        });
+      };
+      const captureSearchResults = (toolMessages: Message[]) => {
+        if (!toolMessages.length) return;
+        const toolMap = new Map<string, { content: string; name: string }>();
+        toolMessages.forEach((m) => {
+          if (m.tool_call_id) {
+            toolMap.set(m.tool_call_id, { content: m.content, name: m.name || "" });
+          }
+        });
+        const results = normalizeWebSearchResults(extractSearchResultsFromToolResults(toolMap));
+        mergeSearchResults(results);
+      };
+      const getSearchResultsForMessage = () => (
+        aggregatedSearchResults.length > 0 ? aggregatedSearchResults : undefined
+      );
+
       // Stream initial response with timeout protection
       let currentContent = "";
       let currentReasoning = "";
@@ -1302,9 +1455,146 @@ export default function AiChatPanel({ panelId }: PanelProps) {
       // 有拖入块时禁用搜索类工具，强制 AI 使用已提供的上下文
       const hasHighPriorityContext = highPriorityContexts.length > 0;
       // 根据用户工具设置过滤工具列表（排除禁用的工具）
-      const baseTools = hasHighPriorityContext ? getToolsForDraggedContext() : TOOLS;
+      // 使用 getTools() 动态获取工具列表（包含联网搜索工具，如果已启用）
+      let baseTools = hasHighPriorityContext ? getToolsForDraggedContext() : getTools();
+      
+      // 如果启用了 Todoist AI 模式，注入 Todoist 工具
+      if (enableTodoistTools) {
+        baseTools = [...baseTools, ...TODOIST_TOOLS];
+      }
+      
       const filteredTools = baseTools.filter(tool => !isToolDisabled(tool.function.name));
       const toolsToUse = includeTools && filteredTools.length > 0 ? filteredTools : undefined;
+
+      // ─────────────────────────────────────────────────────────────────────────
+      // Agentic RAG 模式：AI 自主规划检索策略，多轮迭代
+      // ─────────────────────────────────────────────────────────────────────────
+      if (isAgenticRAGEnabled() && includeTools && !hasHighPriorityContext) {
+        const ragConfig = getAgenticRAGConfig();
+        const assistantId = nowId();
+        const assistantCreatedAt = Date.now();
+        
+        // 创建一个占位消息，显示正在思考
+        setMessages((prev) => [...prev, {
+          id: assistantId,
+          role: "assistant",
+          content: "🧠 正在智能检索...",
+          createdAt: assistantCreatedAt,
+          model,
+          localOnly: true, // 标记为本地消息，不发送给 API
+        }]);
+        setStreamingMessageId(assistantId);
+        
+        try {
+          // 创建 LLM 调用函数
+          const callLLM = async (prompt: string, options?: { temperature?: number; maxTokens?: number }) => {
+            const ragMessages: Message[] = [
+              { id: nowId(), role: "user", content: prompt, createdAt: Date.now() }
+            ];
+            
+            // 注意：这里不使用 chatMode: "ask"，因为 Agentic RAG 内部有工具调用能力
+            // 使用 "agent" 模式或不指定，避免 ASK_MODE_INSTRUCTION 被加入
+            const { standard: ragApiMessages } = await buildConversationMessages({
+              messages: ragMessages,
+              systemPrompt: "你是一个智能检索规划助手，具备联网搜索和笔记检索能力。请严格按照要求返回 JSON 格式。",
+              contextText: "",
+              customMemory: "",
+              chatMode: "agent", // 使用 agent 模式，避免 Ask 模式限制
+            });
+            
+            let result = "";
+            for await (const chunk of streamChatWithRetry(
+              {
+                apiUrl: apiConfig.apiUrl,
+                apiKey: apiConfig.apiKey,
+                model,
+                temperature: options?.temperature ?? 0.3,
+                maxTokens: options?.maxTokens ?? 1000,
+                signal: aborter.signal,
+              },
+              ragApiMessages,
+              ragApiMessages,
+            )) {
+              if (chunk.type === "content") {
+                result += chunk.content;
+              }
+            }
+            return result;
+          };
+          
+          // 进度回调 - 使用 reasoning 字段显示详细思考过程
+          const onProgress = (update: { phase: string; status: string; reasoning: string; step?: any; iteration?: number }) => {
+            // 用 reasoning 字段显示思考过程，content 显示当前状态
+            updateMessage(assistantId, {
+              content: `*${update.status}*`,
+              reasoning: update.reasoning,
+            });
+          };
+          
+          // 执行 Agentic RAG
+          const ragResult = await executeAgenticRAG(processedContent, callLLM, {
+            maxIterations: ragConfig.maxIterations,
+            enableReflection: ragConfig.enableReflection,
+            onProgress,
+          });
+          
+          // 更新消息为最终答案，保留 reasoning 作为思考过程记录
+          setStreamingMessageId(null);
+          
+          // 生成检索过程摘要作为 reasoning
+          const retrieveSteps = ragResult.steps.filter(s => s.type === "retrieve");
+          const correctSteps = ragResult.steps.filter(s => s.type === "correct");
+          const ragSummary = [
+            `🧠 **Agentic RAG 检索过程**`,
+            `- 迭代轮数: ${ragResult.iterations}`,
+            `- 检索步骤: ${retrieveSteps.length}${correctSteps.length > 0 ? ` (含 ${correctSteps.length} 次策略修正)` : ""}`,
+            ...retrieveSteps.map(s => {
+              const status = s.result?.includes("Error") ? "❌" : (s.result?.includes("No ") ? "⚠️" : "✅");
+              return `- ${status} ${getToolDisplayName(s.tool || "")}: ${s.reasoning}`;
+            }),
+            ragResult.strategySummary ? `- 📊 ${ragResult.strategySummary}` : "",
+            ragResult.hitLimit ? `- ⚠️ 达到最大轮数限制` : `- ✅ 信息收集完成`,
+          ].filter(Boolean).join("\n");
+          
+          updateMessage(assistantId, {
+            content: ragResult.answer,
+            reasoning: ragSummary,
+            localOnly: false,
+          });
+          
+          // 添加到会话
+          conversation.push({
+            id: assistantId,
+            role: "assistant",
+            content: ragResult.answer,
+            reasoning: ragSummary,
+            createdAt: assistantCreatedAt,
+          });
+          
+        } catch (err: any) {
+          const isAbort = String(err?.name ?? "") === "AbortError";
+          if (!isAbort) {
+            updateMessage(assistantId, {
+              content: `检索出错: ${err.message || "未知错误"}`,
+              localOnly: false,
+            });
+          } else {
+            // 用户取消，移除占位消息
+            setMessages((prev) => prev.filter(m => m.id !== assistantId));
+          }
+          setStreamingMessageId(null);
+        }
+        
+        // Agentic RAG 完成，跳过普通工具调用流程
+        setSending(false);
+        if (abortRef.current === aborter) abortRef.current = null;
+        
+        // 自动缓存会话
+        autoCacheSession(currentSession);
+        
+        return; // 不走普通流程
+      }
+      // ─────────────────────────────────────────────────────────────────────────
 
       for await (const chunk of streamChatWithRetry(
         {
@@ -1333,6 +1623,7 @@ export default function AiChatPanel({ panelId }: PanelProps) {
               reasoning: currentReasoning,
               createdAt: reasoningCreatedAt!,
               model,
+              searchResults: getSearchResultsForMessage(),
             }]);
           } else {
             currentReasoning += chunk.reasoning;
@@ -1351,6 +1642,7 @@ export default function AiChatPanel({ panelId }: PanelProps) {
               content: chunk.content, 
               createdAt: assistantCreatedAt,
               model,
+              searchResults: getSearchResultsForMessage(),
             }]);
             currentContent = chunk.content;
             reasoningMessageId = assistantId; // 复用这个 ID 作为 assistant ID
@@ -1366,6 +1658,7 @@ export default function AiChatPanel({ panelId }: PanelProps) {
               content: chunk.content, 
               createdAt: assistantCreatedAt,
               model,
+              searchResults: getSearchResultsForMessage(),
             }]);
             currentContent = chunk.content;
             reasoningMessageId = assistantId; // 更新为 assistant ID
@@ -1394,6 +1687,7 @@ export default function AiChatPanel({ panelId }: PanelProps) {
             content: "(empty response)", 
             createdAt: assistantCreatedAt,
             model,
+            searchResults: getSearchResultsForMessage(),
           }]);
         } else {
           // 完全空响应
@@ -1403,6 +1697,7 @@ export default function AiChatPanel({ panelId }: PanelProps) {
             content: "(empty response)", 
             createdAt: assistantCreatedAt,
             model,
+            searchResults: getSearchResultsForMessage(),
           }]);
         }
       } else if (!currentContent && toolCalls.length > 0) {
@@ -1413,6 +1708,7 @@ export default function AiChatPanel({ panelId }: PanelProps) {
           content: "", 
           createdAt: assistantCreatedAt,
           model,
+          searchResults: getSearchResultsForMessage(),
         }]);
       }
 
@@ -1422,6 +1718,7 @@ export default function AiChatPanel({ panelId }: PanelProps) {
 	        content: currentContent,
 	        createdAt: assistantCreatedAt,
 	        tool_calls: toolCalls.length > 0 ? toolCalls : undefined,
+          searchResults: getSearchResultsForMessage(),
 	      });
 
 		      // Handle tool calls with multi-round support
@@ -1432,7 +1729,6 @@ export default function AiChatPanel({ panelId }: PanelProps) {
 
       while (currentToolCalls.length > 0 && toolRound < MAX_TOOL_ROUNDS) {
         toolRound++;
-        console.log(`[AI] Tool calling round ${toolRound}/${MAX_TOOL_ROUNDS}`);
 
         updateMessage(currentAssistantId, { tool_calls: currentToolCalls });
 
@@ -1445,12 +1741,10 @@ export default function AiChatPanel({ panelId }: PanelProps) {
         const newToolCalls = currentToolCalls.filter(tc => !executedToolCallIds.has(tc.id));
         
         if (newToolCalls.length === 0) {
-          console.log(`[AI] [Round ${toolRound}] All tool calls already executed, skipping`);
           break;
         }
         
         if (newToolCalls.length < currentToolCalls.length) {
-          console.log(`[AI] [Round ${toolRound}] Filtered ${currentToolCalls.length - newToolCalls.length} duplicate tool calls`);
         }
 
         // Execute tools
@@ -1464,16 +1758,9 @@ export default function AiChatPanel({ panelId }: PanelProps) {
             args = JSON.parse(toolCall.function.arguments);
           } catch (error: any) {
             parseError = `Invalid JSON in tool arguments: ${error.message}`;
-            console.error(`[AI] [Round ${toolRound}] JSON parse error for ${toolName}:`, error);
-            console.error(`[AI] Raw arguments:`, toolCall.function.arguments);
           }
 
           // Log tool call with parsed arguments for debugging
-          console.log(`[AI] [Round ${toolRound}] Calling tool: ${toolName}`);
-          if (!parseError) {
-            console.log(`[AI] [Round ${toolRound}] Tool arguments:`, args);
-          }
-
           // If JSON parsing failed, return error to model
           let result: string;
           if (parseError) {
@@ -1491,7 +1778,6 @@ export default function AiChatPanel({ panelId }: PanelProps) {
              
              if (!userApproved) {
                result = `用户拒绝执行此工具。请尝试其他方式或直接回答用户的问题。`;
-               console.log(`[AI] [Round ${toolRound}] Tool ${toolName} denied by user`);
              } else {
                // Execute tool with timeout protection
                const TOOL_TIMEOUT_MS = 60000; // 60s timeout for tool execution
@@ -1500,18 +1786,20 @@ export default function AiChatPanel({ panelId }: PanelProps) {
                    setTimeout(() => reject(new Error(`Tool execution timed out after ${TOOL_TIMEOUT_MS / 1000}s`)), TOOL_TIMEOUT_MS);
                  });
                  
+                 // 检查是否是 Todoist 工具
+                 const toolExecutor = isTodoistTool(toolName) 
+                   ? executeTodoistTool(toolName, args)
+                   : executeTool(toolName, args);
+                 
                  result = await Promise.race([
-                   executeTool(toolName, args),
+                   toolExecutor,
                    timeoutPromise
                  ]);
                } catch (err: any) {
-                 console.error(`[AI] [Round ${toolRound}] Tool execution error/timeout:`, err);
                  result = `Error: ${err.message || "Tool execution failed"}`;
                }
              }
           }
-
-          console.log(`[AI] [Round ${toolRound}] Tool result: ${result.substring(0, 100)}${result.length > 100 ? "..." : ""}`);
 
           toolResultMessages.push({
             id: nowId(),
@@ -1521,6 +1809,23 @@ export default function AiChatPanel({ panelId }: PanelProps) {
             name: toolName,
             createdAt: Date.now(),
           });
+          
+          // 检查是否是直接渲染的工具结果（如日记导出），跳过 AI 后续处理
+          if (result.includes("```journal-export")) {
+            allToolResultMessages.push(...toolResultMessages);
+            conversation.push(...toolResultMessages);
+            setMessages((prev) => [...prev, ...toolResultMessages]);
+            queueMicrotask(scrollToBottom);
+            // 直接结束工具循环，不再调用 AI
+            currentToolCalls = [];
+            break;
+          }
+        }
+        
+        // 如果已经处理了直接渲染的结果，跳过后续 AI 调用
+        captureSearchResults(toolResultMessages);
+        if (currentToolCalls.length === 0 && toolResultMessages.some(m => m.content.includes("```journal-export"))) {
+          break;
         }
 
         allToolResultMessages.push(...toolResultMessages);
@@ -1566,8 +1871,7 @@ export default function AiChatPanel({ panelId }: PanelProps) {
               tools: enableTools ? filteredTools : undefined, // Last round: disable tools to force an answer
             },
             standard,
-            fallback,
-            () => console.log(`[AI] [Round ${toolRound}] Retrying with fallback format...`)
+            fallback
           )) {
             if (chunk.type === "reasoning") {
               // 第一次收到 reasoning 时，创建独立的 reasoning 消息
@@ -1583,6 +1887,7 @@ export default function AiChatPanel({ panelId }: PanelProps) {
                   reasoning: chunk.reasoning,
                   createdAt: nextReasoningCreatedAt!,
                   model,
+                  searchResults: getSearchResultsForMessage(),
                 }]);
               } else {
                 nextReasoning += chunk.reasoning;
@@ -1601,6 +1906,7 @@ export default function AiChatPanel({ panelId }: PanelProps) {
                   content: chunk.content, 
                   createdAt: nextAssistantCreatedAt,
                   model,
+                  searchResults: getSearchResultsForMessage(),
                 }]);
                 nextContent = chunk.content;
                 nextReasoningMessageId = nextAssistantId;
@@ -1616,6 +1922,7 @@ export default function AiChatPanel({ panelId }: PanelProps) {
                   content: chunk.content, 
                   createdAt: nextAssistantCreatedAt,
                   model,
+                  searchResults: getSearchResultsForMessage(),
                 }]);
                 nextContent = chunk.content;
                 nextReasoningMessageId = nextAssistantId;
@@ -1629,7 +1936,6 @@ export default function AiChatPanel({ panelId }: PanelProps) {
             }
           }
         } catch (streamErr: any) {
-          console.error(`[AI] [Round ${toolRound}] Error during response:`, streamErr);
           throw streamErr;
         }
 
@@ -1647,6 +1953,7 @@ export default function AiChatPanel({ panelId }: PanelProps) {
             content: "(empty response)", 
             createdAt: nextAssistantCreatedAt,
             model,
+            searchResults: getSearchResultsForMessage(),
           }]);
         }
 
@@ -1659,13 +1966,14 @@ export default function AiChatPanel({ panelId }: PanelProps) {
           const toolFallback = allToolResultMessages.map((m) => m.content).join("\n\n").trim();
           const fallbackText = toolFallback || "(empty response from API)";
           if (nextReasoningMessageId) {
-            updateMessage(nextReasoningMessageId, { content: fallbackText });
+            updateMessage(nextReasoningMessageId, { content: fallbackText, searchResults: getSearchResultsForMessage() });
           } else {
             setMessages((prev) => [...prev, { 
               id: nextAssistantId, 
               role: "assistant", 
               content: fallbackText, 
-              createdAt: nextAssistantCreatedAt 
+              createdAt: nextAssistantCreatedAt,
+              searchResults: getSearchResultsForMessage(),
             }]);
           }
           nextContent = fallbackText;
@@ -1677,18 +1985,17 @@ export default function AiChatPanel({ panelId }: PanelProps) {
           content: nextContent,
           createdAt: nextAssistantCreatedAt,
           tool_calls: nextToolCalls.length > 0 ? nextToolCalls : undefined,
+          searchResults: getSearchResultsForMessage(),
         });
 
         // Check if model wants to call more tools
         if (nextToolCalls.length > 0 && toolRound < MAX_TOOL_ROUNDS) {
-          console.log(`[AI] Model requested ${nextToolCalls.length} more tool(s), continuing to round ${toolRound + 1}`);
           currentToolCalls = nextToolCalls;
           currentAssistantId = nextAssistantId;
           // Continue loop
         } else {
           // No more tool calls or reached max rounds
           if (nextToolCalls.length > 0) {
-            console.warn(`[AI] Reached max tool rounds (${MAX_TOOL_ROUNDS}), stopping`);
             const toolFallback = allToolResultMessages.map((m) => m.content).join("\n\n").trim();
             const warning = [
               nextContent?.trim(),
@@ -1702,7 +2009,6 @@ export default function AiChatPanel({ panelId }: PanelProps) {
             }
           }
 
-          console.log(`[AI] Tool calling complete after ${toolRound} round(s) (${nextContent.length} chars)`);
           break;
         }
       }
@@ -1868,7 +2174,6 @@ export default function AiChatPanel({ panelId }: PanelProps) {
     }).then(() => {
       setSettingsVersion(v => v + 1); // 触发重新获取设置
     }).catch(err => {
-      console.warn("[AiChatPanel] Failed to update model selection:", err);
     });
   }, [pluginNameForUi]);
 
@@ -1907,7 +2212,7 @@ export default function AiChatPanel({ panelId }: PanelProps) {
     });
 
     // 计算系统开销 token（系统提示 + 记忆 + 上下文）
-    const systemPromptTokens = estimateTokens(settingsForUi.systemPrompt || "");
+    const systemPromptTokens = estimateTokens(DEFAULT_SYSTEM_PROMPT || "");
     const memoryTokens = estimateTokens(memoryStore.getFullMemoryText() || "");
     // 上下文 token 在 ChatInput 中已经显示，这里只计算基础开销
     const baseOverheadTokens = systemPromptTokens + memoryTokens;
@@ -2088,8 +2393,9 @@ export default function AiChatPanel({ panelId }: PanelProps) {
     }
 
     messages.forEach((m, i) => {
-      // 跳过 tool 消息，它们会被合并到 assistant 消息的工具调用区域
-      if (m.role === "tool") return;
+      // 跳过普通 tool 消息，它们会被合并到 assistant 消息的工具调用区域
+      // 但保留包含 journal-export 的 tool 消息，需要单独渲染导出按钮
+      if (m.role === "tool" && !m.content.includes("```journal-export")) return;
 
       // 添加日期分隔符（如果是新的一天）
       // **Feature: chat-ui-enhancement**
@@ -2472,6 +2778,19 @@ export default function AiChatPanel({ panelId }: PanelProps) {
         },
         createElement("i", { className: "ti ti-plus" })
       ),
+      // Todoist Button
+      createElement(
+        Button,
+        {
+          variant: "plain",
+          onClick: () => {
+            todoistModalStore.viewMode = "today";
+            todoistModalStore.showTaskList = true;
+          },
+          title: "Todoist 今日任务",
+        },
+        createElement("i", { className: "ti ti-checkbox" })
+      ),
       // Chat History
       createElement(ChatHistoryMenu, {
         sessions,
@@ -2494,6 +2813,8 @@ export default function AiChatPanel({ panelId }: PanelProps) {
         },
         onOpenMemoryManager: handleOpenMemoryManager,
         onOpenCompressionSettings: () => setShowCompressionSettings(true),
+        onOpenWebSearchSettings: () => setShowWebSearchSettings(true),
+        onOpenTodoistSettings: () => setShowTodoistSettings(true),
         onExportMarkdown: () => {
           if (messages.length === 0) {
             orca.notify("warn", "没有可导出的消息");
@@ -2571,6 +2892,20 @@ export default function AiChatPanel({ panelId }: PanelProps) {
     createElement(CompressionSettingsModal, {
       isOpen: showCompressionSettings,
       onClose: () => setShowCompressionSettings(false),
-    })
+    }),
+    // Web Search Settings Modal
+    createElement(WebSearchSettingsModal, {
+      isOpen: showWebSearchSettings,
+      onClose: () => setShowWebSearchSettings(false),
+    }),
+    // Todoist Settings Modal
+    createElement(TodoistSettingsModal, {
+      visible: showTodoistSettings,
+      onClose: () => setShowTodoistSettings(false),
+    }),
+    // Global Image Preview Modal
+    createElement(GlobalImagePreview),
+    // Todoist Modals
+    createElement(TodoistModals)
   );
 }

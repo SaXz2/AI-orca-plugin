@@ -43,6 +43,7 @@ export interface SearchResult {
   modified?: Date;
   tags?: string[];
   propertyValues?: Record<string, any>;
+  rawTree?: any;  // 原始块树数据（用于导出时提取子块信息）
 }
 
 interface TransformOptions {
@@ -104,6 +105,7 @@ function transformToSearchResults(
       created: block.created ? new Date(block.created) : undefined,
       modified: block.modified ? new Date(block.modified) : undefined,
       tags: block.aliases || [],
+      rawTree: tree,  // 保留原始树数据
     };
   });
 }
@@ -210,6 +212,7 @@ export async function searchBlocksByText(
     try {
       const description = buildAdvancedQuery({
         conditions: [{ type: "text", text: searchText }],
+        combineMode: "and",
         sort: [["_modified", "DESC"]],
         pageSize: safeMaxResults,
       });
@@ -890,6 +893,16 @@ function parseDateRange(
       return null;
     }
     case "range": {
+      // 支持 last-N-days 格式：last-7-days, last-14-days, last-30-days, last-90-days
+      const lastDaysMatch = value.match(/^last-(\d+)-days$/);
+      if (lastDaysMatch) {
+        const days = parseInt(lastDaysMatch[1], 10);
+        const end = new Date(today);
+        const start = new Date(today);
+        start.setDate(today.getDate() - days + 1); // 包含今天
+        return { start, end };
+      }
+      
       // 格式：startDate 到 endDate
       const start = new Date(value);
       const end = endValue ? new Date(endValue) : start;

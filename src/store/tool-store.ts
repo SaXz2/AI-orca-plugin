@@ -91,6 +91,16 @@ export const TOOL_DISPLAY_NAMES: Record<string, string> = {
 const DEFAULT_TOOL_STATUS: ToolStatus = "auto";
 
 /**
+ * Agentic RAG 配置
+ */
+export interface AgenticRAGConfig {
+  /** 最大迭代次数（防止无限循环） */
+  maxIterations: number;
+  /** 是否启用反思机制（评估检索结果质量） */
+  enableReflection: boolean;
+}
+
+/**
  * 工具 Store
  */
 interface ToolStore {
@@ -98,11 +108,35 @@ interface ToolStore {
   toolStatus: Record<string, ToolStatus>;
   /** 是否显示工具面板 */
   showPanel: boolean;
+  /** 联网搜索开关 */
+  webSearchEnabled: boolean;
+  /** 图像搜索开关 */
+  imageSearchEnabled: boolean;
+  /** Agentic RAG 开关（深度检索模式） */
+  agenticRAGEnabled: boolean;
+  /** Agentic RAG 配置 */
+  agenticRAGConfig: AgenticRAGConfig;
+  /** 脚本分析开关（数据分析能力） */
+  scriptAnalysisEnabled: boolean;
+  /** Wikipedia 搜索开关 */
+  wikipediaEnabled: boolean;
+  /** 汇率查询开关 */
+  currencyEnabled: boolean;
 }
 
 export const toolStore = proxy<ToolStore>({
   toolStatus: {},
   showPanel: false,
+  webSearchEnabled: false,
+  imageSearchEnabled: true,
+  agenticRAGEnabled: false,
+  agenticRAGConfig: {
+    maxIterations: 5,
+    enableReflection: true,
+  },
+  scriptAnalysisEnabled: false,
+  wikipediaEnabled: true,
+  currencyEnabled: true,
 });
 
 /**
@@ -148,11 +182,174 @@ export function closeToolPanel(): void {
 }
 
 /**
+ * 切换联网搜索开关
+ */
+export function toggleWebSearch(): void {
+  toolStore.webSearchEnabled = !toolStore.webSearchEnabled;
+  saveToolSettings();
+}
+
+/**
+ * 设置联网搜索状态
+ */
+export function setWebSearchEnabled(enabled: boolean): void {
+  toolStore.webSearchEnabled = enabled;
+  saveToolSettings();
+}
+
+/**
+ * 获取联网搜索状态
+ */
+export function isWebSearchEnabled(): boolean {
+  return toolStore.webSearchEnabled;
+}
+
+/**
+ * 切换图像搜索开关
+ */
+export function toggleImageSearch(): void {
+  toolStore.imageSearchEnabled = !toolStore.imageSearchEnabled;
+  saveToolSettings();
+}
+
+/**
+ * 设置图像搜索状态
+ */
+export function setImageSearchEnabled(enabled: boolean): void {
+  toolStore.imageSearchEnabled = enabled;
+  saveToolSettings();
+}
+
+/**
+ * 获取图像搜索状态
+ */
+export function isImageSearchEnabled(): boolean {
+  return toolStore.imageSearchEnabled;
+}
+
+/**
+ * 切换 Agentic RAG 开关
+ */
+export function toggleAgenticRAG(): void {
+  toolStore.agenticRAGEnabled = !toolStore.agenticRAGEnabled;
+  saveToolSettings();
+}
+
+/**
+ * 设置 Agentic RAG 状态
+ */
+export function setAgenticRAGEnabled(enabled: boolean): void {
+  toolStore.agenticRAGEnabled = enabled;
+  saveToolSettings();
+}
+
+/**
+ * 获取 Agentic RAG 状态
+ */
+export function isAgenticRAGEnabled(): boolean {
+  return toolStore.agenticRAGEnabled;
+}
+
+/**
+ * 更新 Agentic RAG 配置
+ */
+export function updateAgenticRAGConfig(config: Partial<AgenticRAGConfig>): void {
+  toolStore.agenticRAGConfig = { ...toolStore.agenticRAGConfig, ...config };
+  saveToolSettings();
+}
+
+/**
+ * 获取 Agentic RAG 配置
+ */
+export function getAgenticRAGConfig(): AgenticRAGConfig {
+  return toolStore.agenticRAGConfig;
+}
+
+/**
+ * 切换脚本分析开关
+ */
+export function toggleScriptAnalysis(): void {
+  toolStore.scriptAnalysisEnabled = !toolStore.scriptAnalysisEnabled;
+  saveToolSettings();
+}
+
+/**
+ * 设置脚本分析状态
+ */
+export function setScriptAnalysisEnabled(enabled: boolean): void {
+  toolStore.scriptAnalysisEnabled = enabled;
+  saveToolSettings();
+}
+
+/**
+ * 获取脚本分析状态
+ */
+export function isScriptAnalysisEnabled(): boolean {
+  return toolStore.scriptAnalysisEnabled;
+}
+
+/**
+ * 切换 Wikipedia 开关
+ */
+export function toggleWikipedia(): void {
+  toolStore.wikipediaEnabled = !toolStore.wikipediaEnabled;
+  saveToolSettings();
+}
+
+/**
+ * 设置 Wikipedia 状态
+ */
+export function setWikipediaEnabled(enabled: boolean): void {
+  toolStore.wikipediaEnabled = enabled;
+  saveToolSettings();
+}
+
+/**
+ * 获取 Wikipedia 状态
+ */
+export function isWikipediaEnabled(): boolean {
+  return toolStore.wikipediaEnabled;
+}
+
+/**
+ * 切换汇率查询开关
+ */
+export function toggleCurrency(): void {
+  toolStore.currencyEnabled = !toolStore.currencyEnabled;
+  saveToolSettings();
+}
+
+/**
+ * 设置汇率查询状态
+ */
+export function setCurrencyEnabled(enabled: boolean): void {
+  toolStore.currencyEnabled = enabled;
+  saveToolSettings();
+}
+
+/**
+ * 获取汇率查询状态
+ */
+export function isCurrencyEnabled(): boolean {
+  return toolStore.currencyEnabled;
+}
+
+/**
  * 保存工具设置到本地存储
  */
 function saveToolSettings(): void {
   try {
-    localStorage.setItem("ai-chat-tool-settings", JSON.stringify(toolStore.toolStatus));
+    const settings = {
+      toolStatus: toolStore.toolStatus,
+      webSearchEnabled: toolStore.webSearchEnabled,
+      imageSearchEnabled: toolStore.imageSearchEnabled,
+      agenticRAGEnabled: toolStore.agenticRAGEnabled,
+      agenticRAGConfig: toolStore.agenticRAGConfig,
+      scriptAnalysisEnabled: toolStore.scriptAnalysisEnabled,
+      wikipediaEnabled: toolStore.wikipediaEnabled,
+      currencyEnabled: toolStore.currencyEnabled,
+    };
+    localStorage.setItem("ai-chat-tool-settings", JSON.stringify(settings));
   } catch (e) {
     console.warn("[ToolStore] Failed to save settings:", e);
   }
@@ -167,7 +364,25 @@ export function loadToolSettings(): void {
     if (saved) {
       const parsed = JSON.parse(saved);
       if (typeof parsed === "object" && parsed !== null) {
-        toolStore.toolStatus = parsed;
+        // 兼容旧格式（直接存储 toolStatus）
+        if (parsed.toolStatus) {
+          toolStore.toolStatus = parsed.toolStatus;
+          toolStore.webSearchEnabled = parsed.webSearchEnabled ?? false;
+          toolStore.imageSearchEnabled = parsed.imageSearchEnabled ?? true;
+          toolStore.agenticRAGEnabled = parsed.agenticRAGEnabled ?? false;
+          toolStore.scriptAnalysisEnabled = parsed.scriptAnalysisEnabled ?? false;
+          toolStore.wikipediaEnabled = parsed.wikipediaEnabled ?? true;
+          toolStore.currencyEnabled = parsed.currencyEnabled ?? true;
+          if (parsed.agenticRAGConfig) {
+            toolStore.agenticRAGConfig = {
+              ...toolStore.agenticRAGConfig,
+              ...parsed.agenticRAGConfig,
+            };
+          }
+        } else {
+          // 旧格式：直接是 toolStatus 对象
+          toolStore.toolStatus = parsed;
+        }
       }
     }
   } catch (e) {

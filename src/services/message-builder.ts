@@ -208,11 +208,9 @@ async function messageToApiWithImages(m: Message): Promise<OpenAIChatMessage> {
           contentParts.push(imageContent);
         } else {
           // 图片转换失败，添加文本提示
-          console.warn(`[message-builder] Failed to convert image: ${img.name}`);
           contentParts.push({ type: "text", text: `[图片加载失败: ${img.name}]` });
         }
       } catch (error) {
-        console.error(`[message-builder] Error processing image ${img.name}:`, error);
         contentParts.push({ type: "text", text: `[图片处理错误: ${img.name}]` });
       }
     }
@@ -242,11 +240,9 @@ async function messageToApiWithImages(m: Message): Promise<OpenAIChatMessage> {
           contentParts.push(...fileContents);
         } else {
           // 文件处理失败，添加文本提示
-          console.warn(`[message-builder] Failed to process file: ${file.name}`);
           contentParts.push({ type: "text", text: `[文件加载失败: ${file.name}]` });
         }
       } catch (error) {
-        console.error(`[message-builder] Error processing file ${file.name}:`, error);
         contentParts.push({ type: "text", text: `[文件处理错误: ${file.name}]` });
       }
     }
@@ -285,7 +281,6 @@ async function messageToApiWithImages(m: Message): Promise<OpenAIChatMessage> {
         }
         
         if (contentParts.length > 0) {
-          console.log(`[message-builder] Extracted ${images.length} Orca images from message`);
           return {
             role: "user",
             content: contentParts as any,
@@ -293,7 +288,6 @@ async function messageToApiWithImages(m: Message): Promise<OpenAIChatMessage> {
         }
       }
     } catch (error) {
-      console.error("[message-builder] Failed to extract Orca images:", error);
       // Fall through to standard text message
     }
   }
@@ -340,9 +334,7 @@ export async function buildConversationMessages(params: ConversationBuildParams)
   let filteredMessages = messages.filter((m) => !m.localOnly);
   
   // 使用 AI 生成摘要压缩旧消息（仅当启用压缩且有 sessionId 和 apiConfig 时）
-  console.log(`[message-builder] Compression check: enableCompression=${enableCompression}, compressAfterMessages=${compressAfterMessages}, sessionId=${sessionId}, hasApiConfig=${!!apiConfig}, filteredMessages=${filteredMessages.length}`);
   if (enableCompression && compressAfterMessages && compressAfterMessages > 0 && sessionId && apiConfig) {
-    console.log(`[message-builder] Entering compression path...`);
     try {
       const { summary, recentMessages } = await getOrCreateSummary(
         sessionId,
@@ -362,10 +354,8 @@ export async function buildConversationMessages(params: ConversationBuildParams)
         
         // 只保留 pinned 消息和最近消息
         filteredMessages = [...pinned, ...recentMessages];
-        console.log(`[message-builder] Using AI summary, keeping ${filteredMessages.length} messages`);
       }
     } catch (error) {
-      console.error("[message-builder] Compression failed, using all messages:", error);
     }
   }
   
@@ -374,7 +364,6 @@ export async function buildConversationMessages(params: ConversationBuildParams)
     const originalCount = filteredMessages.length;
     filteredMessages = limitHistoryMessages(filteredMessages, maxHistoryMessages);
     if (filteredMessages.length < originalCount) {
-      console.log(`[message-builder] Limited history from ${originalCount} to ${filteredMessages.length} messages`);
     }
   }
   
@@ -401,7 +390,6 @@ export async function buildConversationMessages(params: ConversationBuildParams)
       const hasToolCalls = m.tool_calls && m.tool_calls.length > 0;
       // API 要求：必须有 content 或 tool_calls（reasoning 不算）
       if (!hasContent && !hasToolCalls) {
-        console.log("[message-builder] Filtering out invalid assistant message (no content/tool_calls):", m.id);
         return false;
       }
     }

@@ -530,7 +530,6 @@ function parseMarkdownInternal(text: string): MarkdownNode[] {
       }
       
       if (blockId > 0) {
-        console.log(`[markdown-renderer] Intercepted ${codeBlockLang} block, converting to localgraph with blockId=${blockId}`);
         nodes.push({
           type: "localgraph",
           blockId,
@@ -914,7 +913,8 @@ function parseInlineMarkdown(text: string, depth = 0, insideLink = false): Markd
 
       // Block reference: "block #123", "Block 123", "块 #123", "笔记 #123", "(block #123)"
       // Convert to clickable orca-block links at AST level (safe from code block pollution)
-      const blockRefMatch = text.slice(i).match(/^(?:\(?\s*)(?:block|Block|块|笔记)\s*#?(\d+)(?:\s*\)?)/);
+      // 注意：要求"块"或"笔记"后面必须有空格或#，避免"4890块1毛7"被误识别
+      const blockRefMatch = text.slice(i).match(/^(?:\(?\s*)(?:block|Block|块|笔记)(?:\s+#?|\s*#)(\d+)(?:\s*\)?)/);
       if (blockRefMatch) {
         const blockId = parseInt(blockRefMatch[1], 10);
         if (blockId > 0) {

@@ -99,7 +99,6 @@ async function autoSaveOnClose(): Promise<void> {
 
   try {
     await saveSession(sessionToSave);
-    console.log("[ai-chat-ui] Auto-saved session on close:", sessionToSave.id);
   } catch (err) {
     console.error("[ai-chat-ui] Failed to auto-save session:", err);
   }

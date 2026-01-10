@@ -1,6 +1,9 @@
 import { parseMarkdown, type MarkdownInlineNode, type MarkdownNode, type TableAlignment, type CheckboxItem, type TimelineItem, type CompareItem, type GalleryImage } from "../utils/markdown-renderer";
+import { journalExportDataCache } from "../services/ai-tools";
+import { openImagePreview, createImagePreviewItem } from "../services/image-preview-service";
 import LocalGraph from "./LocalGraph";
 import MindMapRenderer from "./MindMapRenderer";
+import type { SourceGroup, WebSearchSource } from "../utils/source-attribution";
 import {
   codeBlockContainerStyle,
   codeBlockHeaderStyle,
@@ -68,6 +71,12 @@ function resolveImageFilePath(src: string): string {
 interface Props {
   content: string;
   role: "user" | "assistant" | "tool";
+  sourceGroups?: SourceGroup[];
+  sourceResults?: WebSearchSource[];
+  activeSourceGroupId?: string | null;
+  activeBadgeKey?: string | null;
+  onHoverSourceGroup?: (groupId: string, anchorRect?: DOMRect, badgeKey?: string) => void;
+  onLeaveSourceGroup?: () => void;
 }
 
 // Helper component for Code Block with Copy
@@ -121,9 +130,6 @@ function CodeBlock({ language, content }: { language?: string; content: string }
   );
 }
 
-// 全局缓存：存储大型日记导出数据
-const journalExportCache = new Map<string, { rangeLabel: string; entries: any[] }>();
-
 // Helper component for Journal Export Button
 function JournalExportBlock({ content }: { content: string }) {
   const [exporting, setExporting] = useState(false);
@@ -131,7 +137,7 @@ function JournalExportBlock({ content }: { content: string }) {
   const [data, setData] = useState(null as { rangeLabel: string; entries: any[] } | null);
 
   // 解析缓存 ID 中的日期信息
-  // 格式：cache:year-2025-timestamp 或 cache:month-2025-01-timestamp
+  // 格式：cache:year-2025-timestamp 或 cache:month-2025-01-timestamp 或 cache:range-last-30-days-timestamp
   const parseCacheId = (cacheId: string) => {
     const yearMatch = cacheId.match(/^year-(\d{4})-/);
     if (yearMatch) {
@@ -140,6 +146,10 @@ function JournalExportBlock({ content }: { content: string }) {
     const monthMatch = cacheId.match(/^month-(\d{4}-\d{2})-/);
     if (monthMatch) {
       return { type: "month" as const, value: monthMatch[1] };
+    }
+    const lastDaysMatch = cacheId.match(/^range-last-(\d+)-days-/);
+    if (lastDaysMatch) {
+      return { type: "range" as const, value: `last-${lastDaysMatch[1]}-days` };
     }
     return null;
   };
@@ -151,10 +161,11 @@ function JournalExportBlock({ content }: { content: string }) {
     // 检查是否是缓存 ID
     if (trimmed.startsWith("cache:")) {
       const cacheId = trimmed.substring(6);
-      const cached = journalExportCache.get(cacheId);
+      // 使用 ai-tools 的全局缓存
+      const cached = journalExportDataCache.get(cacheId);
       if (cached) {
         console.log("[JournalExportBlock] Found cached data:", cacheId);
-        setData(cached);
+        setData({ rangeLabel: cached.rangeLabel, entries: cached.entries });
         return;
       }
       
@@ -190,7 +201,8 @@ function JournalExportBlock({ content }: { content: string }) {
                 })();
             
             const newData = { rangeLabel, entries: exportData };
-            journalExportCache.set(cacheId, newData);
+            // 存入全局缓存
+            journalExportDataCache.set(cacheId, { ...newData, cachedAt: Date.now() });
             setData(newData);
           } catch (err) {
             console.error("[JournalExportBlock] Failed to re-fetch:", err);
@@ -210,12 +222,17 @@ function JournalExportBlock({ content }: { content: string }) {
     }
   }, [content]);
 
-  const handleExport = async () => {
+  const handleExport = async (format: "md" | "json" = "md") => {
     if (!data) return;
     try {
       setExporting(true);
-      const { exportJournalsAsFile } = await import("../services/export-service");
-      exportJournalsAsFile(data.entries, data.rangeLabel);
+      if (format === "json") {
+        const { exportJournalsAsJson } = await import("../services/export-service");
+        exportJournalsAsJson(data.entries, data.rangeLabel);
+      } else {
+        const { exportJournalsAsFile } = await import("../services/export-service");
+        exportJournalsAsFile(data.entries, data.rangeLabel);
+      }
     } catch (err) {
       console.error("Failed to export journals:", err);
       orca.notify("error", "导出失败: " + (err as Error).message);
@@ -226,6 +243,24 @@ function JournalExportBlock({ content }: { content: string }) {
 
   const entryCount = data?.entries?.length || 0;
   const rangeLabel = data?.rangeLabel || "";
+
+  const buttonDisabled = exporting || loading || entryCount === 0;
+  const buttonStyle = {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: "8px",
+    padding: "10px 16px",
+    background: buttonDisabled ? "var(--orca-color-bg-3)" : "#2563eb",
+    color: buttonDisabled ? "var(--orca-color-text-3)" : "#ffffff",
+    border: "none",
+    borderRadius: "6px",
+    cursor: buttonDisabled ? "not-allowed" : "pointer",
+    fontSize: "14px",
+    fontWeight: 500,
+    transition: "all 0.2s",
+    flex: 1,
+  };
 
   return createElement(
     "div",
@@ -254,29 +289,35 @@ function JournalExportBlock({ content }: { content: string }) {
       createElement("i", { className: loading ? "ti ti-loader" : "ti ti-file-export", style: { fontSize: "20px" } }),
       createElement("span", null, loading ? "加载中..." : `${rangeLabel} - 共 ${entryCount} 篇日记`)
     ),
+    // 两个导出按钮
     createElement(
-      "button",
+      "div",
       {
-        onClick: handleExport,
-        disabled: exporting || loading || entryCount === 0,
         style: {
           display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
           gap: "8px",
-          padding: "10px 20px",
-          background: exporting || loading || entryCount === 0 ? "var(--orca-color-bg-3)" : "#2563eb",
-          color: exporting || loading || entryCount === 0 ? "var(--orca-color-text-3)" : "#ffffff",
-          border: "none",
-          borderRadius: "6px",
-          cursor: exporting || loading || entryCount === 0 ? "not-allowed" : "pointer",
-          fontSize: "14px",
-          fontWeight: 500,
-          transition: "all 0.2s",
         },
       },
-      createElement("i", { className: exporting ? "ti ti-loader" : "ti ti-download" }),
-      exporting ? "导出中..." : loading ? "加载中..." : entryCount === 0 ? "无数据可导出" : "导出为 Markdown 文件"
+      createElement(
+        "button",
+        {
+          onClick: () => handleExport("md"),
+          disabled: buttonDisabled,
+          style: buttonStyle,
+        },
+        createElement("i", { className: exporting ? "ti ti-loader" : "ti ti-markdown" }),
+        "Markdown"
+      ),
+      createElement(
+        "button",
+        {
+          onClick: () => handleExport("json"),
+          disabled: buttonDisabled,
+          style: { ...buttonStyle, background: buttonDisabled ? "var(--orca-color-bg-3)" : "#059669" },
+        },
+        createElement("i", { className: exporting ? "ti ti-loader" : "ti ti-braces" }),
+        "JSON"
+      )
     ),
     createElement(
       "div",
@@ -289,6 +330,119 @@ function JournalExportBlock({ content }: { content: string }) {
       "💡 导出后可使用 ChatGPT、Claude 等 AI 工具进行分析"
     )
   );
+}
+
+function SourceBadgeGroup({
+  groups,
+  activeGroupId,
+  activeBadgeKey,
+  badgeScopeId,
+  onHover,
+  onLeave,
+}: {
+  groups: SourceGroup[];
+  activeGroupId?: string | null;
+  activeBadgeKey?: string | null;
+  badgeScopeId: string;
+  onHover?: (groupId: string, anchorRect?: DOMRect, badgeKey?: string) => void;
+  onLeave?: () => void;
+}) {
+  if (!groups.length) return null;
+
+  return createElement(
+    "span",
+    {
+      style: {
+        display: "inline-flex",
+        alignItems: "center",
+        gap: "6px",
+        marginLeft: "6px",
+        flexWrap: "wrap",
+        verticalAlign: "baseline",
+      },
+      onMouseLeave: () => {
+        onLeave?.();
+      },
+    },
+    ...groups.map((group) => {
+      const badgeKey = `${badgeScopeId}:${group.id}`;
+      const isActive = activeBadgeKey ? activeBadgeKey === badgeKey : false;
+      return createElement(
+        "button",
+        {
+          key: group.id,
+          style: {
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "4px",
+            padding: "2px 8px",
+            borderRadius: "999px",
+            border: "1px solid var(--orca-color-border)",
+            background: isActive ? "var(--orca-color-primary)" : "var(--orca-color-bg-3)",
+            color: isActive ? "var(--orca-color-text-inverse)" : "var(--orca-color-text-2)",
+            fontSize: "11px",
+            cursor: "pointer",
+          },
+          onMouseEnter: (e: any) => {
+            const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+            onHover?.(group.id, rect, badgeKey);
+          },
+          onClick: (e: any) => {
+            e.stopPropagation();
+            const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+            onHover?.(group.id, rect, badgeKey);
+          },
+        },
+        group.label
+      );
+    })
+  );
+}
+
+function hasMeaningfulInlineText(children: MarkdownInlineNode[]): boolean {
+  return children.some((child) => {
+    switch (child.type) {
+      case "text":
+        return child.content.trim().length > 0;
+      case "code":
+        return child.content.trim().length > 0;
+      case "bold":
+      case "italic":
+      case "link":
+        return hasMeaningfulInlineText(child.children);
+      default:
+        return false;
+    }
+  });
+}
+
+function extractCitationNumbersFromInlineNodes(children: MarkdownInlineNode[]): number[] {
+  const numbers: number[] = [];
+  const seen = new Set<number>();
+  const pushNumber = (value: number) => {
+    if (seen.has(value)) return;
+    seen.add(value);
+    numbers.push(value);
+  };
+
+  const walk = (nodes: MarkdownInlineNode[]) => {
+    nodes.forEach((node) => {
+      if (node.type === "text") {
+        const matches = node.content.matchAll(/\[(\d+)\]/g);
+        for (const match of matches) {
+          const value = parseInt(match[1], 10);
+          if (!Number.isNaN(value)) pushNumber(value);
+        }
+        return;
+      }
+      if (node.type === "bold" || node.type === "italic" || node.type === "link") {
+        walk(node.children);
+      }
+    });
+  };
+
+  walk(children);
+  return numbers;
 }
 
 // Table view types
@@ -1023,9 +1177,17 @@ function renderInlineNode(node: MarkdownInlineNode, key: number): any {
         createElement("img", {
           src: resolveImageSrc(node.src),
           alt: node.alt || "image",
-          style: imageStyle,
+          style: {
+            ...imageStyle,
+            cursor: "pointer", // 添加指针样式
+          },
           onClick: () => {
-            orca.invokeBackend("shell-open", resolveImageFilePath(node.src));
+            // 使用全局预览服务，与ImageGallery保持一致
+            openImagePreview(createImagePreviewItem(
+              resolveImageSrc(node.src),
+              node.alt || "图片",
+              resolveImageSrc(node.src)
+            ));
           },
           onError: (e: any) => {
             console.warn("[MarkdownMessage] Image not found:", node.src);
@@ -1184,7 +1346,7 @@ function renderInlineNode(node: MarkdownInlineNode, key: number): any {
           )
         );
       }
-      // Normal external link
+      // Normal external link - open in system default browser
       return createElement(
         "a",
         {
@@ -1195,7 +1357,9 @@ function renderInlineNode(node: MarkdownInlineNode, key: number): any {
           title: node.url,
           style: linkStyle,
           onClick: (e: any) => {
-            // Allow default behavior for external links
+            e.preventDefault();
+            // Open in system default browser instead of internal webview
+            orca.invokeBackend("shell-open", node.url);
           },
         },
         ...node.children.map((child, i) => renderInlineNode(child, i)),
@@ -1207,9 +1371,14 @@ function renderInlineNode(node: MarkdownInlineNode, key: number): any {
   }
 }
 
-function renderBlockNode(node: MarkdownNode, key: number): any {
-  switch (node.type) {
-    case "heading": {
+function renderBlockNode(
+  node: MarkdownNode,
+  key: number,
+  options?: { renderSourceBadges?: (citationNumbers: number[], scopeId: string) => any },
+  rawNode?: MarkdownNode
+): any {
+    switch (node.type) {
+      case "heading": {
       const HeadingTag = `h${node.level}` as any;
       // 生成标题的文本内容用于创建 ID
       const headingText = node.children
@@ -1234,62 +1403,91 @@ function renderBlockNode(node: MarkdownNode, key: number): any {
       );
     }
 
-    case "paragraph": {
-      const cleanedChildren = cleanupDotPunctuation(node.children);
-      return createElement(
-        "p",
-        {
-          key,
-          style: paragraphStyle,
-        },
-        ...cleanedChildren.map((child, i) => renderInlineNode(child, i)),
-      );
-    }
-
-    case "list": {
-      const ListTag = (node.ordered ? "ol" : "ul") as any;
-      const listClass = node.ordered ? "md-list md-list-ordered" : "md-list md-list-unordered";
-
-      // 递归渲染列表项
-      const renderListItem = (item: any, itemIndex: number): any => {
+      case "paragraph": {
+        const cleanedChildren = cleanupDotPunctuation(node.children);
+        const rawChildren =
+          rawNode && rawNode.type === "paragraph"
+            ? rawNode.children
+            : node.children;
+        const citationNumbers = extractCitationNumbersFromInlineNodes(rawChildren);
+        const badges = options?.renderSourceBadges
+          ? options.renderSourceBadges(citationNumbers, `p-${key}`)
+          : null;
+        const showBadges = !!badges && hasMeaningfulInlineText(cleanedChildren);
         return createElement(
-          "li",
+          "p",
           {
-            key: itemIndex,
-            className: "md-list-item",
+            key,
+            style: paragraphStyle,
           },
-          // 渲染项目内容
-          ...item.content.map((child: any, i: number) => renderInlineNode(child, i)),
-          // 渲染嵌套子列表
-          item.children && item.children.length > 0 && createElement(
-            ListTag,
-            {
-              className: listClass + " md-list-nested",
-            },
-            ...item.children.map((subItem: any, subIndex: number) => renderListItem(subItem, subIndex))
-          )
+          ...cleanedChildren.map((child, i) => renderInlineNode(child, i)),
+          showBadges ? badges : null,
         );
-      };
+      }
 
-      return createElement(
-        ListTag,
-        {
-          key,
-          className: listClass,
-        },
-        ...node.items.map((item, itemIndex) => renderListItem(item, itemIndex)),
-      );
-    }
+      case "list": {
+        const ListTag = (node.ordered ? "ol" : "ul") as any;
+        const listClass = node.ordered ? "md-list md-list-ordered" : "md-list md-list-unordered";
+        const rawList = rawNode && rawNode.type === "list" ? rawNode : node;
 
-    case "quote":
-      return createElement(
-        "blockquote",
-        {
-          key,
-          style: blockQuoteStyle,
-        },
-        ...node.children.map((child, i) => renderBlockNode(child, i)),
-      );
+        // 递归渲染列表项
+        const renderListItem = (item: any, itemIndex: number, rawItem?: any, scopeId?: string): any => {
+          const rawContent = rawItem?.content || item.content;
+          const citationNumbers = extractCitationNumbersFromInlineNodes(rawContent);
+          const badges = options?.renderSourceBadges
+            ? options.renderSourceBadges(citationNumbers, scopeId || `li-${key}-${itemIndex}`)
+            : null;
+          const showBadges = !!badges && hasMeaningfulInlineText(item.content);
+          return createElement(
+            "li",
+            {
+              key: itemIndex,
+              className: "md-list-item",
+            },
+            // 渲染项目内容
+            ...item.content.map((child: any, i: number) => renderInlineNode(child, i)),
+            showBadges ? badges : null,
+            // 渲染嵌套子列表
+            item.children && item.children.length > 0 && createElement(
+              ListTag,
+              {
+                className: listClass + " md-list-nested",
+              },
+              ...item.children.map((subItem: any, subIndex: number) =>
+                renderListItem(
+                  subItem,
+                  subIndex,
+                  rawItem?.children?.[subIndex],
+                  `${scopeId || `li-${key}-${itemIndex}`}-${subIndex}`
+                )
+              )
+            )
+          );
+        };
+
+        return createElement(
+          ListTag,
+          {
+            key,
+            className: listClass,
+          },
+          ...node.items.map((item, itemIndex) =>
+            renderListItem(item, itemIndex, rawList.items[itemIndex], `li-${key}-${itemIndex}`)
+          ),
+        );
+      }
+
+      case "quote":
+        return createElement(
+          "blockquote",
+          {
+            key,
+            style: blockQuoteStyle,
+          },
+          ...node.children.map((child, i) =>
+            renderBlockNode(child, i, options, rawNode && rawNode.type === "quote" ? rawNode.children[i] : undefined)
+          ),
+        );
 
     case "codeblock":
       // 特殊处理 journal-export 代码块
@@ -1370,7 +1568,16 @@ function renderBlockNode(node: MarkdownNode, key: number): any {
   }
 }
 
-export default function MarkdownMessage({ content, role }: Props) {
+export default function MarkdownMessage({
+  content,
+  role,
+  sourceGroups,
+  sourceResults,
+  activeSourceGroupId,
+  activeBadgeKey,
+  onHoverSourceGroup,
+  onLeaveSourceGroup,
+}: Props) {
   // 预处理：清理 AI 输出中多余的标注符号
   const cleanedContent = useMemo(() => {
     let text = content;
@@ -1380,6 +1587,9 @@ export default function MarkdownMessage({ content, role }: Props) {
     
     // 清理中文方括号引用标注：【引用】
     text = text.replace(/【([^】]+)】/g, '$1');
+    
+    // 清理纯数字引用标记：[1]、[2]、[1][2] 等，直接删除
+    text = text.replace(/\[(\d+)\]/g, '');
     
     // 清理英文方括号，但保留 Markdown 语法和 GRAPH_REQUEST 标记
     // 使用更精确的方式：先标记需要保留的，再清理其他的
@@ -1405,15 +1615,57 @@ export default function MarkdownMessage({ content, role }: Props) {
   }, [content]);
   
   const nodes = useMemo(() => parseMarkdown(cleanedContent), [cleanedContent]);
+  const rawNodes = useMemo(() => parseMarkdown(content), [content]);
+  const sourceGroupByUrl = useMemo(() => {
+    const map = new Map<string, SourceGroup>();
+    if (sourceGroups) {
+      sourceGroups.forEach((group) => {
+        group.sources.forEach((source) => {
+          map.set(source.url, group);
+        });
+      });
+    }
+    return map;
+  }, [sourceGroups]);
+
+  const renderSourceBadges = (citationNumbers: number[], scopeId: string) => {
+    if (role !== "assistant") return null;
+    if (!sourceGroups || sourceGroups.length === 0) return null;
+    if (!sourceResults || sourceResults.length === 0) return null;
+    if (!citationNumbers || citationNumbers.length === 0) return null;
+
+    const groupsForBlock: SourceGroup[] = [];
+    const seenGroups = new Set<string>();
+    citationNumbers.forEach((number) => {
+      const source = sourceResults[number - 1];
+      if (!source) return;
+      const group = sourceGroupByUrl.get(source.url);
+      if (!group || seenGroups.has(group.id)) return;
+      seenGroups.add(group.id);
+      groupsForBlock.push(group);
+    });
+
+    if (groupsForBlock.length === 0) return null;
+    return createElement(SourceBadgeGroup, {
+      groups: groupsForBlock,
+      activeGroupId: activeSourceGroupId,
+      activeBadgeKey: activeBadgeKey,
+      badgeScopeId: scopeId,
+      onHover: onHoverSourceGroup,
+      onLeave: onLeaveSourceGroup,
+    });
+  };
 
   return createElement(
     "div",
     {
       style: markdownContainerStyle(role),
     },
-    ...nodes.map((node: MarkdownNode, index: number) => renderBlockNode(node, index)),
+      ...nodes.map((node: MarkdownNode, index: number) =>
+        renderBlockNode(node, index, { renderSourceBadges }, rawNodes[index])
+      ),
   );
 }
 
 // 导出缓存供外部使用
-export { journalExportCache };
+export { journalExportDataCache };

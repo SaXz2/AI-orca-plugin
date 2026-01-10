@@ -52,64 +52,38 @@ export function mergeToolCalls(
   existing: ToolCallInfo[],
   incoming: any[]
 ): ToolCallInfo[] {
-  console.log("[mergeToolCalls] === START ===");
-  console.log("[mergeToolCalls] Existing count:", existing.length);
-  console.log("[mergeToolCalls] Incoming count:", incoming.length);
-  console.log("[mergeToolCalls] Incoming raw:", JSON.stringify(incoming, null, 2));
-  
   const result = [...existing];
   for (let i = 0; i < incoming.length; i++) {
     const tc = incoming[i];
-    console.log(`[mergeToolCalls] Processing incoming[${i}]:`, {
-      id: tc.id,
-      index: tc.index,
-      type: tc.type,
-      function_name: tc.function?.name,
-      arguments_length: tc.function?.arguments?.length,
-      arguments_preview: tc.function?.arguments?.substring(0, 100),
-    });
     
     // Strategy 1: Match by ID (standard OpenAI/Gemini behavior)
-    // Only match if tc.id is a valid non-null value
     let found: ToolCallInfo | undefined = undefined;
     if (tc.id !== null && tc.id !== undefined) {
       found = result.find((t) => t.id === tc.id);
-      console.log(`[mergeToolCalls] Found existing by id "${tc.id}":`, found ? "YES" : "NO");
-    } else {
-      console.log(`[mergeToolCalls] ID is null/undefined, skipping ID-based matching`);
     }
     
     // Strategy 2: Fallback to match by index (DeepSeek behavior)
-    // If ID matching failed and index is available, try index-based matching
     if (!found && typeof tc.index === "number") {
       found = result.find((t: any) => t.index === tc.index);
-      console.log(`[mergeToolCalls] Found existing by index ${tc.index}:`, found ? "YES" : "NO");
     }
     
     if (found) {
-      console.log(`[mergeToolCalls] Merging into existing tool call:`, found.function.name || "(unnamed)");
-      
       // Append arguments incrementally
       if (tc.function?.arguments) {
-        const oldArgs = found.function.arguments || "";
-        found.function.arguments = oldArgs + tc.function.arguments;
-        console.log(`[mergeToolCalls] Appended arguments: "${oldArgs}" + "${tc.function.arguments}" => "${found.function.arguments}"`);
+        found.function.arguments = (found.function.arguments || "") + tc.function.arguments;
       }
       
-      // Update name if it was empty before (DeepSeek sends name only in first chunk)
+      // Update name if it was empty before
       if (!found.function.name && tc.function?.name) {
         found.function.name = tc.function.name;
-        console.log(`[mergeToolCalls] Updated function name to: ${tc.function.name}`);
       }
       
       // Update type if it was empty before
       if ((!found.type || found.type === "function") && tc.type) {
         found.type = tc.type as "function";
-        console.log(`[mergeToolCalls] Updated type to: ${tc.type}`);
       }
     } else {
       // Create new tool call
-      // Use tc.id if available, otherwise generate based on index or fallback to nowId()
       const newId = tc.id || (typeof tc.index === "number" ? `tool_call_${tc.index}` : nowId());
       const newToolCall: any = {
         id: newId,
@@ -120,24 +94,14 @@ export function mergeToolCalls(
         },
       };
       
-      // Preserve index for future matching (DeepSeek compatibility)
       if (typeof tc.index === "number") {
         newToolCall.index = tc.index;
       }
       
-      console.log(`[mergeToolCalls] Creating NEW tool call:`, newToolCall);
       result.push(newToolCall);
     }
   }
   
-  console.log("[mergeToolCalls] Result count:", result.length);
-  console.log("[mergeToolCalls] Result summary:", result.map(t => ({
-    id: t.id,
-    index: (t as any).index,
-    name: t.function.name,
-    args_length: t.function.arguments.length,
-  })));
-  console.log("[mergeToolCalls] === END ===");
   return result;
 }
 
@@ -169,10 +133,7 @@ export async function* streamChatCompletion(
       reasoning += chunk.reasoning;
       yield { type: "reasoning", reasoning: chunk.reasoning };
     } else if (chunk.type === "tool_calls" && chunk.tool_calls) {
-      console.log("[streamChatCompletion] Received tool_calls chunk, merging...");
-      const oldCount = toolCalls.length;
       toolCalls = mergeToolCalls(toolCalls, chunk.tool_calls);
-      console.log(`[streamChatCompletion] toolCalls count: ${oldCount} => ${toolCalls.length}`);
       yield { type: "tool_calls", toolCalls };
     }
   }
@@ -211,7 +172,6 @@ export async function* streamChatWithRetry(
     const resetTimeout = () => {
       if (timeoutId) clearTimeout(timeoutId);
       timeoutId = setTimeout(() => {
-        console.warn(`[streamChatWithRetry] Request timeout after ${timeoutMs}ms`);
         timeoutController.abort();
       }, timeoutMs);
     };
@@ -250,10 +210,7 @@ export async function* streamChatWithRetry(
           reasoning += chunk.reasoning;
           yield { type: "reasoning", reasoning: chunk.reasoning };
         } else if (chunk.type === "tool_calls" && chunk.tool_calls) {
-          console.log("[streamChatWithRetry] Received tool_calls chunk, merging...");
-          const oldCount = toolCalls.length;
           toolCalls = mergeToolCalls(toolCalls, chunk.tool_calls);
-          console.log(`[streamChatWithRetry] toolCalls count: ${oldCount} => ${toolCalls.length}`);
           yield { type: "tool_calls", toolCalls };
         }
       }
@@ -269,8 +226,7 @@ export async function* streamChatWithRetry(
     const isAbort = String(err?.name) === "AbortError";
     if (isAbort) throw err;
 
-    console.log("[streamChatWithRetry] Retrying with fallback format...");
-    usedFallback = true;
+        usedFallback = true;
     content = "";
     reasoning = ""; // 重置 reasoning
     toolCalls = [];
@@ -282,7 +238,6 @@ export async function* streamChatWithRetry(
   // Only retry with fallback if response is truly empty (no content AND no tool calls)
   // Tool calls with empty content is a valid response - don't retry in that case
   if (!usedFallback && content.trim().length === 0 && toolCalls.length === 0) {
-    console.warn("[streamChatWithRetry] Empty response (no content, no tools), retrying with fallback...");
     usedFallback = true;
     content = "";
     reasoning = ""; // 重置 reasoning
@@ -291,11 +246,7 @@ export async function* streamChatWithRetry(
     try {
       yield* doStream(fallbackMessages);
     } catch (fallbackErr: any) {
-      console.error("[streamChatWithRetry] Fallback retry failed:", fallbackErr);
     }
-  } else if (toolCalls.length > 0) {
-    // Log that we got tool calls - this is expected behavior, not an error
-    console.log(`[streamChatWithRetry] Response complete with ${toolCalls.length} tool call(s)`);
   }
 
   yield { type: "done", result: { content, toolCalls, reasoning: reasoning || undefined } };

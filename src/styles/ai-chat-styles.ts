@@ -37,6 +37,7 @@ export const headerTitleStyle: React.CSSProperties = {
 export const messageListStyle: React.CSSProperties = {
   flex: 1,
   overflow: "auto",
+  minHeight: 0,
   padding: "20px",
   display: "flex",
   flexDirection: "column",
