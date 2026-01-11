@@ -227,6 +227,8 @@ export const AiChatPluginAPI = {
           apiUrl: apiConfig.apiUrl,
           apiKey: apiConfig.apiKey,
           model,
+          protocol: apiConfig.protocol,
+          anthropicApiPath: apiConfig.anthropicApiPath,
           temperature,
           maxTokens,
           signal: aborter.signal,

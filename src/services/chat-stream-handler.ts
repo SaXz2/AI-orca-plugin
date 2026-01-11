@@ -21,6 +21,8 @@ export interface StreamOptions {
   signal?: AbortSignal;
   tools?: OpenAITool[];
   timeoutMs?: number;
+  protocol?: "openai" | "anthropic";
+  anthropicApiPath?: string;
 }
 
 export interface StreamResult {
@@ -125,6 +127,8 @@ export async function* streamChatCompletion(
     maxTokens: options.maxTokens,
     signal: options.signal,
     tools: options.tools,
+    protocol: options.protocol,
+    anthropicApiPath: options.anthropicApiPath,
   })) {
     if (chunk.type === "content" && chunk.content) {
       content += chunk.content;
@@ -199,6 +203,8 @@ export async function* streamChatWithRetry(
         maxTokens: options.maxTokens,
         signal: timeoutController.signal, // Use the combined signal!
         tools: options.tools,
+        protocol: options.protocol,
+        anthropicApiPath: options.anthropicApiPath,
       })) {
         // Reset timeout on each chunk received (prevents timeout during slow responses)
         resetTimeout();

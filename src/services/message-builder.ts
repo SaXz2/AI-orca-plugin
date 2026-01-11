@@ -25,7 +25,7 @@ export interface MessageBuildParams {
   compressAfterMessages?: number;    // 超过多少条后压缩旧消息
   // 压缩服务参数
   sessionId?: string;                // 会话 ID（用于缓存摘要）
-  apiConfig?: { apiUrl: string; apiKey: string; model: string }; // API 配置（用于生成摘要）
+  apiConfig?: { apiUrl: string; apiKey: string; model: string; protocol?: "openai" | "anthropic"; anthropicApiPath?: string }; // API 配置（用于生成摘要）
 }
 
 export interface ConversationBuildParams {
@@ -40,7 +40,7 @@ export interface ConversationBuildParams {
   compressAfterMessages?: number;    // 超过多少条后压缩旧消息
   // 压缩服务参数
   sessionId?: string;                // 会话 ID（用于缓存摘要）
-  apiConfig?: { apiUrl: string; apiKey: string; model: string }; // API 配置（用于生成摘要）
+  apiConfig?: { apiUrl: string; apiKey: string; model: string; protocol?: "openai" | "anthropic"; anthropicApiPath?: string }; // API 配置（用于生成摘要）
 }
 
 export interface ToolResultParams extends MessageBuildParams {

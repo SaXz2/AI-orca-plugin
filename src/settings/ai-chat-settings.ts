@@ -78,6 +78,8 @@ export type AiProvider = {
   name: string;            // 平台显示名称
   apiUrl: string;          // API 地址
   apiKey: string;          // API 密钥
+  protocol?: "openai" | "anthropic"; // 协议类型，默认 openai
+  anthropicApiPath?: string; // Anthropic 请求路径（可选；留空则自动拼接 /v1/messages 并回退 /messages）
   models: ProviderModel[]; // 该平台下的模型列表
   enabled: boolean;        // 是否启用
   isBuiltin?: boolean;     // 是否为内置平台（不可删除）
@@ -196,6 +198,7 @@ const DEFAULT_PROVIDERS: AiProvider[] = [
     name: "OpenAI",
     apiUrl: "https://api.openai.com/v1",
     apiKey: "",
+    protocol: "openai",
     enabled: true,
     isBuiltin: true,
     models: [
@@ -210,6 +213,7 @@ const DEFAULT_PROVIDERS: AiProvider[] = [
     name: "DeepSeek",
     apiUrl: "https://api.deepseek.com/v1",
     apiKey: "",
+    protocol: "openai",
     enabled: true,
     isBuiltin: true,
     models: [
@@ -302,6 +306,36 @@ function normalizeProviderModels(
   models: unknown,
   fallbackModels?: ProviderModel[],
 ): ProviderModel[] {
+  // 兼容旧配置：models 可能是逗号/换行分隔的字符串
+  if (typeof models === "string") {
+    const text = models.trim();
+    if (!text) {
+      return fallbackModels ? JSON.parse(JSON.stringify(fallbackModels)) : [];
+    }
+
+    // 兼容：如果用户手动存成了 JSON 数组字符串
+    if (text.startsWith("[") && text.endsWith("]")) {
+      try {
+        const parsed = JSON.parse(text);
+        return normalizeProviderModels(parsed, fallbackModels);
+      } catch {
+        // fallback to plain split
+      }
+    }
+
+    const parts = text.split(/[,，;\r\n]+/);
+    const normalized: ProviderModel[] = [];
+    const seen = new Set<string>();
+    for (const part of parts) {
+      const id = part.trim();
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      normalized.push({ id, label: id });
+    }
+    if (normalized.length > 0) return normalized;
+    return fallbackModels ? JSON.parse(JSON.stringify(fallbackModels)) : [];
+  }
+
   if (!Array.isArray(models) || models.length === 0) {
     return fallbackModels ? JSON.parse(JSON.stringify(fallbackModels)) : [];
   }
@@ -309,8 +343,12 @@ function normalizeProviderModels(
   const normalized: ProviderModel[] = [];
   for (const model of models) {
     if (typeof model === "string") {
-      const id = model.trim();
-      if (id) normalized.push({ id, label: id });
+      // 兼容：数组里可能出现 "a, b, c" 这种老格式
+      const parts = model.split(/[,，;\r\n]+/);
+      for (const part of parts) {
+        const id = part.trim();
+        if (id) normalized.push({ id, label: id });
+      }
       continue;
     }
 
@@ -349,11 +387,20 @@ function normalizeProviderModels(
     });
   }
 
-  if (normalized.length === 0 && fallbackModels?.length) {
+  const deduped: ProviderModel[] = [];
+  const seen = new Set<string>();
+  for (const m of normalized) {
+    if (!m?.id) continue;
+    if (seen.has(m.id)) continue;
+    seen.add(m.id);
+    deduped.push(m);
+  }
+
+  if (deduped.length === 0 && fallbackModels?.length) {
     return JSON.parse(JSON.stringify(fallbackModels));
   }
 
-  return normalized;
+  return deduped;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -434,6 +481,15 @@ export function getAiChatSettings(pluginName: string): AiChatSettings {
       }
       if (!provider.apiUrl) {
         provider.apiUrl = fallback?.apiUrl ?? provider.apiUrl;
+      }
+      if (!provider.protocol) {
+        provider.protocol = fallback?.protocol ?? "openai";
+      }
+      if (typeof (provider as any).anthropicApiPath !== "string") {
+        (provider as any).anthropicApiPath = undefined;
+      } else {
+        const trimmed = String((provider as any).anthropicApiPath).trim();
+        (provider as any).anthropicApiPath = trimmed ? trimmed : undefined;
       }
       if (provider.isBuiltin === undefined && fallback?.isBuiltin !== undefined) {
         provider.isBuiltin = fallback.isBuiltin;
@@ -549,12 +605,20 @@ export function getSelectedModel(settings: AiChatSettings): ProviderModel | unde
 }
 
 /** 获取当前 API 配置 */
-export function getCurrentApiConfig(settings: AiChatSettings): { apiUrl: string; apiKey: string; model: string } {
+export function getCurrentApiConfig(settings: AiChatSettings): {
+  apiUrl: string;
+  apiKey: string;
+  model: string;
+  protocol: "openai" | "anthropic";
+  anthropicApiPath?: string;
+} {
   const provider = getSelectedProvider(settings);
   return {
     apiUrl: provider?.apiUrl || "",
     apiKey: provider?.apiKey || "",
     model: settings.selectedModelId,
+    protocol: provider?.protocol || "openai",
+    anthropicApiPath: typeof provider?.anthropicApiPath === "string" ? provider.anthropicApiPath : undefined,
   };
 }
 
@@ -603,6 +667,8 @@ export function createProvider(name: string): AiProvider {
     name: name || "新平台",
     apiUrl: "https://api.openai.com/v1",
     apiKey: "",
+    protocol: "openai",
+    anthropicApiPath: undefined,
     enabled: true,
     models: [],
   };
@@ -626,19 +692,47 @@ export function addModelToProvider(provider: AiProvider, modelId: string, label?
 export function getModelApiConfig(
   settings: AiChatSettings,
   modelName: string,
-): { apiUrl: string; apiKey: string } {
-  // 查找包含该模型的平台
-  for (const provider of settings.providers) {
-    if (provider.models.find(m => m.id === modelName)) {
-      return {
-        apiUrl: provider.apiUrl,
-        apiKey: provider.apiKey,
-      };
-    }
+): { apiUrl: string; apiKey: string; protocol: "openai" | "anthropic"; anthropicApiPath?: string } {
+  // 优先选择已配置 API 的提供商，避免重名模型命中未配置的内置项
+  const matchedProviders = settings.providers.filter((provider) =>
+    provider.models.some((m) => m.id === modelName)
+  );
+
+  // 1) 如果当前选中 provider 含该模型且配置完整，优先使用
+  const selectedProvider = matchedProviders.find(
+    (p) => p.id === settings.selectedProviderId,
+  );
+  if (selectedProvider && selectedProvider.apiUrl?.trim() && selectedProvider.apiKey?.trim()) {
+    return {
+      apiUrl: selectedProvider.apiUrl,
+      apiKey: selectedProvider.apiKey,
+      protocol: selectedProvider.protocol || "openai",
+      anthropicApiPath: typeof selectedProvider.anthropicApiPath === "string" ? selectedProvider.anthropicApiPath : undefined,
+    };
+  }
+
+  // 2) 其它 provider 按“配置完整+启用”优先级选择
+  const scored = matchedProviders
+    .map((p) => {
+      const hasApi = !!p.apiUrl?.trim() && !!p.apiKey?.trim();
+      const enabled = p.enabled !== false;
+      const score = (hasApi ? 2 : 0) + (enabled ? 1 : 0);
+      return { p, score };
+    })
+    .sort((a, b) => b.score - a.score);
+
+  if (scored.length > 0 && scored[0].score > 0) {
+    const best = scored[0].p;
+    return {
+      apiUrl: best.apiUrl,
+      apiKey: best.apiKey,
+      protocol: best.protocol || "openai",
+      anthropicApiPath: typeof best.anthropicApiPath === "string" ? best.anthropicApiPath : undefined,
+    };
   }
   // 回退到当前选中的平台
   const current = getCurrentApiConfig(settings);
-  return { apiUrl: current.apiUrl, apiKey: current.apiKey };
+  return { apiUrl: current.apiUrl, apiKey: current.apiKey, protocol: current.protocol, anthropicApiPath: current.anthropicApiPath };
 }
 
 /** @deprecated 使用 validateCurrentConfig */

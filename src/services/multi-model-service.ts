@@ -63,6 +63,8 @@ export async function* streamMultiModelChat(
         apiUrl: apiConfig.apiUrl,
         apiKey: apiConfig.apiKey,
         model: modelId,
+        protocol: apiConfig.protocol,
+        anthropicApiPath: apiConfig.anthropicApiPath,
         temperature: request.temperature,
         maxTokens: request.maxTokens,
         signal: request.signal,

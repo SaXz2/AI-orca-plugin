@@ -480,6 +480,8 @@ function ProviderConfigPanel({
   const [name, setName] = useState(provider.name);
   const [apiUrl, setApiUrl] = useState(provider.apiUrl);
   const [apiKey, setApiKey] = useState(provider.apiKey);
+  const [protocol, setProtocol] = useState<"openai" | "anthropic">(provider.protocol || "openai");
+  const [anthropicApiPath, setAnthropicApiPath] = useState(provider.anthropicApiPath || "");
   const [newModelId, setNewModelId] = useState("");
   const [newModelLabel, setNewModelLabel] = useState("");
   const [editingModel, setEditingModel] = useState<ProviderModel | null>(null);
@@ -513,6 +515,8 @@ function ProviderConfigPanel({
       name: name.trim() || provider.name,
       apiUrl: apiUrl.trim(),
       apiKey: apiKey.trim(),
+      protocol,
+      anthropicApiPath: protocol === "anthropic" ? (anthropicApiPath.trim() || undefined) : undefined,
     });
     onClose();
   };
@@ -523,6 +527,8 @@ function ProviderConfigPanel({
     name: name.trim() || provider.name,
     apiUrl: apiUrl.trim(),
     apiKey: apiKey.trim(),
+    protocol,
+    anthropicApiPath: protocol === "anthropic" ? (anthropicApiPath.trim() || undefined) : undefined,
   });
 
   const handleFetchModels = async () => {
@@ -612,6 +618,36 @@ function ProviderConfigPanel({
     createElement("div", { style: { marginBottom: "12px" } },
       createElement("label", { style: labelStyle }, "API 地址"),
       createElement("input", { type: "text", value: apiUrl, onChange: (e: any) => setApiUrl(e.target.value), placeholder: "https://api.openai.com/v1", style: inputStyle })
+    ),
+
+    // 协议选择
+    createElement("div", { style: { marginBottom: "12px" } },
+      createElement("label", { style: labelStyle }, "协议"),
+      createElement("select", {
+        value: protocol,
+        onChange: (e: any) => setProtocol(e.target.value),
+        style: { ...inputStyle, appearance: "none", cursor: "pointer" },
+      },
+        createElement("option", { value: "openai" }, "OpenAI 兼容"),
+        createElement("option", { value: "anthropic" }, "Anthropic 兼容")
+      )
+    ),
+
+    // Anthropic API Path (optional)
+    protocol === "anthropic" && createElement("div", { style: { marginBottom: "12px" } },
+      createElement("label", { style: labelStyle }, "Anthropic 请求路径（可选）"),
+      createElement("input", {
+        type: "text",
+        value: anthropicApiPath,
+        onChange: (e: any) => setAnthropicApiPath(e.target.value),
+        placeholder: "/v1/messages（留空=自动）",
+        style: inputStyle,
+      }),
+      createElement(
+        "div",
+        { style: { marginTop: "6px", fontSize: "11px", color: "var(--orca-color-text-3)" } },
+        "支持填写完整 URL（以 http/https 开头），用于第三方网关的非标准路径。"
+      )
     ),
 
     // API Key

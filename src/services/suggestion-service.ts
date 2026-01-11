@@ -67,6 +67,8 @@ ${content}
     apiUrl: apiConfig.apiUrl,
     apiKey: apiConfig.apiKey,
     model,
+    protocol: apiConfig.protocol,
+    anthropicApiPath: apiConfig.anthropicApiPath,
     messages,
     temperature: 0.8,
     maxTokens: 150,

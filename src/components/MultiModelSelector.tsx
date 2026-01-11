@@ -5,6 +5,8 @@
  */
 
 import type { AiChatSettings, AiProvider, ProviderModel, ModelCapability, MODEL_CAPABILITY_LABELS } from "../settings/ai-chat-settings";
+import { getAiChatSettings } from "../settings/ai-chat-settings";
+import { getAiChatPluginName } from "../ui/ai-chat-ui";
 import { multiModelStore, toggleModelSelection, clearModelSelection, toggleMultiModelMode } from "../store/multi-model-store";
 import { withTooltip } from "../utils/orca-tooltip";
 
@@ -140,10 +142,48 @@ export default function MultiModelSelector({ settings, onClose }: MultiModelSele
   const multiModelSnap = useSnapshot(multiModelStore);
   const [searchQuery, setSearchQuery] = useState("");
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const rawProviders = Array.isArray(settings.providers) ? settings.providers : [];
-  const enabledProviders = rawProviders.filter((provider) => provider.enabled !== false);
+  const resolvedSettings = useMemo(() => {
+    if (Array.isArray(settings?.providers) && settings.providers.length > 0) {
+      return settings;
+    }
+    try {
+      return getAiChatSettings(getAiChatPluginName());
+    } catch {
+      return settings;
+    }
+  }, [settings]);
+
+  // 规范化 provider/models，兼容旧数据里 models 为 string 的情况
+  const rawProviders = Array.isArray(resolvedSettings.providers) ? resolvedSettings.providers : [];
+  const normalizedProviders = rawProviders.map((provider) => {
+    const rawModels: any = (provider as any).models;
+    const models = Array.isArray(rawModels)
+      ? rawModels
+      : typeof rawModels === "string"
+        ? rawModels
+            .split(/[,，;\r\n]+/)
+            .map((s: string) => s.trim())
+            .filter(Boolean)
+        : [];
+    const normalizedModels = models
+      .map((model: any) => {
+        if (!model) return null;
+        if (typeof model === "string") {
+          const id = model.trim();
+          return id ? { id, label: id } : null;
+        }
+        if (typeof model === "object" && typeof model.id === "string") {
+          return { ...model };
+        }
+        return null;
+      })
+      .filter((m): m is ProviderModel => !!m && !!m.id);
+    return { ...provider, models: normalizedModels };
+  });
+
+  const enabledProviders = normalizedProviders.filter((provider) => provider.enabled !== false);
   // 兼容旧配置：如果全部被判定为禁用，仍展示所有提供商
-  const providersForList = enabledProviders.length > 0 ? enabledProviders : rawProviders;
+  const providersForList = enabledProviders.length > 0 ? enabledProviders : normalizedProviders;
 
   // 按提供商分组的模型列表
   const groupedModels = useMemo(() => {

@@ -8,7 +8,12 @@
  */
 
 import { getAiChatPluginName } from "../ui/ai-chat-ui";
-import { getAiChatSettings, getCurrentApiConfig } from "../settings/ai-chat-settings";
+import {
+  getAiChatSettings,
+  resolveAiModel,
+  getCurrentApiConfig,
+  validateCurrentConfig,
+} from "../settings/ai-chat-settings";
 import type { MemoryItem, PortraitTag, PortraitCategory } from "../store/memory-store";
 import { generateId } from "../store/memory-store";
 
@@ -124,16 +129,17 @@ export async function generatePortrait(memories: MemoryItem[], signal?: AbortSig
   const apiConfig = getCurrentApiConfig(settings);
 
   // Validate settings
-  if (!apiConfig.apiUrl || !apiConfig.apiKey) {
+  const validationError = validateCurrentConfig(settings);
+  if (validationError) {
     return {
       portrait: null,
       success: false,
-      error: "API 配置缺失，请在设置中配置 API URL 和 API Key",
+      error: validationError,
     };
   }
 
-  const model = apiConfig.model;
-  if (!model || !model.trim()) {
+  const model = apiConfig.model || resolveAiModel(settings);
+  if (!model) {
     return {
       portrait: null,
       success: false,
@@ -163,6 +169,8 @@ export async function generatePortrait(memories: MemoryItem[], signal?: AbortSig
     const response = await callPortraitAPI({
       apiUrl: apiConfig.apiUrl,
       apiKey: apiConfig.apiKey,
+      protocol: apiConfig.protocol,
+      anthropicApiPath: apiConfig.anthropicApiPath,
       model,
       prompt,
       temperature: 0.5, // Moderate temperature for creative but consistent output
@@ -202,6 +210,8 @@ export async function generatePortrait(memories: MemoryItem[], signal?: AbortSig
 interface PortraitAPIParams {
   apiUrl: string;
   apiKey: string;
+  protocol: "openai" | "anthropic";
+  anthropicApiPath?: string;
   model: string;
   prompt: string;
   temperature: number;
@@ -212,45 +222,84 @@ interface PortraitAPIParams {
  * Make API call for portrait generation
  */
 async function callPortraitAPI(params: PortraitAPIParams): Promise<string> {
-  const { apiUrl, apiKey, model, prompt, temperature, signal } = params;
+  const { apiUrl, apiKey, protocol, anthropicApiPath, model, prompt, temperature, signal } = params;
 
   // Build the API URL
-  const url = buildChatCompletionsUrl(apiUrl);
+  const urlCandidates = buildChatUrlCandidates(apiUrl, protocol, anthropicApiPath);
 
-  const requestBody = {
-    model,
-    messages: [
-      {
-        role: "system",
-        content: "你是一个专门分析用户信息并生成用户印象的助手。你只输出 JSON 格式的结果，不添加任何其他文字。",
+  const systemPrompt = "你是一个专门分析用户信息并生成用户印象的助手。你只输出 JSON 格式的结果，不添加任何其他文字。";
+
+  const requestBody = protocol === "anthropic"
+    ? {
+        model,
+        system: systemPrompt,
+        messages: [
+          {
+            role: "user",
+            content: [{ type: "text", text: prompt }],
+          },
+        ],
+        temperature,
+        max_tokens: 2048,
+      }
+    : {
+        model,
+        messages: [
+          {
+            role: "system",
+            content: systemPrompt,
+          },
+          {
+            role: "user",
+            content: prompt,
+          },
+        ],
+        temperature,
+        max_tokens: 2048,
+      };
+
+  const body = JSON.stringify(requestBody);
+  let response: Response | null = null;
+
+  for (let i = 0; i < urlCandidates.length; i++) {
+    const url = urlCandidates[i];
+    response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(protocol === "anthropic"
+          ? { "x-api-key": apiKey, "anthropic-version": "2023-06-01", Authorization: `Bearer ${apiKey}` }
+          : { Authorization: `Bearer ${apiKey}` }),
       },
-      {
-        role: "user",
-        content: prompt,
-      },
-    ],
-    temperature,
-    max_tokens: 2048,
-  };
+      body,
+      signal,
+    });
 
-  const response = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify(requestBody),
-    signal,
-  });
+    if (response.ok) break;
+    if (protocol === "anthropic" && response.status === 404 && i < urlCandidates.length - 1) {
+      continue;
+    }
 
-  if (!response.ok) {
     const errorText = await readErrorMessage(response);
     throw new Error(`API 请求失败: ${errorText}`);
   }
 
+  if (!response) throw new Error("API 请求失败: Failed to fetch");
   const json = await response.json();
   
-  // Extract content from response
+  if (protocol === "anthropic") {
+    const blocks = Array.isArray(json?.content) ? json.content : [];
+    const text = blocks
+      .map((b: any) => (b?.type === "text" ? b?.text : ""))
+      .filter((t: any) => typeof t === "string")
+      .join("");
+    if (!text.trim()) {
+      throw new Error("API 响应格式错误");
+    }
+    return text;
+  }
+
+  // OpenAI-compatible response
   const content = json?.choices?.[0]?.message?.content;
   if (typeof content !== "string") {
     throw new Error("API 响应格式错误");
@@ -268,6 +317,55 @@ function buildChatCompletionsUrl(apiUrl: string): string {
     return trimmed;
   }
   return `${trimmed}/chat/completions`;
+}
+
+function buildChatCompletionsUrlCandidates(apiUrl: string): string[] {
+  const trimmed = apiUrl.trim().replace(/\/+$/, "");
+  const lower = trimmed.toLowerCase();
+  if (lower.endsWith("/chat/completions")) return [trimmed];
+  if (lower.endsWith("/v1")) return [`${trimmed}/chat/completions`];
+  return [`${trimmed}/v1/chat/completions`, `${trimmed}/chat/completions`];
+}
+
+function buildAnthropicMessagesUrl(apiUrl: string): string {
+  const trimmed = apiUrl.trim().replace(/\/+$/, "");
+  const lower = trimmed.toLowerCase();
+  if (lower.endsWith("/messages")) {
+    return trimmed;
+  }
+  if (lower.endsWith("/v1")) {
+    return `${trimmed}/messages`;
+  }
+  return `${trimmed}/v1/messages`;
+}
+
+function buildChatUrl(apiUrl: string, protocol: "openai" | "anthropic"): string {
+  return protocol === "anthropic"
+    ? buildAnthropicMessagesUrl(apiUrl)
+    : buildChatCompletionsUrl(apiUrl);
+}
+
+function buildAnthropicMessagesUrlCandidates(apiUrl: string, anthropicApiPath?: string): string[] {
+  const override = typeof anthropicApiPath === "string" ? anthropicApiPath.trim() : "";
+  if (override) {
+    if (/^https?:\/\//i.test(override)) return [override];
+    const trimmed = apiUrl.trim().replace(/\/+$/, "");
+    return [`${trimmed}/${override.replace(/^\/+/, "")}`];
+  }
+
+  const trimmed = apiUrl.trim().replace(/\/+$/, "");
+  const lower = trimmed.toLowerCase();
+  if (lower.endsWith("/messages")) return [trimmed];
+  if (lower.endsWith("/v1")) return [`${trimmed}/messages`, trimmed];
+  // 兼容代理：有些 baseUrl 不需要 /v1
+  // 额外回退：有些第三方把“baseUrl 本身”当作最终 messages 入口
+  return [`${trimmed}/v1/messages`, `${trimmed}/messages`, trimmed];
+}
+
+function buildChatUrlCandidates(apiUrl: string, protocol: "openai" | "anthropic", anthropicApiPath?: string): string[] {
+  return protocol === "anthropic"
+    ? buildAnthropicMessagesUrlCandidates(apiUrl, anthropicApiPath)
+    : buildChatCompletionsUrlCandidates(apiUrl);
 }
 
 /**
@@ -538,18 +636,18 @@ export async function refreshPortraitFromCategories(
   const pluginName = getAiChatPluginName();
   const settings = getAiChatSettings(pluginName);
   
-  const apiConfig = getCurrentApiConfig(settings);
-
-  if (!apiConfig.apiUrl || !apiConfig.apiKey) {
+  const validationError = validateCurrentConfig(settings);
+  if (validationError) {
     return {
       portrait: null,
       success: false,
-      error: "API 配置缺失，请在设置中配置 API URL 和 API Key",
+      error: validationError,
     };
   }
 
-  const model = apiConfig.model;
-  if (!model || !model.trim()) {
+  const apiConfig = getCurrentApiConfig(settings);
+  const model = apiConfig.model || resolveAiModel(settings);
+  if (!model) {
     return {
       portrait: null,
       success: false,
@@ -580,6 +678,8 @@ export async function refreshPortraitFromCategories(
     const response = await callPortraitAPI({
       apiUrl: apiConfig.apiUrl,
       apiKey: apiConfig.apiKey,
+      protocol: apiConfig.protocol,
+      anthropicApiPath: apiConfig.anthropicApiPath,
       model,
       prompt,
       temperature: 0.7,

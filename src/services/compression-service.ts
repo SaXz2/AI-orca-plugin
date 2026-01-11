@@ -56,6 +56,14 @@ import {
   printConfig,
 } from "./compression-config";
 
+type CompressionApiConfig = {
+  apiUrl: string;
+  apiKey: string;
+  model: string;
+  protocol?: "openai" | "anthropic";
+  anthropicApiPath?: string;
+};
+
 // ═══════════════════════════════════════════════════════════════════════════
 // 类型定义
 // ═══════════════════════════════════════════════════════════════════════════
@@ -730,7 +738,7 @@ function getDynamicSummaryMaxTokens(cache: SessionCache): number {
  */
 async function generateSummary(
   messages: Message[],
-  apiConfig: { apiUrl: string; apiKey: string; model: string },
+  apiConfig: CompressionApiConfig,
   knownEntities: string[] = [],
   maxTokens: number = CONFIG.summaryMaxTokens,
 ): Promise<{ summary: string; entities: string[]; decisions: string[] }> {
@@ -784,6 +792,8 @@ async function generateSummary(
       apiUrl: apiConfig.apiUrl,
       apiKey: apiConfig.apiKey,
       model: apiConfig.model,
+      protocol: apiConfig.protocol,
+      anthropicApiPath: apiConfig.anthropicApiPath,
       messages: apiMessages,
       temperature: 0.2,
       maxTokens,
@@ -817,7 +827,7 @@ async function generateSummary(
  */
 async function mergeLayers(
   layers: SummaryLayer[],
-  apiConfig: { apiUrl: string; apiKey: string; model: string },
+  apiConfig: CompressionApiConfig,
   alignmentConfig?: { enableAlignment: boolean; alignUnit: number },
 ): Promise<SummaryLayer | null> {
   if (layers.length === 0) return null;
@@ -839,6 +849,8 @@ async function mergeLayers(
       apiUrl: apiConfig.apiUrl,
       apiKey: apiConfig.apiKey,
       model: apiConfig.model,
+      protocol: apiConfig.protocol,
+      anthropicApiPath: apiConfig.anthropicApiPath,
       messages: apiMessages,
       temperature: 0.2,
       maxTokens: 600,
@@ -879,7 +891,7 @@ async function mergeLayers(
  */
 async function distillMilestones(
   milestones: SummaryLayer[],
-  apiConfig: { apiUrl: string; apiKey: string; model: string },
+  apiConfig: CompressionApiConfig,
   alignmentConfig?: { enableAlignment: boolean; alignUnit: number },
 ): Promise<SummaryLayer | null> {
   if (milestones.length < 2) return null;
@@ -903,6 +915,8 @@ async function distillMilestones(
       apiUrl: apiConfig.apiUrl,
       apiKey: apiConfig.apiKey,
       model: apiConfig.model,
+      protocol: apiConfig.protocol,
+      anthropicApiPath: apiConfig.anthropicApiPath,
       messages: apiMessages,
       temperature: 0.2,
       maxTokens: 300, // 极简输出
@@ -1044,7 +1058,7 @@ function alignToTokenBoundaryWithCalibration(text: string, calibrationOffset: nu
 export async function compressContext(
   sessionId: string,
   messages: Message[],
-  apiConfig: { apiUrl: string; apiKey: string; model: string },
+  apiConfig: CompressionApiConfig,
 ): Promise<{
   summaryText: string | null;
   entityMapText: string;       // 实体映射文本
@@ -1431,7 +1445,7 @@ export function findLayerByMessageIndex(sessionId: string, messageIndex: number)
 export function triggerAsyncCompression(
   sessionId: string,
   messages: Message[],
-  apiConfig: { apiUrl: string; apiKey: string; model: string },
+  apiConfig: CompressionApiConfig,
 ): void {
   // 第一重检查：全局任务队列
   if (pendingCompressionTasks.has(sessionId)) {
@@ -1533,7 +1547,7 @@ export async function getOrCreateSummary(
   sessionId: string,
   messages: Message[],
   _keepRecent: number,
-  apiConfig: { apiUrl: string; apiKey: string; model: string },
+  apiConfig: CompressionApiConfig,
 ): Promise<{
   summary: string | null;
   recentMessages: Message[];

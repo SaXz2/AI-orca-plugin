@@ -467,7 +467,7 @@ export default function AiChatPanel({ panelId }: PanelProps) {
     text: string;
     skills: SkillDefinition[];
     model: string;
-    apiConfig: { apiUrl: string; apiKey: string };
+    apiConfig: { apiUrl: string; apiKey: string; protocol?: "openai" | "anthropic"; anthropicApiPath?: string };
     maxTokens: number;
     signal: AbortSignal;
   }): Promise<SkillPrecheckSummary | null> => {
@@ -509,15 +509,17 @@ export default function AiChatPanel({ panelId }: PanelProps) {
     ];
 
     let content = "";
-    for await (const chunk of streamChatWithRetry(
-      {
-        apiUrl: apiConfig.apiUrl,
-        apiKey: apiConfig.apiKey,
-        model,
-        temperature: 0.2,
-        maxTokens: Math.min(800, Math.max(200, maxTokens)),
-        signal,
-      },
+      for await (const chunk of streamChatWithRetry(
+        {
+          apiUrl: apiConfig.apiUrl,
+          apiKey: apiConfig.apiKey,
+          model,
+          protocol: apiConfig.protocol,
+          anthropicApiPath: apiConfig.anthropicApiPath,
+          temperature: 0.2,
+          maxTokens: Math.min(800, Math.max(200, maxTokens)),
+          signal,
+        },
       precheckMessages,
       precheckMessages,
     )) {
@@ -817,6 +819,7 @@ ${toolSummary || "- （未提供工具列表）"}`;
           apiUrl: modelApiConfig.apiUrl,
           apiKey: modelApiConfig.apiKey,
           model,
+          protocol: modelApiConfig.protocol,
           temperature: settings.temperature,
           maxTokens: settings.maxTokens,
           signal: aborter.signal,
@@ -1713,16 +1716,18 @@ graph TD
 	        let mergedToolCalls: ToolCallInfo[] = [];
 	        
 	        // Stream tool calls and content, then process the final tool args.
-	        for await (const chunk of streamChatWithRetry(
-	          {
-	            apiUrl: apiConfig.apiUrl,
-	            apiKey: apiConfig.apiKey,
-	            model,
-	            temperature: settings.temperature,
-	            maxTokens: settings.maxTokens,
-	            signal: aborter.signal,
-	            tools: [FLASHCARD_TOOL],
-	          },
+          for await (const chunk of streamChatWithRetry(
+            {
+              apiUrl: apiConfig.apiUrl,
+              apiKey: apiConfig.apiKey,
+              model,
+              protocol: apiConfig.protocol,
+              anthropicApiPath: apiConfig.anthropicApiPath,
+              temperature: settings.temperature,
+              maxTokens: settings.maxTokens,
+              signal: aborter.signal,
+              tools: [FLASHCARD_TOOL],
+            },
 	          apiMessages,
 	          apiMessagesFallback || apiMessages,
 	        )) {
@@ -2047,7 +2052,7 @@ graph TD
         enableCompression: settings.enableCompression,
         compressAfterMessages: settings.compressAfterMessages,
         sessionId: currentSession.id,
-        apiConfig: { apiUrl: apiConfig.apiUrl, apiKey: apiConfig.apiKey, model },
+      apiConfig: { apiUrl: apiConfig.apiUrl, apiKey: apiConfig.apiKey, model, protocol: apiConfig.protocol, anthropicApiPath: apiConfig.anthropicApiPath },
       });
 
       // 根据是否有拖入的块来选择工具列表
@@ -2107,6 +2112,8 @@ graph TD
                 apiUrl: apiConfig.apiUrl,
                 apiKey: apiConfig.apiKey,
                 model,
+                protocol: apiConfig.protocol,
+                anthropicApiPath: apiConfig.anthropicApiPath,
                 temperature: options?.temperature ?? 0.3,
                 maxTokens: options?.maxTokens ?? 1000,
                 signal: aborter.signal,
@@ -2200,6 +2207,8 @@ graph TD
           apiUrl: apiConfig.apiUrl,
           apiKey: apiConfig.apiKey,
           model,
+          protocol: apiConfig.protocol,
+          anthropicApiPath: apiConfig.anthropicApiPath,
           temperature: settings.temperature,
           maxTokens: settings.maxTokens,
           signal: aborter.signal,
@@ -2470,7 +2479,7 @@ graph TD
           enableCompression: settings.enableCompression,
           compressAfterMessages: settings.compressAfterMessages,
           sessionId: currentSession.id,
-          apiConfig: { apiUrl: apiConfig.apiUrl, apiKey: apiConfig.apiKey, model },
+        apiConfig: { apiUrl: apiConfig.apiUrl, apiKey: apiConfig.apiKey, model, protocol: apiConfig.protocol, anthropicApiPath: apiConfig.anthropicApiPath },
         });
 
         // Stream next response with reasoning support
@@ -2490,6 +2499,7 @@ graph TD
               apiUrl: toolApiConfig.apiUrl,
               apiKey: toolApiConfig.apiKey,
               model,
+              protocol: toolApiConfig.protocol,
               temperature: settings.temperature,
               maxTokens: settings.maxTokens,
               signal: aborter.signal,
