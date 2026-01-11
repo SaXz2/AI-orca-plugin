@@ -5,6 +5,8 @@
  * Maps tool names to user-friendly icons, animations, and text.
  */
 
+import { getSkillDisplayName, isSkillToolName } from "../services/skill-service";
+
 export type ToolCategory = "create" | "search" | "query";
 export type AnimationType = "sparkle" | "pulse" | "flip";
 
@@ -28,6 +30,16 @@ const DEFAULT_CONFIG: ToolDisplayConfig = {
   displayName: "工具",
   loadingText: "正在执行...",
   successText: "已完成",
+  successIcon: "✅",
+};
+
+const SKILL_CONFIG: ToolDisplayConfig = {
+  category: "query",
+  icon: "✨",
+  animation: "sparkle",
+  displayName: "技能",
+  loadingText: "正在执行技能...",
+  successText: "技能已完成",
   successIcon: "✅",
 };
 
@@ -234,6 +246,9 @@ const TOOL_CONFIGS: Record<string, ToolDisplayConfig> = {
  * @returns ToolDisplayConfig for the specified tool, or default config if not found
  */
 export function getToolDisplayConfig(toolName: string): ToolDisplayConfig {
+  if (isSkillToolName(toolName)) {
+    return { ...SKILL_CONFIG, displayName: getSkillDisplayName(toolName) };
+  }
   return TOOL_CONFIGS[toolName] || DEFAULT_CONFIG;
 }
 

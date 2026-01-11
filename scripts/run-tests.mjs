@@ -17,6 +17,7 @@ await build({
   format: "esm",
   sourcemap: "inline",
   target: ["node20"],
+  external: ["yaml"],
 });
 
 await import(pathToFileURL(outfile).href);

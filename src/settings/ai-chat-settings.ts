@@ -9,6 +9,7 @@ export const DEFAULT_SYSTEM_PROMPT = `你是笔记库智能助手。
 
 ## 工具使用
 - 工具返回"✅ Search complete"后立即展示结果，不再调用其他工具
+- 如果不确定工具用法，先调用 tool_instructions 获取该工具说明，不要查询所有工具
 - 搜索结果已含完整内容，禁止对其调用 getPage
 - 一次成功即停止，避免重复查询
 - 属性查询：先 get_tag_schema 获取定义 → 再 query_blocks_by_tag 过滤
@@ -166,6 +167,7 @@ export type AiChatSettings = {
   temperature: number;
   maxTokens: number;
   maxToolRounds: number;
+  skillPrecheckEnabled: boolean;
   currency: CurrencyType;
   // Token 优化设置
   maxHistoryMessages: number;        // 最大历史消息数（0=不限制）
@@ -225,6 +227,7 @@ export const DEFAULT_AI_CHAT_SETTINGS: AiChatSettings = {
   temperature: 0.7,
   maxTokens: 4096,
   maxToolRounds: 5,
+  skillPrecheckEnabled: false,
   currency: "USD",
   // Token 优化默认值
   maxHistoryMessages: 0,           // 0=不限制（改用动态压缩）
@@ -294,6 +297,7 @@ type StoredConfig = {
   temperature: number;
   maxTokens: number;
   maxToolRounds: number;
+  skillPrecheckEnabled?: boolean;
   currency: CurrencyType;
   // Token 优化设置
   maxHistoryMessages?: number;
@@ -359,6 +363,7 @@ export function getAiChatSettings(pluginName: string): AiChatSettings {
     temperature: config?.temperature ?? DEFAULT_AI_CHAT_SETTINGS.temperature,
     maxTokens: config?.maxTokens ?? DEFAULT_AI_CHAT_SETTINGS.maxTokens,
     maxToolRounds: config?.maxToolRounds ?? DEFAULT_AI_CHAT_SETTINGS.maxToolRounds,
+    skillPrecheckEnabled: config?.skillPrecheckEnabled ?? DEFAULT_AI_CHAT_SETTINGS.skillPrecheckEnabled,
     currency: config?.currency ?? DEFAULT_AI_CHAT_SETTINGS.currency,
     // Token 优化设置
     maxHistoryMessages: config?.maxHistoryMessages ?? DEFAULT_AI_CHAT_SETTINGS.maxHistoryMessages,
@@ -407,6 +412,7 @@ export async function updateAiChatSettings(
     temperature: next.temperature,
     maxTokens: next.maxTokens,
     maxToolRounds: next.maxToolRounds,
+    skillPrecheckEnabled: next.skillPrecheckEnabled,
     currency: next.currency,
     // Token 优化设置
     maxHistoryMessages: next.maxHistoryMessages,

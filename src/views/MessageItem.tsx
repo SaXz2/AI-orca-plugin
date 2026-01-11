@@ -754,6 +754,12 @@ interface MessageItemProps {
   onSuggestedReply?: (text: string) => void;
   // Callback to generate AI-powered suggestions
   onGenerateSuggestions?: () => Promise<string[]>;
+  // Skill confirm actions (inline)
+  onSkillConfirmAction?: (messageId: string, approved: boolean) => void;
+  // Skill precheck actions (inline)
+  onSkillPrecheckAction?: (messageId: string, approved: boolean) => void;
+  // Skill draft actions (save/discard)
+  onSkillDraftAction?: (messageId: string, action: "save" | "discard") => void;
   // Token statistics for this message
   tokenStats?: {
     messageTokens: number;      // 当前消息的 token 数
@@ -1055,6 +1061,9 @@ export default function MessageItem({
   onExtractMemory,
   onSuggestedReply,
   onGenerateSuggestions,
+  onSkillConfirmAction,
+  onSkillPrecheckAction,
+  onSkillDraftAction,
   tokenStats,
 }: MessageItemProps) {
   const [isHovered, setIsHovered] = useState(false);
@@ -1066,6 +1075,36 @@ export default function MessageItem({
   const isTool = message.role === "tool";
   const isAssistant = message.role === "assistant";
   const isPinned = (message as any).pinned === true;
+  const skillConfirm = message.skillConfirm;
+  const skillPrecheck = message.skillPrecheck;
+  const skillDraft = message.skillDraft;
+
+  const handleSkillConfirm = useCallback(
+    (approved: boolean) => {
+      if (onSkillConfirmAction) {
+        onSkillConfirmAction(message.id, approved);
+      }
+    },
+    [message.id, onSkillConfirmAction]
+  );
+
+  const handleSkillPrecheck = useCallback(
+    (approved: boolean) => {
+      if (onSkillPrecheckAction) {
+        onSkillPrecheckAction(message.id, approved);
+      }
+    },
+    [message.id, onSkillPrecheckAction]
+  );
+
+  const handleSkillDraft = useCallback(
+    (action: "save" | "discard") => {
+      if (onSkillDraftAction) {
+        onSkillDraftAction(message.id, action);
+      }
+    },
+    [message.id, onSkillDraftAction]
+  );
 
   // Display settings from store
   const displaySettings = useSnapshot(displaySettingsStore);
@@ -1073,6 +1112,25 @@ export default function MessageItem({
 
   // Keep action bar visible when dropdown is open
   const showActionBar = isHovered || isExtractDropdownOpen;
+
+  const skillDraftStatusLabel = useMemo(() => {
+    switch (skillDraft?.status) {
+      case "generating":
+        return "生成中";
+      case "saving":
+        return "保存中";
+      case "draft":
+        return "待确认";
+      case "saved":
+        return "已保存";
+      case "discarded":
+        return "已放弃";
+      case "error":
+        return "保存失败";
+      default:
+        return "";
+    }
+  }, [skillDraft?.status]);
 
   const handleCopy = useCallback(() => {
     if (message.content) {
@@ -1482,7 +1540,404 @@ export default function MessageItem({
         ))
       ),
 
+      // Skill Precheck (inline)
+      skillPrecheck &&
+        createElement(
+          "div",
+          {
+            style: {
+              padding: "12px 16px",
+              background: "var(--orca-color-bg-2)",
+              borderRadius: 8,
+              border: "1px solid var(--orca-color-border)",
+              marginBottom: 8,
+            },
+          },
+          createElement(
+            "div",
+            {
+              style: {
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                marginBottom: 8,
+                color: "var(--orca-color-text-1)",
+                fontWeight: 600,
+                fontSize: 13,
+              },
+            },
+            createElement("i", { className: "ti ti-sparkles", style: { fontSize: 16 } }),
+            "Skill Check"
+          ),
+          skillPrecheck.matches && skillPrecheck.matches.length > 0
+            ? createElement(
+                "div",
+                { style: { display: "flex", flexDirection: "column", gap: 6, fontSize: 12 } },
+                ...skillPrecheck.matches.map((match) =>
+                  createElement(
+                    "div",
+                    {
+                      key: match.skillId,
+                      style: {
+                        display: "flex",
+                        gap: 6,
+                        color: "var(--orca-color-text-2)",
+                      },
+                    },
+                    createElement("span", { style: { fontWeight: 500, color: "var(--orca-color-text-1)" } }, match.skillName),
+                    createElement("span", null, "-"),
+                    createElement("span", null, match.reason)
+                  )
+                )
+              )
+            : createElement(
+                "div",
+                { style: { fontSize: 12, color: "var(--orca-color-text-2)" } },
+                "无匹配技能"
+              ),
+          skillPrecheck.proposedAction
+            ? createElement(
+                "div",
+                {
+                  style: {
+                    marginTop: 8,
+                    padding: "6px 8px",
+                    background: "var(--orca-color-bg-1)",
+                    borderRadius: 6,
+                    fontSize: 12,
+                    color: "var(--orca-color-text-2)",
+                  },
+                },
+                skillPrecheck.proposedAction
+              )
+            : null,
+          skillPrecheck.status === "pending" && skillPrecheck.suggestedSkillId
+            ? createElement(
+                "div",
+                {
+                  style: {
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 8,
+                    marginTop: 10,
+                  },
+                },
+                createElement(
+                  "div",
+                  { style: { fontSize: 12, color: "var(--orca-color-text-2)" } },
+                  "使用该技能？"
+                ),
+                createElement(
+                  "div",
+                  {
+                    style: {
+                      display: "flex",
+                      gap: 8,
+                      justifyContent: "flex-end",
+                    },
+                  },
+                  createElement(
+                  "button",
+                  {
+                    onClick: () => handleSkillPrecheck(false),
+                    style: {
+                      padding: "6px 12px",
+                      borderRadius: 4,
+                      border: "1px solid var(--orca-color-border)",
+                      background: "var(--orca-color-bg-1)",
+                      color: "var(--orca-color-text-2)",
+                      cursor: "pointer",
+                      fontSize: 12,
+                    },
+                  },
+                  "拒绝"
+                ),
+                createElement(
+                  "button",
+                  {
+                    onClick: () => handleSkillPrecheck(true),
+                    style: {
+                      padding: "6px 12px",
+                      borderRadius: 4,
+                      border: "none",
+                      background: "var(--orca-color-primary)",
+                      color: "#fff",
+                      cursor: "pointer",
+                      fontSize: 12,
+                    },
+                  },
+                  "允许"
+                )
+                )
+              )
+            : skillPrecheck.suggestedSkillId
+              ? createElement(
+                  "div",
+                  {
+                    style: {
+                      display: "flex",
+                      justifyContent: "flex-end",
+                      marginTop: 8,
+                      fontSize: 12,
+                      color:
+                        skillPrecheck.status === "approved"
+                          ? "var(--orca-color-success)"
+                          : "var(--orca-color-danger)",
+                    },
+                  },
+                  skillPrecheck.status === "approved" ? "已允许" : "已拒绝"
+                )
+              : createElement(
+                  "div",
+                  {
+                    style: {
+                      display: "flex",
+                      justifyContent: "flex-end",
+                      marginTop: 8,
+                      fontSize: 12,
+                      color: "var(--orca-color-text-3)",
+                    },
+                  },
+                  "无可执行技能"
+                )
+        ),
+
+      // Skill Confirm (inline)
+      skillConfirm &&
+        createElement(
+          "div",
+          {
+            style: {
+              padding: "12px 16px",
+              background: "var(--orca-color-bg-2)",
+              borderRadius: 8,
+              border: "1px solid var(--orca-color-warning, #ffc107)",
+              marginBottom: 8,
+            },
+          },
+          createElement(
+            "div",
+            {
+              style: {
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                marginBottom: 8,
+                color: "var(--orca-color-warning, #ffc107)",
+                fontWeight: 500,
+                fontSize: 13,
+              },
+            },
+            createElement("i", { className: "ti ti-alert-triangle", style: { fontSize: 16 } }),
+            `AI 请求执行技能: ${skillConfirm.skillName}`
+          ),
+          createElement(
+            "pre",
+            {
+              style: {
+                margin: "8px 0",
+                padding: 8,
+                background: "var(--orca-color-bg-1)",
+                borderRadius: 4,
+                fontSize: 11,
+                fontFamily: "monospace",
+                color: "var(--orca-color-text-2)",
+                whiteSpace: "pre-wrap",
+                wordBreak: "break-all",
+                maxHeight: 120,
+                overflow: "auto",
+              },
+            },
+            skillConfirm.steps.join("\n")
+          ),
+          skillConfirm.status === "pending"
+            ? createElement(
+                "div",
+                {
+                  style: {
+                    display: "flex",
+                    gap: 8,
+                    justifyContent: "flex-end",
+                    marginTop: 8,
+                  },
+                },
+                createElement(
+                  "button",
+                  {
+                    onClick: () => handleSkillConfirm(false),
+                    style: {
+                      padding: "6px 12px",
+                      borderRadius: 4,
+                      border: "1px solid var(--orca-color-border)",
+                      background: "var(--orca-color-bg-1)",
+                      color: "var(--orca-color-text-2)",
+                      cursor: "pointer",
+                      fontSize: 12,
+                    },
+                  },
+                  "拒绝"
+                ),
+                createElement(
+                  "button",
+                  {
+                    onClick: () => handleSkillConfirm(true),
+                    style: {
+                      padding: "6px 12px",
+                      borderRadius: 4,
+                      border: "none",
+                      background: "var(--orca-color-primary)",
+                      color: "#fff",
+                      cursor: "pointer",
+                      fontSize: 12,
+                    },
+                  },
+                  "允许"
+                )
+              )
+            : createElement(
+                "div",
+                {
+                  style: {
+                    display: "flex",
+                    justifyContent: "flex-end",
+                    marginTop: 8,
+                    fontSize: 12,
+                    color:
+                      skillConfirm.status === "approved"
+                        ? "var(--orca-color-success)"
+                        : "var(--orca-color-danger)",
+                  },
+                },
+                skillConfirm.status === "approved" ? "已允许" : "已拒绝"
+              )
+        ),
+
+      // Skill Draft (inline)
+      skillDraft &&
+        createElement(
+          "div",
+          {
+            style: {
+              padding: "12px 16px",
+              background: "var(--orca-color-bg-2)",
+              borderRadius: 8,
+              border: "1px solid var(--orca-color-border)",
+              marginBottom: 8,
+            },
+          },
+          createElement(
+            "div",
+            {
+              style: {
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                marginBottom: 8,
+                fontWeight: 500,
+                fontSize: 13,
+                color: "var(--orca-color-text-1)",
+              },
+            },
+            createElement(
+              "div",
+              { style: { display: "flex", alignItems: "center", gap: 8 } },
+              createElement("i", { className: "ti ti-wand", style: { fontSize: 16 } }),
+              "技能草稿"
+            ),
+            skillDraftStatusLabel &&
+              createElement(
+                "span",
+                {
+                  style: {
+                    fontSize: 11,
+                    padding: "2px 6px",
+                    borderRadius: 10,
+                    background: "var(--orca-color-bg-1)",
+                    color: "var(--orca-color-text-3)",
+                  },
+                },
+                skillDraftStatusLabel
+              )
+          ),
+          createElement(
+            "pre",
+            {
+              style: {
+                margin: "8px 0",
+                padding: 8,
+                background: "var(--orca-color-bg-1)",
+                borderRadius: 4,
+                fontSize: 11,
+                fontFamily: "monospace",
+                color: "var(--orca-color-text-2)",
+                whiteSpace: "pre-wrap",
+                wordBreak: "break-word",
+                maxHeight: 260,
+                overflow: "auto",
+              },
+            },
+            message.content || ""
+          ),
+          skillDraft.error &&
+            createElement(
+              "div",
+              { style: { color: "var(--orca-color-danger)", fontSize: 12, marginTop: 6 } },
+              skillDraft.error
+            ),
+          skillDraft.status === "saved" &&
+            createElement(
+              "div",
+              { style: { color: "var(--orca-color-success)", fontSize: 12, marginTop: 6 } },
+              skillDraft.folderName ? `已保存：${skillDraft.folderName}` : "已保存"
+            ),
+          (skillDraft.status === "draft" || skillDraft.status === "error") &&
+            createElement(
+              "div",
+              {
+                style: {
+                  display: "flex",
+                  gap: 8,
+                  justifyContent: "flex-end",
+                  marginTop: 8,
+                },
+              },
+              createElement(
+                "button",
+                {
+                  onClick: () => handleSkillDraft("discard"),
+                  style: {
+                    padding: "6px 12px",
+                    borderRadius: 4,
+                    border: "1px solid var(--orca-color-border)",
+                    background: "var(--orca-color-bg-1)",
+                    color: "var(--orca-color-text-2)",
+                    cursor: "pointer",
+                    fontSize: 12,
+                  },
+                },
+                "放弃"
+              ),
+              createElement(
+                "button",
+                {
+                  onClick: () => handleSkillDraft("save"),
+                  style: {
+                    padding: "6px 12px",
+                    borderRadius: 4,
+                    border: "none",
+                    background: "var(--orca-color-primary)",
+                    color: "#fff",
+                    cursor: "pointer",
+                    fontSize: 12,
+                  },
+                },
+                "保存"
+              )
+            )
+        ),
+
       // Content - 使用增强版Markdown组件支持图片和引用
+      !skillDraft &&
         createElement(EnhancedMarkdownMessage, { 
           content: message.content || "", 
           role: message.role,

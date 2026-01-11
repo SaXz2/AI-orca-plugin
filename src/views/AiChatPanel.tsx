@@ -28,6 +28,7 @@ import FlashcardReview, { type Flashcard } from "../components/FlashcardReview";
 import GlobalImagePreview from "../components/GlobalImagePreview";
 import TodoistModals from "./TodoistModals";
 import TodoistSettingsModal from "./TodoistSettingsModal";
+import SkillManagerModal from "./SkillManagerModal";
 import { todoistModalStore } from "../store/todoist-store";
 import { injectChatStyles } from "../styles/chat-animations";
 import {
@@ -57,11 +58,25 @@ import {
 import { exportSessionAsFile, saveSessionToJournal, saveMessagesToJournal } from "../services/export-service";
 import { sessionStore, updateSessionStore, clearSessionStore } from "../store/session-store";
 import { TOOLS, FLASHCARD_TOOL, executeTool, getToolsForDraggedContext, getTools, extractSearchResultsFromToolResults } from "../services/ai-tools";
+import {
+  executeSkill,
+  extractSkillMarkdown,
+  getSkillToolName,
+  getSkillByToolName,
+  isSkillToolName,
+  loadSkillRegistry,
+  parseSkillDefinitionFromContent,
+  saveSkillDraft,
+  type SkillDefinition,
+  type SkillStep,
+} from "../services/skill-service";
 import { TODOIST_TOOLS, executeTodoistTool, isTodoistTool } from "../services/todoist-tools";
-import { getToolStatus, isToolDisabled, shouldAskForTool, isAgenticRAGEnabled, getAgenticRAGConfig } from "../store/tool-store";
+import { getToolStatus, isToolDisabled, shouldAskForTool, isAgenticRAGEnabled, getAgenticRAGConfig, isSkillPrecheckEnabled } from "../store/tool-store";
+import { skillStore } from "../store/skill-store";
 import { nowId, safeText } from "../utils/text-utils";
 import { buildConversationMessages } from "../services/message-builder";
 import { streamChatWithRetry, type ToolCallInfo } from "../services/chat-stream-handler";
+import type { OpenAIChatMessage } from "../services/openai-client";
 import { executeAgenticRAG, formatRAGSteps, getToolDisplayName } from "../services/agentic-rag-service";
 import { clearSummaryCache } from "../services/compression-service";
 import { normalizeWebSearchResults, type WebSearchSource } from "../utils/source-attribution";
@@ -176,6 +191,19 @@ function restoreScrollPosition(el: HTMLDivElement | null, savedPosition?: number
 type EditableTitleProps = {
   title: string;
   onSave: (newTitle: string) => void;
+};
+
+type SkillPrecheckMatch = {
+  skillId: string;
+  skillName: string;
+  reason: string;
+};
+
+type SkillPrecheckSummary = {
+  matches: SkillPrecheckMatch[];
+  suggestedSkillId?: string;
+  suggestedSkillName?: string;
+  proposedAction?: string;
 };
 
 function EditableTitle({ title, onSave }: EditableTitleProps) {
@@ -324,6 +352,9 @@ export default function AiChatPanel({ panelId }: PanelProps) {
   // Web search settings modal state
   const [showWebSearchSettings, setShowWebSearchSettings] = useState(false);
 
+  // Skill manager modal state
+  const [showSkillManager, setShowSkillManager] = useState(false);
+
   // Todoist settings modal state
   const [showTodoistSettings, setShowTodoistSettings] = useState(false);
 
@@ -338,6 +369,8 @@ export default function AiChatPanel({ panelId }: PanelProps) {
 
   const listRef = useRef<HTMLDivElement | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const skillConfirmResolversRef = useRef(new Map<string, (approved: boolean) => void>());
+  const skillPrecheckResolversRef = useRef(new Map<string, (approved: boolean) => void>());
   // 追踪用户是否在底部附近，用于决定流式输出时是否自动滚动
   const isNearBottomRef = useRef(true);
   const scrollAnimationStateRef = useRef<ScrollAnimationState>({ rafId: null, cancelToken: 0 });
@@ -391,6 +424,443 @@ export default function AiChatPanel({ panelId }: PanelProps) {
     setMessages((prev) => prev.map((m) => (m.id === id ? { ...m, ...updates } : m)));
     scrollToBottomIfNeeded();
   }, [scrollToBottomIfNeeded]);
+
+  const formatSkillStep = useCallback((step: SkillStep): string => {
+    if (step.type === "tool") {
+      return `Tool: ${step.tool}`;
+    }
+    const label = step.file ? `Python (${step.file})` : "Python";
+    return label;
+  }, []);
+
+  const extractJsonPayload = useCallback((raw: string): any | null => {
+    if (!raw) return null;
+    const cleaned = raw
+      .trim()
+      .replace(/```json/gi, "")
+      .replace(/```/g, "")
+      .trim();
+    if (!cleaned) return null;
+    try {
+      return JSON.parse(cleaned);
+    } catch {}
+    const match = cleaned.match(/\{[\s\S]*\}/);
+    if (!match) return null;
+    try {
+      return JSON.parse(match[0]);
+    } catch {
+      return null;
+    }
+  }, []);
+
+  const runSkillPrecheck = useCallback(async ({
+    text,
+    skills,
+    model,
+    apiConfig,
+    maxTokens,
+    signal,
+  }: {
+    text: string;
+    skills: SkillDefinition[];
+    model: string;
+    apiConfig: { apiUrl: string; apiKey: string };
+    maxTokens: number;
+    signal: AbortSignal;
+  }): Promise<SkillPrecheckSummary | null> => {
+    if (!text.trim() || skills.length === 0) return null;
+
+    const maxSkills = 30;
+    const skillLines = skills.slice(0, maxSkills).map((skill) => {
+      const desc = skill.description ? ` - ${skill.description}` : "";
+      const inputs = skill.inputs?.length
+        ? ` | inputs: ${skill.inputs.map((i) => i.name).join(", ")}`
+        : "";
+      return `- ${skill.id}: ${skill.name}${desc}${inputs}`;
+    }).join("\n");
+    const truncatedNote = skills.length > maxSkills
+      ? `\n(Only showing first ${maxSkills} skills.)`
+      : "";
+
+    const systemPrompt = `你是技能预检器，目标是判断用户请求是否适合调用某个技能。
+只输出 JSON，不要添加解释或代码块。
+
+输出格式：
+{
+  "matches": [
+    { "skillId": "id", "skillName": "name", "reason": "short reason" }
+  ],
+  "suggestedSkillId": "id or null",
+  "proposedAction": "one-line action description"
+}
+
+规则：
+- matches 最多 3 条，按相关性排序。
+- 如果没有合适技能，matches 为空，suggestedSkillId 为 null。`;
+
+    const userPrompt = `用户请求：\n${text}\n\n可用技能：\n${skillLines}${truncatedNote}\n\n请按要求输出 JSON。`;
+
+    const precheckMessages: OpenAIChatMessage[] = [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: userPrompt },
+    ];
+
+    let content = "";
+    for await (const chunk of streamChatWithRetry(
+      {
+        apiUrl: apiConfig.apiUrl,
+        apiKey: apiConfig.apiKey,
+        model,
+        temperature: 0.2,
+        maxTokens: Math.min(800, Math.max(200, maxTokens)),
+        signal,
+      },
+      precheckMessages,
+      precheckMessages,
+    )) {
+      if (chunk.type === "content") {
+        content += chunk.content;
+      }
+    }
+
+    const parsed = extractJsonPayload(content);
+    if (!parsed) return null;
+
+    const skillMap = new Map(skills.map((skill) => [skill.id, skill]));
+    const rawMatches = Array.isArray(parsed.matches) ? parsed.matches : [];
+    const matches = rawMatches
+      .map((entry: any) => {
+        const skillId = String(entry?.skillId || entry?.id || "").trim();
+        if (!skillId) return null;
+        const skill = skillMap.get(skillId);
+        if (!skill) return null;
+        const reason = String(entry?.reason || "").trim() || "相关";
+        return {
+          skillId: skill.id,
+          skillName: skill.name,
+          reason,
+        } satisfies SkillPrecheckMatch;
+      })
+      .filter(Boolean)
+      .slice(0, 3) as SkillPrecheckMatch[];
+
+    if (matches.length === 0) return null;
+
+    const suggestedIdRaw = String(
+      parsed.suggestedSkillId || parsed.suggestedSkill || parsed.skillId || ""
+    ).trim();
+    const suggestedSkill = suggestedIdRaw ? skillMap.get(suggestedIdRaw) : undefined;
+    const proposedAction = typeof parsed.proposedAction === "string" && parsed.proposedAction.trim()
+      ? parsed.proposedAction.trim()
+      : suggestedSkill
+        ? `建议使用技能「${suggestedSkill.name}」执行。`
+        : undefined;
+
+    return {
+      matches,
+      suggestedSkillId: suggestedSkill?.id,
+      suggestedSkillName: suggestedSkill?.name,
+      proposedAction,
+    };
+  }, [extractJsonPayload]);
+
+  const requestSkillPrecheckConfirm = useCallback((summary: SkillPrecheckSummary): Promise<boolean> => {
+    if (!summary.suggestedSkillId) {
+      const messageId = nowId();
+      const createdAt = Date.now();
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: messageId,
+          role: "assistant",
+          content: "",
+          createdAt,
+          localOnly: true,
+          skillPrecheck: {
+            ...summary,
+            status: "pending",
+          },
+        },
+      ]);
+      return Promise.resolve(false);
+    }
+
+    return new Promise((resolve) => {
+      const messageId = nowId();
+      const createdAt = Date.now();
+      skillPrecheckResolversRef.current.set(messageId, resolve);
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: messageId,
+          role: "assistant",
+          content: "",
+          createdAt,
+          localOnly: true,
+          skillPrecheck: {
+            ...summary,
+            status: "pending",
+          },
+        },
+      ]);
+    });
+  }, []);
+
+  const requestSkillConfirm = useCallback((skill: SkillDefinition): Promise<boolean> => {
+    return new Promise((resolve) => {
+      const messageId = nowId();
+      const createdAt = Date.now();
+      const stepSummary = skill.steps.map(formatSkillStep);
+      skillConfirmResolversRef.current.set(messageId, resolve);
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: messageId,
+          role: "assistant",
+          content: "",
+          createdAt,
+          localOnly: true,
+          skillConfirm: {
+            skillId: skill.id,
+            skillName: skill.name,
+            steps: stepSummary,
+            status: "pending",
+          },
+        },
+      ]);
+    });
+  }, [formatSkillStep]);
+
+  const handleSkillPrecheckAction = useCallback((messageId: string, approved: boolean) => {
+    const resolver = skillPrecheckResolversRef.current.get(messageId);
+    if (resolver) {
+      resolver(approved);
+      skillPrecheckResolversRef.current.delete(messageId);
+    }
+
+    setMessages((prev) =>
+      prev.map((m) => {
+        if (m.id !== messageId || !m.skillPrecheck) return m;
+        return {
+          ...m,
+          skillPrecheck: {
+            ...m.skillPrecheck,
+            status: approved ? "approved" : "denied",
+          },
+        };
+      })
+    );
+  }, []);
+
+  const handleSkillConfirmAction = useCallback((messageId: string, approved: boolean) => {
+    const resolver = skillConfirmResolversRef.current.get(messageId);
+    if (resolver) {
+      resolver(approved);
+      skillConfirmResolversRef.current.delete(messageId);
+    }
+
+    setMessages((prev) =>
+      prev.map((m) => {
+        if (m.id !== messageId || !m.skillConfirm) return m;
+        return {
+          ...m,
+          skillConfirm: {
+            ...m.skillConfirm,
+            status: approved ? "approved" : "denied",
+          },
+        };
+      })
+    );
+  }, []);
+
+  const handleSkillDraftAction = useCallback(async (messageId: string, action: "save" | "discard") => {
+    const draftMessage = messages.find((m) => m.id === messageId);
+    if (!draftMessage || !draftMessage.skillDraft) return;
+
+    if (action === "discard") {
+      updateMessage(messageId, {
+        skillDraft: {
+          ...draftMessage.skillDraft,
+          status: "discarded",
+        },
+      });
+      return;
+    }
+
+    updateMessage(messageId, {
+      skillDraft: {
+        ...draftMessage.skillDraft,
+        status: "saving",
+        error: undefined,
+      },
+    });
+
+    try {
+      const result = await saveSkillDraft(draftMessage.content);
+      await loadSkillRegistry();
+      updateMessage(messageId, {
+        skillDraft: {
+          status: "saved",
+          folderName: result.folderName,
+        },
+      });
+      orca.notify("success", `技能已保存：${result.folderName}`);
+    } catch (err: any) {
+      updateMessage(messageId, {
+        skillDraft: {
+          status: "error",
+          error: err?.message ?? "技能保存失败",
+        },
+      });
+      orca.notify("error", err?.message ?? "技能保存失败");
+    }
+  }, [messages, updateMessage]);
+
+  const handleSkillSlashCommand = useCallback(async (rawContent: string, requestText: string) => {
+    const userMsg: Message = {
+      id: nowId(),
+      role: "user",
+      content: rawContent,
+      createdAt: Date.now(),
+      localOnly: true,
+    };
+    setMessages((prev) => [...prev, userMsg]);
+
+    const draftMessageId = nowId();
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: draftMessageId,
+        role: "assistant",
+        content: "正在生成技能草稿...",
+        createdAt: Date.now(),
+        localOnly: true,
+        skillDraft: { status: "generating" },
+      },
+    ]);
+    isNearBottomRef.current = true;
+    queueMicrotask(scrollToBottom);
+
+    setSending(true);
+    setStreamingMessageId(draftMessageId);
+
+    const pluginName = getAiChatPluginName();
+    const settings = getAiChatSettings(pluginName);
+    const model = (currentSession.model || "").trim() || settings.selectedModelId;
+    const memoryText = memoryStore.getFullMemoryText();
+
+    let contextText = "";
+    try {
+      const contexts = contextStore.selected;
+      if (contexts.length) {
+        const result = await buildContextForSend(contexts, { maxChars: settings.maxContextChars });
+        contextText = result.text;
+      }
+    } catch {}
+
+    const availableTools = [...getTools(), ...TODOIST_TOOLS]
+      .filter((tool) => tool.type === "function")
+      .map((tool) => tool.function)
+      .filter((fn) => !fn.name.startsWith("skill_"));
+
+    const toolSummary = availableTools
+      .map((fn) => `- ${fn.name}${fn.description ? `: ${fn.description}` : ""}`)
+      .join("\n");
+
+    const skillSystemPrompt = `你是 Orca Note 的技能编写助手，需要输出一个可用的 skills.md 草稿。
+输出要求：
+1. 只输出 skills.md 的完整内容，不要添加解释，也不要用 Markdown 代码块包裹。
+2. 必须包含 YAML 前言（--- 开始，--- 结束），且包含字段：id、name、description、inputs、steps。
+3. steps 仅允许 type=tool 或 type=python。tool 步骤使用已有工具名。
+4. 如果信息不足以编写技能，请先提出 1-3 个澄清问题，不要输出 YAML。
+
+可用工具：
+${toolSummary || "- （未提供工具列表）"}`;
+
+    const requestLine = requestText
+      ? `用户需求：${requestText}`
+      : "请根据最近对话内容生成一个技能草稿。";
+    const requestMessage: Message = {
+      id: nowId(),
+      role: "user",
+      content: requestLine,
+      createdAt: Date.now(),
+    };
+
+    const historyMessages = messages.filter((m) => !m.localOnly && m.role !== "tool");
+    const conversationForSkill = [...historyMessages, requestMessage];
+
+    const modelApiConfig = getModelApiConfig(settings, model);
+    const { standard: apiMessages, fallback: apiMessagesFallback } = await buildConversationMessages({
+      messages: conversationForSkill,
+      systemPrompt: skillSystemPrompt,
+      contextText,
+      customMemory: memoryText,
+      maxHistoryMessages: settings.maxHistoryMessages,
+      enableCompression: settings.enableCompression,
+      compressAfterMessages: settings.compressAfterMessages,
+      sessionId: currentSession.id,
+      apiConfig: { ...modelApiConfig, model },
+    });
+
+    const aborter = new AbortController();
+    abortRef.current = aborter;
+
+    let draftContent = "";
+
+    try {
+      for await (const chunk of streamChatWithRetry(
+        {
+          apiUrl: modelApiConfig.apiUrl,
+          apiKey: modelApiConfig.apiKey,
+          model,
+          temperature: settings.temperature,
+          maxTokens: settings.maxTokens,
+          signal: aborter.signal,
+        },
+        apiMessages,
+        apiMessagesFallback || apiMessages
+      )) {
+        if (chunk.type === "content") {
+          draftContent += chunk.content;
+          updateMessage(draftMessageId, { content: draftContent });
+        } else if (chunk.type === "done" && !draftContent && chunk.result.content) {
+          draftContent = chunk.result.content;
+          updateMessage(draftMessageId, { content: draftContent });
+        }
+      }
+
+      if (!draftContent.trim()) {
+        updateMessage(draftMessageId, {
+          content: "技能草稿生成失败，请稍后重试或补充需求。",
+          skillDraft: { status: "error", error: "输出为空" },
+        });
+        return;
+      }
+
+      const cleaned = extractSkillMarkdown(draftContent);
+      const parsed = parseSkillDefinitionFromContent(cleaned, "draft", "user");
+      if (parsed) {
+        updateMessage(draftMessageId, {
+          content: cleaned,
+          skillDraft: { status: "draft" },
+        });
+      } else {
+        updateMessage(draftMessageId, { skillDraft: undefined });
+      }
+    } catch (err: any) {
+      const msg = String(err?.message ?? err ?? "技能草稿生成失败");
+      updateMessage(draftMessageId, {
+        content: `技能草稿生成失败: ${msg}`,
+        skillDraft: { status: "error", error: msg },
+      });
+      orca.notify("error", msg);
+    } finally {
+      setSending(false);
+      setStreamingMessageId(null);
+      if (abortRef.current === aborter) abortRef.current = null;
+    }
+  }, [currentSession.id, currentSession.model, messages, updateMessage]);
 
   const displaySessionTitle = useMemo(() => {
     const title = (currentSession.title || "").trim();
@@ -794,7 +1264,7 @@ export default function AiChatPanel({ panelId }: PanelProps) {
     // Todoist 命令拦截（不发送给 AI，直接执行）
     // ─────────────────────────────────────────────────────────────────────
     const trimmedContent = content.trim();
-    
+
     // /todoist - 查看今日任务
     if (trimmedContent === "/todoist" || trimmedContent.startsWith("/todoist ")) {
       todoistModalStore.viewMode = "today";
@@ -834,6 +1304,13 @@ export default function AiChatPanel({ panelId }: PanelProps) {
       if (abortRef.current) abortRef.current.abort();
       // 等待一小段时间让 abort 生效
       await new Promise(resolve => setTimeout(resolve, 100));
+    }
+
+    // /skill - 生成技能草稿（不发送给 AI 对话流）
+    if (trimmedContent === "/skill" || trimmedContent.startsWith("/skill ")) {
+      const requestText = trimmedContent.replace(/^\/skill\s*/, "").trim();
+      await handleSkillSlashCommand(content, requestText);
+      return;
     }
 
 	    const pluginName = getAiChatPluginName();
@@ -1437,6 +1914,43 @@ graph TD
     // ─────────────────────────────────────────────────────────────────────────
 
     // 发送给 API 的消息使用处理后的内容（去掉指令）
+    const preapprovedSkillToolNames = new Set<string>();
+    const skillPrecheckEnabled = isSkillPrecheckEnabled() || settings.skillPrecheckEnabled;
+    if (includeTools && skillPrecheckEnabled) {
+      const availableSkills = skillStore.skills;
+      if (availableSkills.length > 0) {
+        const precheckAborter = new AbortController();
+        abortRef.current = precheckAborter;
+        try {
+          const precheckApiConfig = getModelApiConfig(settings, model);
+          const summary = await runSkillPrecheck({
+            text: processedContent,
+            skills: availableSkills,
+            model,
+            apiConfig: precheckApiConfig,
+            maxTokens: settings.maxTokens,
+            signal: precheckAborter.signal,
+          });
+
+          if (summary) {
+            const approved = await requestSkillPrecheckConfirm(summary);
+            if (approved && summary.suggestedSkillId) {
+              const matchedSkill = availableSkills.find((skill) => skill.id === summary.suggestedSkillId);
+              if (matchedSkill) {
+                const toolName = getSkillToolName(matchedSkill);
+                preapprovedSkillToolNames.add(toolName);
+                systemPrompt += `\n\n【技能预检】用户已确认使用技能「${matchedSkill.name}」。请优先调用工具 ${toolName}。如缺少必要输入，先询问用户再继续。`;
+              }
+            }
+          }
+        } catch (err: any) {
+          console.warn("[SkillPrecheck] Failed:", err?.message ?? err);
+        } finally {
+          if (abortRef.current === precheckAborter) abortRef.current = null;
+        }
+      }
+    }
+
     const userMsgForApi: Message = { 
       id: userMsg.id, 
       role: "user", 
@@ -1756,33 +2270,27 @@ graph TD
 
       setStreamingMessageId(null);
 
+      const hasAssistantMessage = Boolean(reasoningMessageId);
+      if (toolCalls.length > 0 && hasAssistantMessage && currentContent) {
+        currentContent = "";
+        updateMessage(reasoningMessageId!, { content: "" });
+      }
+
       // 如果只有 reasoning 没有 content，需要创建 assistant 消息
-      const assistantId = currentContent ? reasoningMessageId! : nowId();
-      const assistantCreatedAt = currentContent ? (reasoningCreatedAt || Date.now()) : Date.now();
+      const assistantId = hasAssistantMessage ? reasoningMessageId! : nowId();
+      const assistantCreatedAt = hasAssistantMessage ? (reasoningCreatedAt || Date.now()) : Date.now();
       
-      if (!currentContent && toolCalls.length === 0) {
-        if (reasoningMessageId && currentReasoning) {
-          // 有 reasoning 但没有 content，创建空的 assistant 消息
-          setMessages((prev) => [...prev, { 
-            id: assistantId, 
-            role: "assistant", 
-            content: "(empty response)", 
-            createdAt: assistantCreatedAt,
-            model,
-            searchResults: getSearchResultsForMessage(),
-          }]);
-        } else {
-          // 完全空响应
-          setMessages((prev) => [...prev, { 
-            id: assistantId, 
-            role: "assistant", 
-            content: "(empty response)", 
-            createdAt: assistantCreatedAt,
-            model,
-            searchResults: getSearchResultsForMessage(),
-          }]);
-        }
-      } else if (!currentContent && toolCalls.length > 0) {
+      if (!hasAssistantMessage && !currentContent && toolCalls.length === 0) {
+        // 完全空响应
+        setMessages((prev) => [...prev, { 
+          id: assistantId, 
+          role: "assistant", 
+          content: "(empty response)", 
+          createdAt: assistantCreatedAt,
+          model,
+          searchResults: getSearchResultsForMessage(),
+        }]);
+      } else if (!hasAssistantMessage && !currentContent && toolCalls.length > 0) {
         // 只有 tool calls，创建空 content 的 assistant 消息
         setMessages((prev) => [...prev, { 
           id: assistantId, 
@@ -1808,6 +2316,7 @@ graph TD
 		      let currentToolCalls = toolCalls;
 		      let currentAssistantId = assistantId;
 		      const allToolResultMessages: Message[] = [];
+          const executedSkillToolNames = new Set<string>();
 
       while (currentToolCalls.length > 0 && toolRound < MAX_TOOL_ROUNDS) {
         toolRound++;
@@ -1848,37 +2357,68 @@ graph TD
           if (parseError) {
              result = `Error: ${parseError}\n\nRaw arguments received:\n${toolCall.function.arguments}\n\nPlease provide valid JSON arguments.`;
           } else {
-             // 检查工具是否需要询问用户
-             const needsConfirm = shouldAskForTool(toolName);
-             let userApproved = true;
-             
-             if (needsConfirm) {
-               // 使用确认对话框询问用户
-               const { createToolConfirmPromise } = await import("../components/ToolConfirmDialog");
-               userApproved = await createToolConfirmPromise(toolName, args);
-             }
-             
-             if (!userApproved) {
-               result = `用户拒绝执行此工具。请尝试其他方式或直接回答用户的问题。`;
+             const TOOL_TIMEOUT_MS = 60000; // 60s timeout for tool execution
+             const isSkillCall = isSkillToolName(toolName);
+
+             if (isSkillCall) {
+               const skill = getSkillByToolName(toolName);
+               if (!skill) {
+                 result = `Error: Unknown skill ${toolName}`;
+               } else if (executedSkillToolNames.has(toolName)) {
+                 result = "Error: Skill already executed in this request. Use the previous result to respond.";
+               } else {
+                 executedSkillToolNames.add(toolName);
+                 const skipConfirm = preapprovedSkillToolNames.has(toolName);
+                 const userApproved = skipConfirm ? true : await requestSkillConfirm(skill);
+
+                 if (!userApproved) {
+                   result = "用户拒绝执行此技能。请尝试其他方式或直接回答用户的问题。";
+                 } else {
+                   try {
+                     const timeoutPromise = new Promise<string>((_, reject) => {
+                       setTimeout(() => reject(new Error(`Tool execution timed out after ${TOOL_TIMEOUT_MS / 1000}s`)), TOOL_TIMEOUT_MS);
+                     });
+
+                     result = await Promise.race([
+                       executeSkill(toolName, args),
+                       timeoutPromise,
+                     ]);
+                   } catch (err: any) {
+                     result = `Error: ${err.message || "Skill execution failed"}`;
+                   }
+                 }
+               }
              } else {
-               // Execute tool with timeout protection
-               const TOOL_TIMEOUT_MS = 60000; // 60s timeout for tool execution
-               try {
-                 const timeoutPromise = new Promise<string>((_, reject) => {
-                   setTimeout(() => reject(new Error(`Tool execution timed out after ${TOOL_TIMEOUT_MS / 1000}s`)), TOOL_TIMEOUT_MS);
-                 });
-                 
-                 // 检查是否是 Todoist 工具
-                 const toolExecutor = isTodoistTool(toolName) 
-                   ? executeTodoistTool(toolName, args)
-                   : executeTool(toolName, args);
-                 
-                 result = await Promise.race([
-                   toolExecutor,
-                   timeoutPromise
-                 ]);
-               } catch (err: any) {
-                 result = `Error: ${err.message || "Tool execution failed"}`;
+               // 检查工具是否需要询问用户
+               const needsConfirm = shouldAskForTool(toolName);
+               let userApproved = true;
+               
+               if (needsConfirm) {
+                 // 使用确认对话框询问用户
+                 const { createToolConfirmPromise } = await import("../components/ToolConfirmDialog");
+                 userApproved = await createToolConfirmPromise(toolName, args);
+               }
+               
+               if (!userApproved) {
+                 result = `用户拒绝执行此工具。请尝试其他方式或直接回答用户的问题。`;
+               } else {
+                 try {
+                   const timeoutPromise = new Promise<string>((_, reject) => {
+                     setTimeout(() => reject(new Error(`Tool execution timed out after ${TOOL_TIMEOUT_MS / 1000}s`)), TOOL_TIMEOUT_MS);
+                   });
+                   
+                   // 检查是否是 Todoist 工具
+                   const toolExecutor = isTodoistTool(toolName) 
+                     ? executeTodoistTool(toolName, args)
+                     : executeTool(toolName, args);
+                   
+                   result = await Promise.race([
+                     toolExecutor,
+                     timeoutPromise
+                   ]);
+                 } catch (err: any) {
+                   result = `Error: ${err.message || "Tool execution failed"}`;
+                 }
                }
              }
           }
@@ -2519,6 +3059,9 @@ graph TD
           onSuggestedReply: isLastAi ? (text: string) => handleSend(text) : undefined,
           onGenerateSuggestions: isLastAi && m.content ? createSuggestionGenerator(m.content) : undefined,
           tokenStats: tokenStatsMap.get(m.id),
+          onSkillConfirmAction: m.skillConfirm ? handleSkillConfirmAction : undefined,
+          onSkillPrecheckAction: m.skillPrecheck ? handleSkillPrecheckAction : undefined,
+          onSkillDraftAction: m.skillDraft ? handleSkillDraftAction : undefined,
         })
       );
     });
@@ -2873,6 +3416,16 @@ graph TD
         },
         createElement("i", { className: "ti ti-checkbox" })
       ),
+      // Skill Manager Button
+      createElement(
+        Button,
+        {
+          variant: "plain",
+          onClick: () => setShowSkillManager(true),
+          title: "技能管理",
+        },
+        createElement("i", { className: "ti ti-stars" })
+      ),
       // Chat History
       createElement(ChatHistoryMenu, {
         sessions,
@@ -2969,6 +3522,11 @@ graph TD
       onModelSelect: handleModelSelect,
       onUpdateSettings: handleUpdateSettings,
       currency: settingsForUi.currency,
+    }),
+    // Skill Manager Modal
+    createElement(SkillManagerModal, {
+      isOpen: showSkillManager,
+      onClose: () => setShowSkillManager(false),
     }),
     // Compression Settings Modal
     createElement(CompressionSettingsModal, {

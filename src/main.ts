@@ -2,6 +2,8 @@ import { registerAiChatSettingsSchema, initAiChatSettings } from "./settings/ai-
 import { registerAiChatUI, unregisterAiChatUI } from "./ui/ai-chat-ui";
 import { registerAiChatRenderer, unregisterAiChatRenderer } from "./ui/ai-chat-renderer";
 import { loadMemoryStore } from "./store/memory-store";
+import { loadSkillRegistry } from "./services/skill-service";
+import { setSkillPluginName } from "./services/skill-fs";
 import * as compressionService from "./services/compression-service";
 import { AiChatPluginAPI } from "./services/plugin-api";
 
@@ -9,6 +11,7 @@ let pluginName: string;
 
 export async function load(_name: string) {
   pluginName = _name;
+  setSkillPluginName(pluginName);
 
   // PR review note: Localization init removed to keep PR focused on style fixes.
   await registerAiChatSettingsSchema(pluginName);
@@ -19,6 +22,9 @@ export async function load(_name: string) {
 
   // Load persisted memory data
   await loadMemoryStore();
+
+  // Load skill registry after UI registration (requires plugin name)
+  await loadSkillRegistry();
 
   // 挂载调试接口到 window（开发用）
   (window as any).compressionService = compressionService;

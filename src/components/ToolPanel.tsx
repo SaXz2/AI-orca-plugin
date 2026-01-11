@@ -20,6 +20,7 @@ import {
   toggleWebSearch,
   toggleWikipedia,
   toggleCurrency,
+  toggleSkillPrecheck,
   TOOL_CATEGORIES,
   TOOL_DISPLAY_NAMES,
   type ToolStatus,
@@ -85,6 +86,7 @@ export default function ToolPanel() {
     const allSame = statuses.every(s => s === statuses[0]);
     return allSame ? statuses[0] : "mixed";
   }, [snap.toolStatus]);
+
 
   if (!snap.showPanel) return null;
 
@@ -307,6 +309,35 @@ export default function ToolPanel() {
               },
             },
             snap.currencyEnabled ? "On" : "Off"
+          )
+        ),
+        createElement(
+          "div",
+          { style: { display: "flex", alignItems: "center", gap: 6 } },
+          createElement(
+            "span",
+            { style: { fontSize: 12, color: "var(--orca-color-text-1)" } },
+            "🧠 技能预检"
+          ),
+          createElement(
+            "button",
+            {
+              onClick: toggleSkillPrecheck,
+              style: {
+                background: snap.skillPrecheckEnabled
+                  ? "var(--orca-color-primary-bg, rgba(0, 123, 255, 0.12))"
+                  : "transparent",
+                border: snap.skillPrecheckEnabled
+                  ? "1px solid var(--orca-color-primary)"
+                  : "1px solid var(--orca-color-border)",
+                color: snap.skillPrecheckEnabled ? "var(--orca-color-primary)" : "var(--orca-color-text-2)",
+                borderRadius: 999,
+                fontSize: 11,
+                padding: "2px 8px",
+                cursor: "pointer",
+              },
+            },
+            snap.skillPrecheckEnabled ? "On" : "Off"
           )
         )
       )

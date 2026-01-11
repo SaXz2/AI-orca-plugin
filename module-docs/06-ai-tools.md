@@ -10,11 +10,41 @@
 - `src/services/search-service.ts`：底层搜索服务
 - `src/utils/query-filter-parser.ts`：属性过滤器解析
 - `src/views/AiChatPanel.tsx`：调用工具的 UI 组件
+- `src/services/skill-service.ts`：技能层注册与执行
+- `src/services/python-runtime.ts`：Python 步骤运行时（后端优先，Pyodide 兜底）
+- `src/components/SkillConfirmDialog.tsx`：技能执行确认
+
+## 技能层（Skills）
+
+技能用于将多个工具组合成用户任务流程。每个技能由 `skills.md` 描述，并按固定结构存储在插件目录下：
+
+```
+Skills/
+  <技能名称>/
+    skills.md
+    Script/
+    Data/
+```
+
+### 运行规则
+
+- 技能以 `skill_` 前缀暴露为模型可调用的工具。
+- 执行技能前必须向用户确认。
+- 技能步骤按顺序执行，可调用现有工具或 Python 步骤。
+- Python 步骤优先调用后端执行；不可用时使用 CDN 版 Pyodide（micropip）。
+- 若宿主不提供 `plugin-fs-*`，则改用 `orca.plugins.setData/getData` 持久化，仅保存 `skills.md`，`Script/` 与 `Data/` 都不会落库。
+- ??????????????????????????????
+
+## 技能预检
+- 可在工具面板开启“技能预检”开关。
+- 在生成回复前，AI 会输出 Skill Check 摘要（匹配技能 + 理由 + 建议动作）。
+- 用户确认后才会执行技能；拒绝则继续常规对话。
 
 ## 可用工具
 
 | 工具名称             | 功能             | 参数                                             |
 | -------------------- | ---------------- | ------------------------------------------------ |
+| `tool_instructions`  | 获取指定工具说明 | `toolName` (必填)                                |
 | `searchBlocksByTag`  | 按标签搜索笔记   | `tagName` (必需), `maxResults` (可选, 默认 50)   |
 | `searchBlocksByText` | 按文本内容搜索   | `searchText` (必需), `maxResults` (可选)         |
 | `queryBlocksByTag`   | 高级标签属性查询 | `tagName`, `properties[]`, `property_filters` 等 |

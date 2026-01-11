@@ -22,6 +22,7 @@
 
 import { executeTool } from "./ai-tools";
 import { isWebSearchEnabled } from "../store/tool-store";
+import { getSkillDisplayName, isSkillToolName } from "./skill-service";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 类型定义
@@ -761,6 +762,9 @@ export async function executeAgenticRAG(
  * 获取工具的中文显示名称
  */
 export function getToolDisplayName(toolName: string): string {
+  if (isSkillToolName(toolName)) {
+    return getSkillDisplayName(toolName);
+  }
   const names: Record<string, string> = {
     searchBlocksByTag: "搜索标签",
     searchBlocksByText: "全文搜索",

@@ -62,6 +62,29 @@ export type Message = {
   // 自动增强相关
   searchResults?: WebSearchSource[]; // 搜索结果（用于自动增强）
   autoEnhanced?: boolean; // 是否已自动增强
+  // Skill-related UI metadata (localOnly messages)
+  skillConfirm?: {
+    skillId: string;
+    skillName: string;
+    steps: string[];
+    status: "pending" | "approved" | "denied";
+  };
+  skillPrecheck?: {
+    status: "pending" | "approved" | "denied";
+    matches: Array<{
+      skillId: string;
+      skillName: string;
+      reason: string;
+    }>;
+    suggestedSkillId?: string;
+    suggestedSkillName?: string;
+    proposedAction?: string;
+  };
+  skillDraft?: {
+    status: "generating" | "saving" | "draft" | "saved" | "discarded" | "error";
+    folderName?: string;
+    error?: string;
+  };
 };
 
 /**

@@ -27,6 +27,7 @@ import { loadToolSettings, toolStore, toggleWebSearch, toggleAgenticRAG, toggleS
 
 const React = window.React as unknown as {
   createElement: typeof window.React.createElement;
+  Fragment: typeof window.React.Fragment;
   useRef: <T>(value: T) => { current: T };
   useState: <T>(initial: T | (() => T)) => [T, (next: T | ((prev: T) => T)) => void];
   useCallback: <T extends (...args: any[]) => any>(fn: T, deps: any[]) => T;
@@ -70,6 +71,8 @@ const SLASH_COMMANDS: SlashCommandDef[] = [
   { command: "/localgraph", description: "显示页面的链接关系图谱", icon: "ti ti-share", category: "visualization" },
   { command: "/mindmap", description: "显示块及子块的思维导图", icon: "ti ti-binary-tree", category: "visualization" },
   { command: "/diagram", description: "生成流程图或示意图", icon: "ti ti-chart-dots", category: "visualization" },
+  // Skill 技能
+  { command: "/skill", description: "让 AI 生成技能草稿（可附加需求）", icon: "ti ti-wand", category: "skill" },
   // Todoist 任务管理类
   { command: "/todoist", description: "查看今日 Todoist 任务", icon: "ti ti-checkbox", category: "todoist" },
   { command: "/todoist-all", description: "查看全部未完成任务", icon: "ti ti-list-check", category: "todoist" },
@@ -84,12 +87,13 @@ const CATEGORY_LABELS: Record<SlashCommandCategory, string> = {
   style: "回答风格",
   visualization: "可视化",
   todoist: "Todoist 任务",
+  skill: "技能",
 };
 
 const { useSnapshot } = (window as any).Valtio as {
   useSnapshot: <T extends object>(obj: T) => T;
 };
-const { Button } = orca.components || {};
+const { Button, ContextMenu } = orca.components || {};
 
 type Props = {
   onSend: (message: string, files?: FileRef[], clearContext?: boolean) => void | Promise<void>;
@@ -114,6 +118,54 @@ const inputContainerStyle: React.CSSProperties = {
   padding: "16px",
   borderTop: "1px solid var(--orca-color-border)",
   background: "var(--orca-color-bg-1)",
+};
+
+const TOOLBAR_HIDE_BREAKPOINTS = {
+  token: 520,
+  script: 480,
+  rag: 440,
+  web: 400,
+  multi: 360,
+  injection: 320,
+  mode: 280,
+  clear: 240,
+};
+
+const overflowMenuStyle: React.CSSProperties = {
+  minWidth: 240,
+  padding: "10px",
+  background: "var(--orca-color-bg-1)",
+  display: "flex",
+  flexDirection: "column",
+  gap: "10px",
+  maxHeight: "60vh",
+  overflowY: "auto",
+};
+
+const overflowSectionTitleStyle: React.CSSProperties = {
+  fontSize: "11px",
+  fontWeight: 600,
+  color: "var(--orca-color-text-3)",
+};
+
+const overflowItemStyle: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "space-between",
+  gap: "10px",
+  padding: "6px 8px",
+  borderRadius: "6px",
+  background: "var(--orca-color-bg-2)",
+};
+
+const overflowItemLabelStyle: React.CSSProperties = {
+  fontSize: "12px",
+  color: "var(--orca-color-text-2)",
+};
+
+const overflowToggleButtonStyle: React.CSSProperties = {
+  padding: "4px",
+  borderRadius: "4px",
 };
 
 const textareaWrapperStyle = (focused: boolean, isDragging: boolean = false): React.CSSProperties => ({
@@ -161,10 +213,12 @@ export default function ChatInput({
   const [clearContextPending, setClearContextPending] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [isDraggingFile, setIsDraggingFile] = useState(false);
+  const [toolbarWidth, setToolbarWidth] = useState(0);
   const addContextBtnRef = useRef<HTMLElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const slashMenuRef = useRef<HTMLDivElement | null>(null);
+  const leftToolbarRef = useRef<HTMLDivElement | null>(null);
   const contextSnap = useSnapshot(contextStore);
   const toolSnap = useSnapshot(toolStore);
 
@@ -211,6 +265,33 @@ export default function ChatInput({
     return { inputTokens, outputTokens, cost };
   }, [text, selectedModelInfo]);
 
+  const overflowFlags = useMemo(() => {
+    const width = toolbarWidth || 9999;
+    const hideScript = width < TOOLBAR_HIDE_BREAKPOINTS.script;
+    const hideRag = width < TOOLBAR_HIDE_BREAKPOINTS.rag;
+    const hideWeb = width < TOOLBAR_HIDE_BREAKPOINTS.web;
+    const hideMulti = width < TOOLBAR_HIDE_BREAKPOINTS.multi;
+    const hideInjection = width < TOOLBAR_HIDE_BREAKPOINTS.injection;
+    const hideMode = width < TOOLBAR_HIDE_BREAKPOINTS.mode;
+    const hideClear = width < TOOLBAR_HIDE_BREAKPOINTS.clear;
+    const hasOverflow = hideScript || hideRag || hideWeb || hideMulti || hideInjection || hideMode || hideClear;
+
+    return {
+      hideScript,
+      hideRag,
+      hideWeb,
+      hideMulti,
+      hideInjection,
+      hideMode,
+      hideClear,
+      hasOverflow,
+    };
+  }, [toolbarWidth]);
+
+  const showModeSection = overflowFlags.hideMulti || overflowFlags.hideInjection || overflowFlags.hideMode;
+  const showToolSection = overflowFlags.hideWeb || overflowFlags.hideRag || overflowFlags.hideScript;
+  const showTokenIndicator = tokenEstimate.inputTokens > 0;
+
   // 检测是否显示斜杠命令菜单 - 使用模糊匹配
   const filteredCommands = useMemo(() => {
     if (!text.startsWith("/")) return [];
@@ -245,7 +326,7 @@ export default function ChatInput({
     items.push(...recentCmds);
     
     const grouped = groupCommandsByCategory(filteredCommands as SlashCommandType[]);
-    const categories: SlashCommandCategory[] = ["format", "style", "visualization", "todoist"];
+    const categories: SlashCommandCategory[] = ["format", "style", "visualization", "skill", "todoist"];
     for (const category of categories) {
       const cmds = grouped[category];
       for (const cmd of cmds) {
@@ -281,6 +362,21 @@ export default function ChatInput({
   useEffect(() => {
     loadFromStorage();
     loadToolSettings();
+  }, []);
+
+  useEffect(() => {
+    const toolbarEl = leftToolbarRef.current;
+    if (!toolbarEl || typeof ResizeObserver === "undefined") return;
+
+    const observer = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect?.width ?? 0;
+      if (width > 0) {
+        setToolbarWidth(width);
+      }
+    });
+
+    observer.observe(toolbarEl);
+    return () => observer.disconnect();
   }, []);
 
   const canSend = (text.trim().length > 0 || pendingFiles.length > 0) && !disabled && !isSending;
@@ -703,7 +799,7 @@ export default function ChatInput({
             
             // 按分类分组显示
             const grouped = groupCommandsByCategory(filteredCommands as SlashCommandType[]);
-            const categories: SlashCommandCategory[] = ["format", "style", "visualization", "todoist"];
+            const categories: SlashCommandCategory[] = ["format", "style", "visualization", "skill", "todoist"];
             
             for (const category of categories) {
               const cmds = grouped[category];
@@ -1139,12 +1235,31 @@ export default function ChatInput({
       // Row 2: Bottom Toolbar (Tools Left, Send Right)
       createElement(
         "div",
-        { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "8px" } },
-        
+        {
+          style: {
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            gap: 8,
+            marginTop: "8px",
+            minWidth: 0,
+          },
+        },
+
         // Left Tools: @ Button + File Button + Clear Context + Model Selector + Injection Mode Selector
         createElement(
           "div",
-          { style: { display: "flex", gap: 8, alignItems: "center" } },
+          {
+            ref: leftToolbarRef as any,
+            style: {
+              display: "flex",
+              gap: 8,
+              alignItems: "center",
+              flex: 1,
+              minWidth: 0,
+              overflow: "hidden",
+            },
+          },
           createElement(
             "div",
             {
@@ -1162,7 +1277,7 @@ export default function ChatInput({
               createElement("i", { className: "ti ti-at" })
             )
           ),
-          // 文件上传按钮
+          // File upload button
           createElement(
             "div",
             { style: { display: "flex", alignItems: "center" } },
@@ -1179,46 +1294,43 @@ export default function ChatInput({
               {
                 variant: "plain",
                 onClick: handleFileButtonClick,
-                title: "添加文件 (图片、文档、代码等)",
+                title: "\u6dfb\u52a0\u6587\u4ef6 (\u56fe\u7247\u3001\u6587\u6863\u3001\u4ee3\u7801\u7b49)",
                 style: { padding: "4px" },
                 disabled: isUploading,
               },
               createElement("i", { className: isUploading ? "ti ti-loader" : "ti ti-paperclip" })
             )
           ),
-          // 清除上下文按钮
-          createElement(
+          createElement(ModelSelectorButton, {
+            settings,
+            onSelect: onModelSelect,
+            onUpdateSettings,
+          }),
+          !overflowFlags.hideClear && createElement(
             Button,
             {
               variant: "plain",
               onClick: handleClearContextClick,
-              title: clearContextPending ? "撤销清除上下文" : "清除上下文（开始新对话）",
-              style: { 
+              title: clearContextPending ? "\u64a4\u9500\u6e05\u9664\u4e0a\u4e0b\u6587" : "\u6e05\u9664\u4e0a\u4e0b\u6587\uff08\u5f00\u59cb\u65b0\u5bf9\u8bdd\uff09",
+              style: {
                 padding: "4px",
                 color: clearContextPending ? "var(--orca-color-warning, #ffc107)" : undefined,
               },
             },
             createElement("i", { className: "ti ti-refresh" })
           ),
-          createElement(ModelSelectorButton, {
-            settings,
-            onSelect: onModelSelect,
-            onUpdateSettings,
-          }),
-          // 多模型并行按钮
-          createElement(MultiModelToggleButton, {
+          !overflowFlags.hideMulti && createElement(MultiModelToggleButton, {
             settings,
           }),
-          createElement(InjectionModeSelector, null),
-          createElement(ModeSelectorButton, null),
-          // 联网搜索开关
-          createElement(
+          !overflowFlags.hideInjection && createElement(InjectionModeSelector, null),
+          !overflowFlags.hideMode && createElement(ModeSelectorButton, null),
+          !overflowFlags.hideWeb && createElement(
             Button,
             {
               variant: "plain",
               onClick: toggleWebSearch,
-              title: toolSnap.webSearchEnabled ? "关闭联网搜索" : "开启联网搜索",
-              style: { 
+              title: toolSnap.webSearchEnabled ? "\u5173\u95ed\u8054\u7f51\u641c\u7d22" : "\u5f00\u542f\u8054\u7f51\u641c\u7d22",
+              style: {
                 padding: "4px",
                 color: toolSnap.webSearchEnabled ? "var(--orca-color-primary, #007bff)" : undefined,
                 background: toolSnap.webSearchEnabled ? "var(--orca-color-primary-bg, rgba(0, 123, 255, 0.1))" : undefined,
@@ -1227,16 +1339,15 @@ export default function ChatInput({
             },
             createElement("i", { className: "ti ti-world-search" })
           ),
-          // Agentic RAG 开关（深度检索模式）
-          createElement(
+          !overflowFlags.hideRag && createElement(
             Button,
             {
               variant: "plain",
               onClick: toggleAgenticRAG,
-              title: toolSnap.agenticRAGEnabled 
-                ? "关闭深度检索（Agentic RAG）\n当前：AI 会多轮迭代检索，消耗更多 token" 
-                : "开启深度检索（Agentic RAG）\n开启后：AI 会自主规划检索策略，多轮迭代直到信息充足",
-              style: { 
+              title: toolSnap.agenticRAGEnabled
+                ? "\u5173\u95ed\u6df1\u5ea6\u68c0\u7d22\uff08Agentic RAG\uff09\\n\u5f53\u524d\uff1aAI \u4f1a\u591a\u8f6e\u8fed\u4ee3\u68c0\u7d22\uff0c\u6d88\u8017\u66f4\u591atoken"
+                : "\u5f00\u542f\u6df1\u5ea6\u68c0\u7d22\uff08Agentic RAG\uff09\\n\u5f00\u542f\u540e\uff1aAI \u4f1a\u81ea\u4e3b\u89c4\u5212\u68c0\u7d22\u7b56\u7565\uff0c\u591a\u8f6e\u8fed\u4ee3\u76f4\u5230\u4fe1\u606f\u5145\u8db3",
+              style: {
                 padding: "4px",
                 color: toolSnap.agenticRAGEnabled ? "var(--orca-color-warning, #f59e0b)" : undefined,
                 background: toolSnap.agenticRAGEnabled ? "rgba(245, 158, 11, 0.1)" : undefined,
@@ -1245,16 +1356,15 @@ export default function ChatInput({
             },
             createElement("i", { className: "ti ti-brain" })
           ),
-          // 数据分析开关
-          createElement(
+          !overflowFlags.hideScript && createElement(
             Button,
             {
               variant: "plain",
               onClick: toggleScriptAnalysis,
-              title: toolSnap.scriptAnalysisEnabled 
-                ? "关闭数据分析\n当前：AI 可以执行脚本分析笔记数据" 
-                : "开启数据分析\n开启后：AI 可以统计词频、搜索次数等，返回真实数据",
-              style: { 
+              title: toolSnap.scriptAnalysisEnabled
+                ? "\u5173\u95ed\u6570\u636e\u5206\u6790\\n\u5f53\u524d\uff1aAI \u53ef\u4ee5\u6267\u884c\u811a\u672c\u5206\u6790\u7b14\u8bb0\u6570\u636e"
+                : "\u5f00\u542f\u6570\u636e\u5206\u6790\\n\u5f00\u542f\u540e\uff1aAI \u53ef\u4ee5\u7edf\u8ba1\u8bcd\u9891\u3001\u641c\u7d22\u6b21\u6570\u7b49\uff0c\u8fd4\u56de\u771f\u5b9e\u6570\u636e",
+              style: {
                 padding: "4px",
                 color: toolSnap.scriptAnalysisEnabled ? "var(--orca-color-success, #10b981)" : undefined,
                 background: toolSnap.scriptAnalysisEnabled ? "rgba(16, 185, 129, 0.1)" : undefined,
@@ -1263,8 +1373,12 @@ export default function ChatInput({
             },
             createElement("i", { className: "ti ti-chart-bar" })
           ),
-          // Token 预估显示
-          tokenEstimate.inputTokens > 0 && createElement(
+        ),
+
+        createElement(
+          "div",
+          { style: { display: "flex", alignItems: "center", gap: 8, flexShrink: 0 } },
+          showTokenIndicator && createElement(
             "div",
             {
               style: {
@@ -1276,67 +1390,180 @@ export default function ChatInput({
                 padding: "2px 8px",
                 background: "var(--orca-color-bg-3)",
                 borderRadius: "10px",
+                whiteSpace: "nowrap",
+                flexShrink: 0,
               },
-              title: `预估输入: ${formatTokenCount(tokenEstimate.inputTokens)} tokens\n预估输出: ${formatTokenCount(tokenEstimate.outputTokens)} tokens`,
+              title: `预估输入: ${formatTokenCount(tokenEstimate.inputTokens)} tokens
+预估输出: ${formatTokenCount(tokenEstimate.outputTokens)} tokens`,
             },
             createElement("i", { className: "ti ti-coins", style: { fontSize: "12px" } }),
-            `~${formatTokenCount(tokenEstimate.inputTokens)}`,
-            selectedModelInfo?.inputPrice !== undefined && selectedModelInfo.inputPrice > 0 && createElement(
-              "span",
-              { style: { color: "var(--orca-color-text-4)" } },
-              ` ${formatCost(tokenEstimate.cost, currency)}`
-            )
-          )
-        ),
-
-        // Right Tool: Send/Stop Button
-        disabled && onStop
-          ? createElement(
-              Button,
-              {
-                variant: "solid",
-                onClick: onStop,
-                title: "Stop generation",
-                style: { 
-                  ...sendButtonStyle(true), 
-                  borderRadius: "50%", 
-                  width: "32px", 
-                  height: "32px", 
-                  padding: 0, 
-                  display: "flex", 
-                  alignItems: "center", 
-                  justifyContent: "center",
-                  background: "var(--orca-color-error, #cf222e)"
+            `~${formatTokenCount(tokenEstimate.inputTokens)}`
+          ),
+          overflowFlags.hasOverflow && createElement(
+            ContextMenu as any,
+            {
+              defaultPlacement: "top",
+              placement: "vertical",
+              alignment: "right",
+              allowBeyondContainer: true,
+              offset: 8,
+              menu: (close: () => void) =>
+                createElement(
+                  "div",
+                  { style: overflowMenuStyle },
+                  overflowFlags.hideClear && createElement("div", { style: overflowSectionTitleStyle }, "\u5feb\u6377\u64cd\u4f5c"),
+                  overflowFlags.hideClear && createElement(
+                    "div",
+                    {
+                      style: overflowItemStyle,
+                      onClick: () => {
+                        handleClearContextClick();
+                        close();
+                      },
+                    },
+                    createElement("span", { style: overflowItemLabelStyle }, clearContextPending ? "\u64a4\u9500\u6e05\u9664\u4e0a\u4e0b\u6587" : "\u6e05\u9664\u4e0a\u4e0b\u6587"),
+                    createElement("i", { className: "ti ti-refresh", style: { fontSize: "14px" } })
+                  ),
+                  showModeSection && createElement("div", { style: overflowSectionTitleStyle }, "\u6a21\u5f0f"),
+                  overflowFlags.hideMulti && createElement(
+                    "div",
+                    { style: overflowItemStyle },
+                    createElement("span", { style: overflowItemLabelStyle }, "\u591a\u6a21\u578b\u5e76\u884c"),
+                    createElement(MultiModelToggleButton, { settings })
+                  ),
+                  overflowFlags.hideInjection && createElement(
+                    "div",
+                    { style: overflowItemStyle },
+                    createElement("span", { style: overflowItemLabelStyle }, "\u6ce8\u5165\u6a21\u5f0f"),
+                    createElement(InjectionModeSelector, null)
+                  ),
+                  overflowFlags.hideMode && createElement(
+                    "div",
+                    { style: overflowItemStyle },
+                    createElement("span", { style: overflowItemLabelStyle }, "\u5bf9\u8bdd\u6a21\u5f0f"),
+                    createElement(ModeSelectorButton, null)
+                  ),
+                  showToolSection && createElement("div", { style: overflowSectionTitleStyle }, "\u5de5\u5177"),
+                  overflowFlags.hideWeb && createElement(
+                    "div",
+                    { style: overflowItemStyle },
+                    createElement("span", { style: overflowItemLabelStyle }, "\u8054\u7f51\u641c\u7d22"),
+                    createElement(
+                      Button,
+                      {
+                        variant: "plain",
+                        onClick: toggleWebSearch,
+                        title: toolSnap.webSearchEnabled ? "\u5173\u95ed\u8054\u7f51\u641c\u7d22" : "\u5f00\u542f\u8054\u7f51\u641c\u7d22",
+                        style: {
+                          ...overflowToggleButtonStyle,
+                          color: toolSnap.webSearchEnabled ? "var(--orca-color-primary, #007bff)" : undefined,
+                          background: toolSnap.webSearchEnabled ? "var(--orca-color-primary-bg, rgba(0, 123, 255, 0.1))" : undefined,
+                        },
+                      },
+                      createElement("i", { className: "ti ti-world-search" })
+                    )
+                  ),
+                  overflowFlags.hideRag && createElement(
+                    "div",
+                    { style: overflowItemStyle },
+                    createElement("span", { style: overflowItemLabelStyle }, "\u6df1\u5ea6\u68c0\u7d22"),
+                    createElement(
+                      Button,
+                      {
+                        variant: "plain",
+                        onClick: toggleAgenticRAG,
+                        title: toolSnap.agenticRAGEnabled ? "\u5173\u95ed\u6df1\u5ea6\u68c0\u7d22" : "\u5f00\u542f\u6df1\u5ea6\u68c0\u7d22",
+                        style: {
+                          ...overflowToggleButtonStyle,
+                          color: toolSnap.agenticRAGEnabled ? "var(--orca-color-warning, #f59e0b)" : undefined,
+                          background: toolSnap.agenticRAGEnabled ? "rgba(245, 158, 11, 0.1)" : undefined,
+                        },
+                      },
+                      createElement("i", { className: "ti ti-brain" })
+                    )
+                  ),
+                  overflowFlags.hideScript && createElement(
+                    "div",
+                    { style: overflowItemStyle },
+                    createElement("span", { style: overflowItemLabelStyle }, "\u6570\u636e\u5206\u6790"),
+                    createElement(
+                      Button,
+                      {
+                        variant: "plain",
+                        onClick: toggleScriptAnalysis,
+                        title: toolSnap.scriptAnalysisEnabled ? "\u5173\u95ed\u6570\u636e\u5206\u6790" : "\u5f00\u542f\u6570\u636e\u5206\u6790",
+                        style: {
+                          ...overflowToggleButtonStyle,
+                          color: toolSnap.scriptAnalysisEnabled ? "var(--orca-color-success, #10b981)" : undefined,
+                          background: toolSnap.scriptAnalysisEnabled ? "rgba(16, 185, 129, 0.1)" : undefined,
+                        },
+                      },
+                      createElement("i", { className: "ti ti-chart-bar" })
+                    )
+                  ),
+                ),
+            },
+            (openMenu: (e: any) => void) =>
+              createElement(
+                Button,
+                {
+                  variant: "plain",
+                  onClick: openMenu,
+                  title: "\u66f4\u591a\u64cd\u4f5c",
+                  style: { padding: "4px" },
                 },
-              },
-              createElement("i", { className: "ti ti-player-stop" })
-            )
-          : createElement(
-              Button,
-              {
-                variant: "solid",
-                disabled: !canSend,
-                onClick: handleSend,
-                title: isSending ? "正在加载内容..." : "发送消息",
-                style: { 
-                  ...sendButtonStyle(canSend), 
-                  borderRadius: "50%", 
-                  width: "32px", 
-                  height: "32px", 
-                  padding: 0, 
-                  display: "flex", 
-                  alignItems: "center", 
-                  justifyContent: "center",
-                  opacity: isSending ? 0.7 : 1,
+                createElement("i", { className: "ti ti-dots" })
+              )
+          ),
+          // Right Tool: Send/Stop Button
+          disabled && onStop
+            ? createElement(
+                Button,
+                {
+                  variant: "solid",
+                  onClick: onStop,
+                  title: "Stop generation",
+                  style: {
+                    ...sendButtonStyle(true),
+                    borderRadius: "50%",
+                    width: "32px",
+                    height: "32px",
+                    padding: 0,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    background: "var(--orca-color-error, #cf222e)",
+                  },
                 },
-              },
-              createElement("i", { 
-                className: isSending ? "ti ti-loader" : "ti ti-arrow-up",
-                style: isSending ? {
-                  animation: "spin 1s linear infinite",
-                } : undefined,
-              })
-            )
+                createElement("i", { className: "ti ti-player-stop" })
+              )
+            : createElement(
+                Button,
+                {
+                  variant: "solid",
+                  disabled: !canSend,
+                  onClick: handleSend,
+                  title: isSending ? "正在加载内容..." : "发送消息",
+                  style: {
+                    ...sendButtonStyle(canSend),
+                    borderRadius: "50%",
+                    width: "32px",
+                    height: "32px",
+                    padding: 0,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    opacity: isSending ? 0.7 : 1,
+                  },
+                },
+                createElement("i", {
+                  className: isSending ? "ti ti-loader" : "ti ti-arrow-up",
+                  style: isSending ? {
+                    animation: "spin 1s linear infinite",
+                  } : undefined,
+                })
+              )
+        )
       )
     )
   );

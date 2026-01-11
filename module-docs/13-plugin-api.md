@@ -285,6 +285,28 @@ await window.AiChatPluginAPI.sendMessage('你好', {
 
 完整列表见 `src/services/ai-tools.ts`。
 
+## 技能层（Skills）
+
+- 技能作为 `skill_` 前缀工具提供给模型，执行前会弹出确认。
+- 技能文件存储在插件目录的 `Skills/<技能名称>/skills.md`，并可包含 `Script/` 与 `Data/` 资源。
+- 技能支持导入/导出 `.zip`，结构需保持 `Skills/<技能名称>/...`。
+- 若宿主不提供 `plugin-fs-*`，技能会改用 `orca.plugins.setData/getData` 持久化，仅保存 `skills.md`，`Script/` 与 `Data/` 不落库。
+
+## 新增后端 API（插件目录读写）
+
+以下 API 由宿主提供，用于读写插件目录中的技能文件：
+
+| 消息类型 | 说明 | 参数示例 |
+| --- | --- | --- |
+| `plugin-fs-list-dir` | 列出目录 | `{ pluginName, path }` |
+| `plugin-fs-read-text` | 读取文本文件 | `{ pluginName, path }` |
+| `plugin-fs-read-binary` | 读取二进制文件 | `{ pluginName, path }` |
+| `plugin-fs-write-text` | 写入文本文件 | `{ pluginName, path, content }` |
+| `plugin-fs-write-binary` | 写入二进制文件 | `{ pluginName, path, base64 }` |
+| `plugin-fs-mkdirs` | 创建目录 | `{ pluginName, path }` |
+| `plugin-fs-exists` | 判断存在 | `{ pluginName, path }` |
+| `python-exec` | 后端执行 Python | `{ code, packages, input, files }` |
+
 ## 常见问题
 
 ### Q: 为什么返回 success: false？

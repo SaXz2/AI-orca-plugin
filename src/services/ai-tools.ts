@@ -43,6 +43,7 @@ import {
   getExchangeRates,
   formatExchangeRates,
 } from "./utility-tools";
+import { getSkillTools } from "./skill-service";
 
 // 辅助函数：从URL提取域名
 function extractDomain(url: string): string {
@@ -272,6 +273,23 @@ function extractBlocksFromTree(tree: any, depth: number = 0, maxBlocks: number =
  * ═══════════════════════════════════════════════════════════════════════════
  */
 export const TOOLS: OpenAITool[] = [
+  {
+    type: "function",
+    function: {
+      name: "tool_instructions",
+      description: `获取指定工具的用法说明（仅返回该工具）。`,
+      parameters: {
+        type: "object",
+        properties: {
+          toolName: {
+            type: "string",
+            description: "工具名称，如 createPage、searchBlocksByText。",
+          },
+        },
+        required: ["toolName"],
+      },
+    },
+  },
   {
     type: "function",
     function: {
@@ -1096,6 +1114,8 @@ export function getTools(webSearchEnabled?: boolean, scriptAnalysisEnabled?: boo
   if (scriptAnalysisEnabled ?? isScriptAnalysisEnabled()) {
     tools.push(...getScriptAnalysisTools());
   }
+
+  tools.push(...getSkillTools());
   
   return tools;
 }
@@ -1178,7 +1198,10 @@ const SEARCH_TOOL_NAMES = new Set([
  * 禁用搜索类工具，只保留读取和写入工具
  */
 export function getToolsForDraggedContext(): OpenAITool[] {
-  return TOOLS.filter(tool => !SEARCH_TOOL_NAMES.has(tool.function.name));
+  return [
+    ...TOOLS.filter(tool => !SEARCH_TOOL_NAMES.has(tool.function.name)),
+    ...getSkillTools(),
+  ];
 }
 
 /**
@@ -1629,12 +1652,53 @@ function formatCountOnlyResult(
   return `📊 统计结果：找到 **${count} 条** ${queryDesc}`;
 }
 
+function getToolDefinitionByName(toolName: string): OpenAITool | undefined {
+  const normalized = toolName.trim();
+  const allTools: OpenAITool[] = [
+    ...TOOLS,
+    WEB_SEARCH_TOOL,
+    IMAGE_SEARCH_TOOL,
+    WIKIPEDIA_TOOL,
+    CURRENCY_TOOL,
+    ...getScriptAnalysisTools(),
+    ...getSkillTools(),
+  ];
+  return allTools.find((tool) => tool.function.name === normalized);
+}
+
+function formatToolInstructions(tool: OpenAITool): string {
+  const description = (tool.function.description || "").trim();
+  const params = tool.function.parameters as any;
+  const required = new Set<string>(Array.isArray(params?.required) ? params.required : []);
+  const properties = params?.properties || {};
+  const paramLines = Object.keys(properties).map((key) => {
+    const info = properties[key] || {};
+    const typeLabel = info.type ? String(info.type) : "any";
+    const requiredLabel = required.has(key) ? ", required" : ", optional";
+    const desc = info.description ? ` - ${String(info.description).trim()}` : "";
+    const enumInfo = Array.isArray(info.enum) ? ` Options: ${info.enum.join(", ")}` : "";
+    return `- ${key} (${typeLabel}${requiredLabel})${desc}${enumInfo}`;
+  });
+  const paramBlock = paramLines.length > 0 ? paramLines.join("\n") : "- (none)";
+  return `Tool: ${tool.function.name}\n${description || "No description."}\n\nParameters:\n${paramBlock}`;
+}
+
 /**
  * 主入口：处理 AI 调用的工具。
  */
 export async function executeTool(toolName: string, args: any): Promise<string> {
   try {
-    if (toolName === "searchBlocksByTag") {
+    if (toolName === "tool_instructions") {
+      const requested = String(args?.toolName || args?.tool || args?.name || "").trim();
+      if (!requested) {
+        return "Error: Missing toolName parameter.";
+      }
+      const tool = getToolDefinitionByName(requested);
+      if (!tool) {
+        return `Tool not found: ${requested}`;
+      }
+      return formatToolInstructions(tool);
+    } else if (toolName === "searchBlocksByTag") {
       try {
         const tagQuery = args.tag_query || args.tagQuery || args.tag;
         
