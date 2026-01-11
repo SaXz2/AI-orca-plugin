@@ -285,6 +285,77 @@ function toCurrency(value: unknown, fallback: CurrencyType): CurrencyType {
   return fallback;
 }
 
+function isCurrency(value: unknown): value is CurrencyType {
+  return value === "USD" || value === "CNY" || value === "EUR" || value === "JPY";
+}
+
+function isModelCapability(value: unknown): value is ModelCapability {
+  return value === "vision"
+    || value === "web"
+    || value === "reasoning"
+    || value === "tools"
+    || value === "rerank"
+    || value === "embedding";
+}
+
+function normalizeProviderModels(
+  models: unknown,
+  fallbackModels?: ProviderModel[],
+): ProviderModel[] {
+  if (!Array.isArray(models) || models.length === 0) {
+    return fallbackModels ? JSON.parse(JSON.stringify(fallbackModels)) : [];
+  }
+
+  const normalized: ProviderModel[] = [];
+  for (const model of models) {
+    if (typeof model === "string") {
+      const id = model.trim();
+      if (id) normalized.push({ id, label: id });
+      continue;
+    }
+
+    if (!model || typeof model !== "object") continue;
+
+    const raw = model as Record<string, any>;
+    const idSource = typeof raw.id === "string"
+      ? raw.id
+      : typeof raw.value === "string"
+      ? raw.value
+      : typeof raw.name === "string"
+      ? raw.name
+      : "";
+    const id = typeof idSource === "string" ? idSource.trim() : "";
+    if (!id) continue;
+
+    const labelSource = typeof raw.label === "string"
+      ? raw.label
+      : typeof raw.name === "string"
+      ? raw.name
+      : undefined;
+    const capabilities = Array.isArray(raw.capabilities)
+      ? raw.capabilities.filter((cap) => isModelCapability(cap))
+      : undefined;
+
+    normalized.push({
+      id,
+      label: labelSource?.trim() || undefined,
+      inputPrice: typeof raw.inputPrice === "number" ? raw.inputPrice : undefined,
+      outputPrice: typeof raw.outputPrice === "number" ? raw.outputPrice : undefined,
+      capabilities: capabilities && capabilities.length > 0 ? capabilities : undefined,
+      temperature: typeof raw.temperature === "number" ? raw.temperature : undefined,
+      maxTokens: typeof raw.maxTokens === "number" ? raw.maxTokens : undefined,
+      maxToolRounds: typeof raw.maxToolRounds === "number" ? raw.maxToolRounds : undefined,
+      currency: isCurrency(raw.currency) ? raw.currency : undefined,
+    });
+  }
+
+  if (normalized.length === 0 && fallbackModels?.length) {
+    return JSON.parse(JSON.stringify(fallbackModels));
+  }
+
+  return normalized;
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // 获取和更新设置
 // ═══════════════════════════════════════════════════════════════════════════
@@ -344,8 +415,42 @@ export function getAiChatSettings(pluginName: string): AiChatSettings {
   // 使用缓存的配置
   const config = (cachePluginName === pluginName && cachedConfig) ? cachedConfig : null;
   
-  // 如果有缓存，使用缓存的 providers
-  const providers = config?.providers || JSON.parse(JSON.stringify(DEFAULT_PROVIDERS));
+  // 如果有缓存，使用缓存的 providers；为空时回退到默认值
+  const fallbackProviders: AiProvider[] = JSON.parse(JSON.stringify(DEFAULT_PROVIDERS));
+  const rawProviders = config?.providers;
+  let providers = Array.isArray(rawProviders) && rawProviders.length > 0
+    ? rawProviders
+    : fallbackProviders;
+
+  // 修复旧配置：缺失字段/模型时补默认值
+  if (providers.length > 0) {
+    for (const provider of providers) {
+      const fallback = fallbackProviders.find((p) => p.id === provider.id);
+      if (provider.enabled === undefined) {
+        provider.enabled = fallback?.enabled ?? true;
+      }
+      if (!provider.name) {
+        provider.name = fallback?.name ?? provider.id;
+      }
+      if (!provider.apiUrl) {
+        provider.apiUrl = fallback?.apiUrl ?? provider.apiUrl;
+      }
+      if (provider.isBuiltin === undefined && fallback?.isBuiltin !== undefined) {
+        provider.isBuiltin = fallback.isBuiltin;
+      }
+      provider.models = normalizeProviderModels(provider.models, fallback?.models);
+    }
+  }
+
+  const totalModels = providers.reduce((sum, provider) => sum + provider.models.length, 0);
+  if (totalModels === 0 && fallbackProviders.length > 0) {
+    const existingIds = new Set(providers.map((provider) => provider.id));
+    for (const fallback of fallbackProviders) {
+      if (!existingIds.has(fallback.id)) {
+        providers.push(JSON.parse(JSON.stringify(fallback)));
+      }
+    }
+  }
   
   // 兼容旧版迁移
   if (!config && raw.apiKey) {

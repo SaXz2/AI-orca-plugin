@@ -1,4 +1,5 @@
 import DisplaySettingsPanel from "./DisplaySettingsPanel";
+import { withTooltip } from "../utils/orca-tooltip";
 
 const React = window.React as unknown as {
   createElement: typeof window.React.createElement;
@@ -77,14 +78,16 @@ export default function HeaderMenu({
       ref: menuRef as any,
       style: { position: "relative" },
     },
-    createElement(
-      Button,
-      {
-        variant: "plain",
-        onClick: () => setIsOpen(!isOpen),
-        title: "More options",
-      },
-      createElement("i", { className: "ti ti-dots-vertical" })
+    withTooltip(
+      "More options",
+      createElement(
+        Button,
+        {
+          variant: "plain",
+          onClick: () => setIsOpen(!isOpen),
+        },
+        createElement("i", { className: "ti ti-dots-vertical" })
+      )
     ),
     // Display Settings Panel (shown as a popover)
     showDisplaySettings && createElement(

@@ -5,6 +5,7 @@
  */
 
 import type { MemoryItem } from "../../store/memory-store";
+import { withTooltip } from "../../utils/orca-tooltip";
 import {
   cardStyle,
   cardHeaderStyle,
@@ -193,23 +194,27 @@ export default function MemoryCard({
       createElement(
         "div",
         { style: memoryActionsStyle },
-        createElement(
-          "button",
-          {
-            style: { ...iconButtonStyle, color: "var(--orca-color-primary)" },
-            onClick: handleConfirmAddMemory,
-            title: "添加 (Ctrl+Enter)",
-          },
-          createElement("i", { className: "ti ti-check" })
+        withTooltip(
+          "添加 (Ctrl+Enter)",
+          createElement(
+            "button",
+            {
+              style: { ...iconButtonStyle, color: "var(--orca-color-primary)" },
+              onClick: handleConfirmAddMemory,
+            },
+            createElement("i", { className: "ti ti-check" })
+          )
         ),
-        createElement(
-          "button",
-          {
-            style: iconButtonStyle,
-            onClick: handleCancelAddMemory,
-            title: "取消 (Esc)",
-          },
-          createElement("i", { className: "ti ti-x" })
+        withTooltip(
+          "取消 (Esc)",
+          createElement(
+            "button",
+            {
+              style: iconButtonStyle,
+              onClick: handleCancelAddMemory,
+            },
+            createElement("i", { className: "ti ti-x" })
+          )
         )
       )
     );
@@ -325,13 +330,15 @@ export default function MemoryCard({
         onMouseLeave: () => setHoveredMemoryId(null),
       },
       // Checkbox
-      createElement("input", {
-        type: "checkbox",
-        checked: memory.isEnabled,
-        onChange: () => onToggleMemory(memory.id),
-        style: { ...memoryCheckboxStyle, marginTop: "2px" },
-        title: memory.isEnabled ? "点击禁用" : "点击启用",
-      }),
+      withTooltip(
+        memory.isEnabled ? "点击禁用" : "点击启用",
+        createElement("input", {
+          type: "checkbox",
+          checked: memory.isEnabled,
+          onChange: () => onToggleMemory(memory.id),
+          style: { ...memoryCheckboxStyle, marginTop: "2px" },
+        })
+      ),
       // Content - editable or display (same visual style)
       isEditing
         ? createElement("textarea", {
@@ -387,84 +394,92 @@ export default function MemoryCard({
               }
             },
           })
-        : createElement(
-            "div",
-            {
-              style: { 
-                ...memoryContentStyle, 
-                cursor: "text", 
-                whiteSpace: "pre-wrap",
-                color: memory.isExtracted 
-                  ? "var(--orca-color-text-2)" 
-                  : "var(--orca-color-text-1)",
-              },
-              onClick: () => handleStartEditMemory(memory),
-              title: "点击编辑",
-            },
-            memory.content,
-            // Extracted badge
-            memory.isExtracted && createElement(
-              "span",
+        : withTooltip(
+            "点击编辑",
+            createElement(
+              "div",
               {
-                style: {
-                  marginLeft: "8px",
-                  fontSize: "10px",
-                  padding: "1px 4px",
-                  borderRadius: "3px",
-                  background: "var(--orca-color-primary, #007bff)",
-                  color: "#fff",
-                  verticalAlign: "middle",
+                style: { 
+                  ...memoryContentStyle, 
+                  cursor: "text", 
+                  whiteSpace: "pre-wrap",
+                  color: memory.isExtracted 
+                    ? "var(--orca-color-text-2)" 
+                    : "var(--orca-color-text-1)",
                 },
+                onClick: () => handleStartEditMemory(memory),
               },
-              "已提取"
+              memory.content,
+              // Extracted badge
+              memory.isExtracted && createElement(
+                "span",
+                {
+                  style: {
+                    marginLeft: "8px",
+                    fontSize: "10px",
+                    padding: "1px 4px",
+                    borderRadius: "3px",
+                    background: "var(--orca-color-primary, #007bff)",
+                    color: "#fff",
+                    verticalAlign: "middle",
+                  },
+                },
+                "已提取"
+              )
             )
           ),
       // Extracted toggle button (shown on hover)
       isHovered &&
         !isEditing &&
         onToggleExtracted &&
-        createElement(
-          "button",
-          {
-            style: extractedBtnStyle,
-            onClick: (e: any) => {
-              e.stopPropagation();
-              onToggleExtracted(memory.id);
+        withTooltip(
+          memory.isExtracted ? "标记为未提取" : "标记为已提取",
+          createElement(
+            "button",
+            {
+              style: extractedBtnStyle,
+              onClick: (e: any) => {
+                e.stopPropagation();
+                onToggleExtracted(memory.id);
+              },
             },
-            title: memory.isExtracted ? "标记为未提取" : "标记为已提取",
-          },
-          createElement("i", { className: memory.isExtracted ? "ti ti-check" : "ti ti-bookmark" })
+            createElement("i", { className: memory.isExtracted ? "ti ti-check" : "ti ti-bookmark" })
+          )
         ),
       // Generate portrait button (shown on hover)
       isHovered &&
         !isEditing &&
         onRegeneratePortrait &&
-        createElement(
-          "button",
-          {
-            style: generateBtnStyle,
-            onClick: (e: any) => {
-              e.stopPropagation();
-              onRegeneratePortrait(memory.id);
+        withTooltip(
+          "生成印象",
+          createElement(
+            "button",
+            {
+              style: generateBtnStyle,
+              onClick: (e: any) => {
+                e.stopPropagation();
+                onRegeneratePortrait(memory.id);
+              },
             },
-            title: "生成印象",
-          },
-          createElement("i", { className: "ti ti-sparkles" })
+            createElement("i", { className: "ti ti-sparkles" })
+          )
         ),
       // Delete button (shown on hover)
       isHovered &&
         !isEditing &&
-        createElement(
-          "button",
-          {
-            style: deleteBtnStyle,
-            onClick: (e: any) => {
-              e.stopPropagation();
-              onDeleteMemory(memory.id);
+        withTooltip(
+          "删除",
+          createElement(
+            "button",
+            {
+              style: deleteBtnStyle,
+              onClick: (e: any) => {
+                e.stopPropagation();
+                onDeleteMemory(memory.id);
+              },
             },
-            title: "删除",
-          },
-          createElement("i", { className: "ti ti-x" })
+            createElement("i", { className: "ti ti-x" })
+          )
         )
     );
   };

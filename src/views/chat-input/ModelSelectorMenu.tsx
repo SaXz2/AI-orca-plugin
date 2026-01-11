@@ -22,6 +22,7 @@ import {
   addModelPanelStyle,
   addModelTitleStyle,
 } from "./chat-input-styles";
+import { withTooltip } from "../../utils/orca-tooltip";
 
 const React = window.React as unknown as {
   createElement: typeof window.React.createElement;
@@ -51,24 +52,26 @@ function CapabilityBadge({ capability }: { capability: ModelCapability }) {
   const config = MODEL_CAPABILITY_LABELS[capability];
   if (!config) return null;
   
-  return createElement(
-    "span",
-    {
-      style: {
-        display: "inline-flex",
-        alignItems: "center",
-        gap: "2px",
-        padding: "1px 4px",
-        borderRadius: "4px",
-        fontSize: "10px",
-        background: `${config.color}20`,
-        color: config.color,
-        whiteSpace: "nowrap",
+  return withTooltip(
+    config.label,
+    createElement(
+      "span",
+      {
+        style: {
+          display: "inline-flex",
+          alignItems: "center",
+          gap: "2px",
+          padding: "1px 4px",
+          borderRadius: "4px",
+          fontSize: "10px",
+          background: `${config.color}20`,
+          color: config.color,
+          whiteSpace: "nowrap",
+        },
       },
-      title: config.label,
-    },
-    createElement("i", { className: config.icon, style: { fontSize: "9px" } }),
-    config.label
+      createElement("i", { className: config.icon, style: { fontSize: "9px" } }),
+      config.label
+    )
   );
 }
 
@@ -165,23 +168,27 @@ function ModelItem({
       "div",
       { style: { display: "flex", alignItems: "center", gap: "4px" } },
       // 设为默认按钮（悬停时显示，非默认模型）
-      hovered && !isDefault && onSetDefault && createElement(
-        "i",
-        {
-          className: "ti ti-star",
-          style: { fontSize: "12px", color: "var(--orca-color-text-3)", cursor: "pointer" },
-          onClick: (e: any) => { e.stopPropagation(); onSetDefault(); },
-          title: "设为默认",
-        }
+      hovered && !isDefault && onSetDefault && withTooltip(
+        "设为默认",
+        createElement(
+          "i",
+          {
+            className: "ti ti-star",
+            style: { fontSize: "12px", color: "var(--orca-color-text-3)", cursor: "pointer" },
+            onClick: (e: any) => { e.stopPropagation(); onSetDefault(); },
+          }
+        )
       ),
       // 默认模型显示实心星
-      isDefault && createElement(
-        "i",
-        {
-          className: "ti ti-star-filled",
-          style: { fontSize: "12px", color: "var(--orca-color-warning)" },
-          title: "默认模型",
-        }
+      isDefault && withTooltip(
+        "默认模型",
+        createElement(
+          "i",
+          {
+            className: "ti ti-star-filled",
+            style: { fontSize: "12px", color: "var(--orca-color-warning)" },
+          }
+        )
       ),
       // 选中标记
       isSelected && createElement("i", { className: "ti ti-check", style: { color: "var(--orca-color-primary)", fontSize: "14px" } }),
@@ -269,14 +276,16 @@ function ProviderGroup({
           "未配置"
         )
       ),
-      createElement(
-        "i",
-        {
-          className: "ti ti-settings",
-          style: { fontSize: "14px", color: "var(--orca-color-text-3)", cursor: "pointer" },
-          onClick: (e: any) => { e.stopPropagation(); onEditProvider(); },
-          title: "配置平台",
-        }
+      withTooltip(
+        "配置平台",
+        createElement(
+          "i",
+          {
+            className: "ti ti-settings",
+            style: { fontSize: "14px", color: "var(--orca-color-text-3)", cursor: "pointer" },
+            onClick: (e: any) => { e.stopPropagation(); onEditProvider(); },
+          }
+        )
       )
     ),
     // 模型列表

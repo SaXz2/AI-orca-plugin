@@ -28,6 +28,7 @@ import {
   toolStatusErrorStyle,
   toolStatusRetryButtonStyle,
 } from "../styles/ai-chat-styles";
+import { withTooltip } from "../utils/orca-tooltip";
 
 const React = window.React as unknown as {
   createElement: typeof window.React.createElement;
@@ -168,33 +169,37 @@ export default function ToolStatusIndicator({
       ),
       // Expand button (for success state)
       showExpandButton &&
-        createElement(
-          "button",
-          {
-            style: toolStatusExpandButtonStyle,
-            onClick: handleToggleExpand,
-            title: isExpanded ? "收起详情" : "查看详情",
-          },
-          createElement("i", {
-            className: isExpanded ? "ti ti-chevron-up" : "ti ti-code",
-            style: { fontSize: "12px" },
-          })
+        withTooltip(
+          isExpanded ? "收起详情" : "查看详情",
+          createElement(
+            "button",
+            {
+              style: toolStatusExpandButtonStyle,
+              onClick: handleToggleExpand,
+            },
+            createElement("i", {
+              className: isExpanded ? "ti ti-chevron-up" : "ti ti-code",
+              style: { fontSize: "12px" },
+            })
+          )
         ),
       // Retry button (for failed state - Requirements 10.2)
       showRetryButton &&
-        createElement(
-          "button",
-          {
-            style: toolStatusRetryButtonStyle,
-            onClick: onRetry,
-            title: "重试",
-            disabled: !onRetry,
-          },
-          createElement("i", {
-            className: "ti ti-refresh",
-            style: { fontSize: "12px", marginRight: "4px" },
-          }),
-          "重试"
+        withTooltip(
+          "重试",
+          createElement(
+            "button",
+            {
+              style: toolStatusRetryButtonStyle,
+              onClick: onRetry,
+              disabled: !onRetry,
+            },
+            createElement("i", {
+              className: "ti ti-refresh",
+              style: { fontSize: "12px", marginRight: "4px" },
+            }),
+            "重试"
+          )
         )
     ),
     // Expanded details

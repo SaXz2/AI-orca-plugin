@@ -13,6 +13,7 @@
  */
 
 import * as d3Force from "d3-force";
+import { withTooltip } from "../utils/orca-tooltip";
 
 const React = window.React as any;
 const { createElement, useState, useEffect, useRef, useCallback } = React;
@@ -462,18 +463,22 @@ export default function LocalGraph({ blockId }: LocalGraphProps) {
       createElement(
         "div",
         { style: { display: "flex", gap: "4px" } },
-        createElement("button", { 
-          className: "local-graph-btn",
-          onClick: resetView,
-          title: "重置视图",
-          style: { padding: "4px 8px", cursor: "pointer", background: "transparent", border: "none", color: "var(--orca-color-text-2)" },
-        }, createElement("i", { className: "ti ti-refresh" })),
-        createElement("button", { 
-          className: "local-graph-btn",
-          onClick: toggleFullscreen,
-          title: isFullscreen ? "退出全屏" : "全屏",
-          style: { padding: "4px 8px", cursor: "pointer", background: "transparent", border: "none", color: "var(--orca-color-text-2)" },
-        }, createElement("i", { className: isFullscreen ? "ti ti-minimize" : "ti ti-maximize" }))
+        withTooltip(
+          "重置视图",
+          createElement("button", { 
+            className: "local-graph-btn",
+            onClick: resetView,
+            style: { padding: "4px 8px", cursor: "pointer", background: "transparent", border: "none", color: "var(--orca-color-text-2)" },
+          }, createElement("i", { className: "ti ti-refresh" }))
+        ),
+        withTooltip(
+          isFullscreen ? "退出全屏" : "全屏",
+          createElement("button", { 
+            className: "local-graph-btn",
+            onClick: toggleFullscreen,
+            style: { padding: "4px 8px", cursor: "pointer", background: "transparent", border: "none", color: "var(--orca-color-text-2)" },
+          }, createElement("i", { className: isFullscreen ? "ti ti-minimize" : "ti ti-maximize" }))
+        )
       )
     ),
     // SVG 图谱

@@ -10,6 +10,7 @@ import type {
   PortraitCategory,
   PortraitInfoItem,
 } from "../../store/memory-store";
+import { withTooltip } from "../../utils/orca-tooltip";
 import {
   cardStyle,
   cardHeaderStyle,
@@ -162,42 +163,46 @@ export default function UserPortraitCard({
     const isNew = newTagIds?.has(tag.id);
 
     // Display mode only - AI tags are not editable
-    return createElement(
-      "div",
-      {
-        key: tag.id,
-        style: isNew ? newTagStyle : tagStyle,
-        onMouseEnter: () => setHoveredTagId(tag.id),
-        onMouseLeave: () => setHoveredTagId(null),
-        title: isNew ? "新增印象" : undefined,
-      },
-      createElement("span", null, tag.emoji),
-      createElement("span", null, tag.label),
-      isNew && createElement(
-        "span",
+    return withTooltip(
+      isNew ? "新增印象" : null,
+      createElement(
+        "div",
         {
-          style: {
-            marginLeft: "4px",
-            fontSize: "10px",
-            color: "rgba(40, 167, 69, 0.9)",
-            fontWeight: 500,
-          },
+          key: tag.id,
+          style: isNew ? newTagStyle : tagStyle,
+          onMouseEnter: () => setHoveredTagId(tag.id),
+          onMouseLeave: () => setHoveredTagId(null),
         },
-        "新"
-      ),
-      isHovered &&
-        createElement(
-          "button",
+        createElement("span", null, tag.emoji),
+        createElement("span", null, tag.label),
+        isNew && createElement(
+          "span",
           {
-            style: tagDeleteBtnStyle,
-            onClick: (e: any) => {
-              e.stopPropagation();
-              onDeleteTag(tag.id);
+            style: {
+              marginLeft: "4px",
+              fontSize: "10px",
+              color: "rgba(40, 167, 69, 0.9)",
+              fontWeight: 500,
             },
-            title: "删除",
           },
-          createElement("i", { className: "ti ti-x" })
-        )
+          "新"
+        ),
+        isHovered &&
+          withTooltip(
+            "删除",
+            createElement(
+              "button",
+              {
+                style: tagDeleteBtnStyle,
+                onClick: (e: any) => {
+                  e.stopPropagation();
+                  onDeleteTag(tag.id);
+                },
+              },
+              createElement("i", { className: "ti ti-x" })
+            )
+          )
+      )
     );
   };
 
@@ -256,45 +261,49 @@ export default function UserPortraitCard({
           { style: { fontSize: "12px", color: "var(--orca-color-text-2)" } },
           "AI 印象"
         ),
-        onRefreshAIImpression && createElement(
-          "button",
-          {
-            style: refreshBtnStyle,
-            onClick: isGenerating ? undefined : onRefreshAIImpression,
-            title: isGenerating ? "正在生成..." : "刷新 AI 印象",
-            onMouseEnter: (e: any) => {
-              if (!isGenerating) {
-                e.currentTarget.style.background = "var(--orca-color-bg-3)";
-                e.currentTarget.style.borderColor = "var(--orca-color-primary)";
-                e.currentTarget.style.color = "var(--orca-color-primary)";
-              }
+        onRefreshAIImpression && withTooltip(
+          isGenerating ? "正在生成..." : "刷新 AI 印象",
+          createElement(
+            "button",
+            {
+              style: refreshBtnStyle,
+              onClick: isGenerating ? undefined : onRefreshAIImpression,
+              onMouseEnter: (e: any) => {
+                if (!isGenerating) {
+                  e.currentTarget.style.background = "var(--orca-color-bg-3)";
+                  e.currentTarget.style.borderColor = "var(--orca-color-primary)";
+                  e.currentTarget.style.color = "var(--orca-color-primary)";
+                }
+              },
+              onMouseLeave: (e: any) => {
+                e.currentTarget.style.background = "transparent";
+                e.currentTarget.style.borderColor = "var(--orca-color-border)";
+                e.currentTarget.style.color = "var(--orca-color-text-2)";
+              },
             },
-            onMouseLeave: (e: any) => {
-              e.currentTarget.style.background = "transparent";
-              e.currentTarget.style.borderColor = "var(--orca-color-border)";
-              e.currentTarget.style.color = "var(--orca-color-text-2)";
-            },
-          },
-          createElement("i", {
-            className: isGenerating ? "ti ti-loader" : "ti ti-refresh",
-            style: isGenerating ? { animation: "spin 1s linear infinite" } : undefined,
-          }),
-          isGenerating ? "生成中" : "刷新"
+            createElement("i", {
+              className: isGenerating ? "ti ti-loader" : "ti ti-refresh",
+              style: isGenerating ? { animation: "spin 1s linear infinite" } : undefined,
+            }),
+            isGenerating ? "生成中" : "刷新"
+          )
         )
       ),
       createElement(
         "div",
         { style: tagsContainerStyle },
         portrait.tags.map(renderTag),
-        createElement(
-          "button",
-          {
-            style: addTagBtnStyle,
-            onClick: onAddTag,
-            title: "添加标签",
-          },
-          createElement("i", { className: "ti ti-plus", style: { fontSize: "12px" } }),
-          "添加"
+        withTooltip(
+          "添加标签",
+          createElement(
+            "button",
+            {
+              style: addTagBtnStyle,
+              onClick: onAddTag,
+            },
+            createElement("i", { className: "ti ti-plus", style: { fontSize: "12px" } }),
+            "添加"
+          )
         )
       )
     );
@@ -362,28 +371,32 @@ export default function UserPortraitCard({
         onMouseEnter: () => setHoveredItemKey(itemKey),
         onMouseLeave: () => setHoveredItemKey(null),
       },
-      createElement(
-        "div",
-        {
-          style: { ...infoItemStyle, cursor: "pointer" },
-          onClick: handleStartEditInfoItem,
-          title: "点击编辑",
-        },
-        item.label && createElement("span", { style: infoLabelStyle }, `${item.label}：`),
-        createElement("span", { style: { flex: 1 } }, item.value)
+      withTooltip(
+        "点击编辑",
+        createElement(
+          "div",
+          {
+            style: { ...infoItemStyle, cursor: "pointer" },
+            onClick: handleStartEditInfoItem,
+          },
+          item.label && createElement("span", { style: infoLabelStyle }, `${item.label}：`),
+          createElement("span", { style: { flex: 1 } }, item.value)
+        )
       ),
       isHovered &&
-        createElement(
-          "button",
-          {
-            style: infoDeleteBtnStyle,
-            onClick: (e: any) => {
-              e.stopPropagation();
-              onDeleteInfoItem(category.id, item.id);
+        withTooltip(
+          "删除",
+          createElement(
+            "button",
+            {
+              style: infoDeleteBtnStyle,
+              onClick: (e: any) => {
+                e.stopPropagation();
+                onDeleteInfoItem(category.id, item.id);
+              },
             },
-            title: "删除",
-          },
-          createElement("i", { className: "ti ti-x" })
+            createElement("i", { className: "ti ti-x" })
+          )
         )
     );
   };
@@ -557,18 +570,20 @@ export default function UserPortraitCard({
                 style: { display: "flex", alignItems: "center", gap: "6px", flex: 1 },
                 onClick: toggleCategoryCollapse,
               },
-              createElement(
-                "span",
-                {
-                  style: categoryTitleTextStyle,
-                  onClick: (e: any) => {
-                    e.stopPropagation();
-                    setEditingCategoryId(category.id);
-                    setEditingCategoryTitle(category.title);
+              withTooltip(
+                "点击编辑分类名称",
+                createElement(
+                  "span",
+                  {
+                    style: categoryTitleTextStyle,
+                    onClick: (e: any) => {
+                      e.stopPropagation();
+                      setEditingCategoryId(category.id);
+                      setEditingCategoryTitle(category.title);
+                    },
                   },
-                  title: "点击编辑分类名称",
-                },
-                category.title
+                  category.title
+                )
               ),
               createElement(
                 "span",
@@ -579,17 +594,19 @@ export default function UserPortraitCard({
         // Delete category button (shown on hover)
         isHovered &&
           !isEditingTitle &&
-          createElement(
-            "button",
-            {
-              style: categoryDeleteBtnStyle,
-              onClick: (e: any) => {
-                e.stopPropagation();
-                onDeleteCategory(category.id);
+          withTooltip(
+            "删除分类",
+            createElement(
+              "button",
+              {
+                style: categoryDeleteBtnStyle,
+                onClick: (e: any) => {
+                  e.stopPropagation();
+                  onDeleteCategory(category.id);
+                },
               },
-              title: "删除分类",
-            },
-            createElement("i", { className: "ti ti-x" })
+              createElement("i", { className: "ti ti-x" })
+            )
           )
       ),
       // Individual info items (hidden when collapsed)
@@ -685,15 +702,17 @@ export default function UserPortraitCard({
                   )
                 )
               )
-            : createElement(
-                "button",
-                {
-                  style: addInfoBtnStyle,
-                  onClick: () => setAddingInfoToCategoryId(category.id),
-                  title: "添加信息",
-                },
-                createElement("i", { className: "ti ti-plus", style: { fontSize: "10px" } }),
-                "添加"
+            : withTooltip(
+                "添加信息",
+                createElement(
+                  "button",
+                  {
+                    style: addInfoBtnStyle,
+                    onClick: () => setAddingInfoToCategoryId(category.id),
+                  },
+                  createElement("i", { className: "ti ti-plus", style: { fontSize: "10px" } }),
+                  "添加"
+                )
               )
         )
     );
@@ -840,15 +859,17 @@ export default function UserPortraitCard({
               "添加"
             )
           )
-        : createElement(
-            "button",
-            {
-              style: addCategoryBtnStyle,
-              onClick: () => setIsAddingCategory(true),
-              title: "添加分类",
-            },
-            createElement("i", { className: "ti ti-plus", style: { fontSize: "12px" } }),
-            "添加分类"
+        : withTooltip(
+            "添加分类",
+            createElement(
+              "button",
+              {
+                style: addCategoryBtnStyle,
+                onClick: () => setIsAddingCategory(true),
+              },
+              createElement("i", { className: "ti ti-plus", style: { fontSize: "12px" } }),
+              "添加分类"
+            )
           )
     );
   };

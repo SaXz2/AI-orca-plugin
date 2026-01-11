@@ -5,6 +5,7 @@
  */
 
 import type { ExtractedMemory } from "../services/memory-extraction";
+import { withTooltip } from "../utils/orca-tooltip";
 
 const React = window.React as unknown as {
   createElement: typeof window.React.createElement;
@@ -217,20 +218,22 @@ export default function ExtractMemoryButton({
   return createElement(
     "div",
     { style: containerStyle, ref: containerRef },
-    createElement(
-      "button",
-      {
-        style: currentStyle,
-        onClick: handleClick,
-        onMouseEnter: () => setIsHovered(true),
-        onMouseLeave: () => setIsHovered(false),
-        title: "提取印象 - 从对话中提取用户信息",
-        disabled: isLoading,
-      },
-      isLoading
-        ? createElement("i", { className: "ti ti-loader-2", style: { animation: "spin 1s linear infinite" } })
-        : createElement("i", { className: "ti ti-brain" }),
-      isLoading ? "提取中..." : "提取印象"
+    withTooltip(
+      "提取印象 - 从对话中提取用户信息",
+      createElement(
+        "button",
+        {
+          style: currentStyle,
+          onClick: handleClick,
+          onMouseEnter: () => setIsHovered(true),
+          onMouseLeave: () => setIsHovered(false),
+          disabled: isLoading,
+        },
+        isLoading
+          ? createElement("i", { className: "ti ti-loader-2", style: { animation: "spin 1s linear infinite" } })
+          : createElement("i", { className: "ti ti-brain" }),
+        isLoading ? "提取中..." : "提取印象"
+      )
     ),
     // Dropdown menu
     showDropdown && createElement(

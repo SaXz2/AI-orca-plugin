@@ -19,6 +19,7 @@ import {
   getProjects,
 } from "../services/todoist-service";
 import { getAiChatPluginName } from "../ui/ai-chat-ui";
+import { withTooltip } from "../utils/orca-tooltip";
 import { todoistModalStore, type TodoistViewMode } from "../store/todoist-store";
 
 const React = window.React as any;
@@ -521,18 +522,20 @@ function TaskItem({ task, onComplete, onPriorityChange }: TaskItemProps) {
       onMouseLeave: () => setIsHovered(false),
     },
     // Checkbox
-    createElement(
-      "div",
-      {
-        style: {
-          ...styles.checkbox,
-          borderColor: priorityColor,
-          ...(isCompleting ? styles.checkboxCompleting : {}),
+    withTooltip(
+      "点击完成",
+      createElement(
+        "div",
+        {
+          style: {
+            ...styles.checkbox,
+            borderColor: priorityColor,
+            ...(isCompleting ? styles.checkboxCompleting : {}),
+          },
+          onClick: handleComplete,
         },
-        onClick: handleComplete,
-        title: "点击完成",
-      },
-      isCompleting && createElement("i", { className: "ti ti-check", style: styles.checkIcon })
+        isCompleting && createElement("i", { className: "ti ti-check", style: styles.checkIcon })
+      )
     ),
     // Content
     createElement(
@@ -586,19 +589,21 @@ function TaskItem({ task, onComplete, onPriorityChange }: TaskItemProps) {
     isHovered && !isCompleting && createElement(
       "div",
       { style: { ...styles.priorityIndicator, opacity: 1 } },
-      [1, 2, 3, 4].map((p: number) => createElement(
-        "div",
-        {
-          key: p,
-          style: {
-            ...styles.priorityDot,
-            background: priorityColors[p - 1],
-            opacity: task.priority === p ? 1 : 0.3,
-            transform: task.priority === p ? "scale(1.2)" : "scale(1)",
-          },
-          onClick: (e: any) => handlePriorityClick(e, p),
-          title: ["无优先级", "低优先级", "中优先级", "高优先级"][p - 1],
-        }
+      [1, 2, 3, 4].map((p: number) => withTooltip(
+        ["无优先级", "低优先级", "中优先级", "高优先级"][p - 1],
+        createElement(
+          "div",
+          {
+            key: p,
+            style: {
+              ...styles.priorityDot,
+              background: priorityColors[p - 1],
+              opacity: task.priority === p ? 1 : 0.3,
+              transform: task.priority === p ? "scale(1.2)" : "scale(1)",
+            },
+            onClick: (e: any) => handlePriorityClick(e, p),
+          }
+        )
       ))
     )
   );
@@ -806,7 +811,10 @@ export default function TodoistTaskModal({ visible, onClose }: TodoistTaskModalP
         createElement("div", { style: { display: "flex", gap: "4px" } },
           createElement(Button, { variant: viewMode === "today" ? "soft" : "plain", style: { padding: "4px 8px", fontSize: "12px" }, onClick: () => setViewMode("today") }, "今日"),
           createElement(Button, { variant: viewMode === "all" ? "soft" : "plain", style: { padding: "4px 8px", fontSize: "12px" }, onClick: () => setViewMode("all") }, "全部"),
-          createElement(Button, { variant: "plain", style: styles.refreshBtn, onClick: loadTasks, title: "刷新" }, createElement("i", { className: "ti ti-refresh" }))
+          withTooltip(
+            "刷新",
+            createElement(Button, { variant: "plain", style: styles.refreshBtn, onClick: loadTasks }, createElement("i", { className: "ti ti-refresh" }))
+          )
         )
       ),
       // Task list

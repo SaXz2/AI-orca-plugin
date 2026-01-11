@@ -4,6 +4,7 @@
 import { getAiChatPluginName } from "../ui/ai-chat-ui";
 import { getAiChatSettings, updateAiChatSettings, type SearchProvider, type WebSearchConfig, type SearchProviderInstance } from "../settings/ai-chat-settings";
 import { isInstanceConfigured, getProviderDisplayName, testSearchInstance, type ConnectivityTestResult } from "../services/web-search-service";
+import { withTooltip } from "../utils/orca-tooltip";
 
 const React = window.React as unknown as {
   createElement: typeof window.React.createElement;
@@ -177,19 +178,33 @@ export default function WebSearchSettingsModal({ isOpen, onClose }: Props) {
               !isInstanceConfigured(inst) && createElement("span", { style: { fontSize: 11, color: "var(--orca-color-warning)", marginLeft: 4 } }, "未配置")
             ),
             createElement("div", { style: { display: "flex", gap: 4 } },
-              createElement("button", { 
-                style: { ...iconBtn, color: testResults[inst.id]?.success ? "var(--orca-color-success)" : testResults[inst.id]?.success === false ? "var(--orca-color-danger)" : "var(--orca-color-text-2)" }, 
-                onClick: () => testInstance(inst), 
-                disabled: testingId === inst.id,
-                title: testResults[inst.id] ? testResults[inst.id].message : "测试连接" 
-              },
-                createElement("i", { className: testingId === inst.id ? "ti ti-loader" : testResults[inst.id]?.success ? "ti ti-circle-check" : testResults[inst.id]?.success === false ? "ti ti-circle-x" : "ti ti-plug" })),
-              createElement("button", { style: iconBtn, onClick: () => moveInstance(inst.id, -1), disabled: idx === 0, title: "上移" }, ""),
-              createElement("button", { style: iconBtn, onClick: () => moveInstance(inst.id, 1), disabled: idx === instances.length - 1, title: "下移" }, ""),
-              createElement("button", { style: iconBtn, onClick: () => setEditingId(editingId === inst.id ? null : inst.id), title: "编辑" },
-                createElement("i", { className: editingId === inst.id ? "ti ti-chevron-up" : "ti ti-settings" })),
-              createElement("button", { style: { ...iconBtn, color: "var(--orca-color-danger)" }, onClick: () => removeInstance(inst.id), title: "删除" },
-                createElement("i", { className: "ti ti-trash" }))
+              withTooltip(
+                testResults[inst.id] ? testResults[inst.id].message : "测试连接",
+                createElement("button", { 
+                  style: { ...iconBtn, color: testResults[inst.id]?.success ? "var(--orca-color-success)" : testResults[inst.id]?.success === false ? "var(--orca-color-danger)" : "var(--orca-color-text-2)" }, 
+                  onClick: () => testInstance(inst), 
+                  disabled: testingId === inst.id,
+                },
+                  createElement("i", { className: testingId === inst.id ? "ti ti-loader" : testResults[inst.id]?.success ? "ti ti-circle-check" : testResults[inst.id]?.success === false ? "ti ti-circle-x" : "ti ti-plug" }))
+              ),
+              withTooltip(
+                "上移",
+                createElement("button", { style: iconBtn, onClick: () => moveInstance(inst.id, -1), disabled: idx === 0 }, "")
+              ),
+              withTooltip(
+                "下移",
+                createElement("button", { style: iconBtn, onClick: () => moveInstance(inst.id, 1), disabled: idx === instances.length - 1 }, "")
+              ),
+              withTooltip(
+                "编辑",
+                createElement("button", { style: iconBtn, onClick: () => setEditingId(editingId === inst.id ? null : inst.id) },
+                  createElement("i", { className: editingId === inst.id ? "ti ti-chevron-up" : "ti ti-settings" }))
+              ),
+              withTooltip(
+                "删除",
+                createElement("button", { style: { ...iconBtn, color: "var(--orca-color-danger)" }, onClick: () => removeInstance(inst.id) },
+                  createElement("i", { className: "ti ti-trash" }))
+              )
             )
           ),
 

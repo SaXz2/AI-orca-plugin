@@ -6,14 +6,13 @@ import {
 } from "../store/context-store";
 import { estimateTokens, formatTokenCount } from "../utils/token-utils";
 import { calculateTotalContextTokens, EnhancedContextChip, truncatePreview } from "../utils/chat-ui-utils";
+import { tooltipText, withTooltip } from "../utils/orca-tooltip";
 
 const React = window.React as unknown as {
   createElement: typeof window.React.createElement;
-  useState: typeof window.React.useState;
-  useEffect: typeof window.React.useEffect;
   useMemo: typeof window.React.useMemo;
 };
-const { createElement, useState, useMemo } = React;
+const { createElement, useMemo } = React;
 
 type Props = {
   items: ContextRef[];
@@ -34,8 +33,6 @@ export default function ContextChips({
   contextContents,
   showTokens = true 
 }: Props) {
-  const [hoveredChip, setHoveredChip] = useState<string | null>(null);
-
   // 计算每个芯片的 token 数
   const enhancedChips: EnhancedContextChip[] = useMemo(() => {
     return items.map((ref) => {
@@ -92,132 +89,74 @@ export default function ContextChips({
         const label = getDisplayLabel(ref);
         const icon = ref.kind === "page" ? "ti ti-file-text" : "ti ti-tag";
         const chip = enhancedChips[index];
-        const isHovered = hoveredChip === key;
 
-        return createElement(
-          "div",
-          {
-            key,
-            style: {
-              position: "relative",
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 4,
-              padding: "2px 8px",
-              borderRadius: 12,
-              background: "var(--orca-color-bg-2)",
-              border: "1px solid var(--orca-color-border)",
-              fontSize: 12,
-              maxWidth: 220,
-              cursor: "default",
-              transition: "all 0.15s ease",
-            },
-            onMouseEnter: () => setHoveredChip(key),
-            onMouseLeave: () => setHoveredChip(null),
-          },
-          // 图标
-          createElement("i", {
-            className: icon,
-            style: { fontSize: 12, opacity: 0.7 },
-          }),
-          // 标签
+        return withTooltip(
+          chip.preview ? tooltipText(chip.preview) : null,
           createElement(
-            "span",
-            {
-              style: {
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-                flex: 1,
-              },
-            },
-            label
-          ),
-          // Token 数量
-          showTokens && chip.tokenCount > 0 && createElement(
-            "span",
-            {
-              style: {
-                fontSize: 10,
-                color: "var(--orca-color-text-3)",
-                marginLeft: 2,
-                padding: "1px 4px",
-                borderRadius: 4,
-                background: "var(--orca-color-bg-3)",
-              },
-            },
-            formatTokenCount(chip.tokenCount)
-          ),
-          // 删除按钮
-          createElement(
-            "span",
-            {
-              onClick: () => handleRemove(ref),
-              style: {
-                cursor: "pointer",
-                opacity: 0.6,
-                marginLeft: 2,
-                display: "inline-flex",
-                alignItems: "center",
-              },
-              onMouseEnter: (e: any) => (e.currentTarget.style.opacity = "1"),
-              onMouseLeave: (e: any) => (e.currentTarget.style.opacity = "0.6"),
-            },
-            createElement("i", { className: "ti ti-x", style: { fontSize: 12 } })
-          ),
-          // Hover 预览 Tooltip
-          isHovered && chip.preview && createElement(
             "div",
             {
+              key,
               style: {
-                position: "absolute",
-                bottom: "calc(100% + 8px)",
-                left: "50%",
-                transform: "translateX(-50%)",
-                padding: "8px 12px",
-                borderRadius: 8,
-                background: "var(--orca-color-bg-1)",
+                position: "relative",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 4,
+                padding: "2px 8px",
+                borderRadius: 12,
+                background: "var(--orca-color-bg-2)",
                 border: "1px solid var(--orca-color-border)",
-                boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
                 fontSize: 12,
-                lineHeight: 1.5,
-                color: "var(--orca-color-text-1)",
-                maxWidth: 280,
-                minWidth: 150,
-                whiteSpace: "pre-wrap",
-                wordBreak: "break-word",
-                zIndex: 1000,
-                pointerEvents: "none",
+                maxWidth: 220,
+                cursor: "default",
+                transition: "all 0.15s ease",
               },
             },
-            // Tooltip 箭头
-            createElement("div", {
-              style: {
-                position: "absolute",
-                bottom: -6,
-                left: "50%",
-                transform: "translateX(-50%)",
-                width: 0,
-                height: 0,
-                borderLeft: "6px solid transparent",
-                borderRight: "6px solid transparent",
-                borderTop: "6px solid var(--orca-color-border)",
-              },
+            createElement("i", {
+              className: icon,
+              style: { fontSize: 12, opacity: 0.7 },
             }),
-            createElement("div", {
-              style: {
-                position: "absolute",
-                bottom: -5,
-                left: "50%",
-                transform: "translateX(-50%)",
-                width: 0,
-                height: 0,
-                borderLeft: "5px solid transparent",
-                borderRight: "5px solid transparent",
-                borderTop: "5px solid var(--orca-color-bg-1)",
+            createElement(
+              "span",
+              {
+                style: {
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                  flex: 1,
+                },
               },
-            }),
-            chip.preview
+              label
+            ),
+            showTokens && chip.tokenCount > 0 && createElement(
+              "span",
+              {
+                style: {
+                  fontSize: 10,
+                  color: "var(--orca-color-text-3)",
+                  marginLeft: 2,
+                  padding: "1px 4px",
+                  borderRadius: 4,
+                  background: "var(--orca-color-bg-3)",
+                },
+              },
+              formatTokenCount(chip.tokenCount)
+            ),
+            createElement(
+              "span",
+              {
+                onClick: () => handleRemove(ref),
+                style: {
+                  cursor: "pointer",
+                  opacity: 0.6,
+                  marginLeft: 2,
+                  display: "inline-flex",
+                  alignItems: "center",
+                },
+                onMouseEnter: (e: any) => (e.currentTarget.style.opacity = "1"),
+                onMouseLeave: (e: any) => (e.currentTarget.style.opacity = "0.6"),
+              },
+              createElement("i", { className: "ti ti-x", style: { fontSize: 12 } })
+            )
           )
         );
       })

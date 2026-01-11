@@ -4,6 +4,7 @@ import { openImagePreview, createImagePreviewItem } from "../services/image-prev
 import LocalGraph from "./LocalGraph";
 import MindMapRenderer from "./MindMapRenderer";
 import type { SourceGroup, WebSearchSource } from "../utils/source-attribution";
+import { withTooltip } from "../utils/orca-tooltip";
 import {
   codeBlockContainerStyle,
   codeBlockHeaderStyle,
@@ -601,44 +602,52 @@ function TableBlock({
       createElement(
         "div",
         { className: "md-table-view-switcher" },
-        createElement(
-          "div",
-          { 
-            className: `md-table-view-btn ${viewMode === "table" ? "active" : ""}`,
-            onClick: () => setViewMode("table"),
-            title: "表格视图"
-          },
-          createElement("i", { className: "ti ti-table" })
+        withTooltip(
+          "表格视图",
+          createElement(
+            "div",
+            { 
+              className: `md-table-view-btn ${viewMode === "table" ? "active" : ""}`,
+              onClick: () => setViewMode("table"),
+            },
+            createElement("i", { className: "ti ti-table" })
+          )
         ),
-        createElement(
-          "div",
-          { 
-            className: `md-table-view-btn ${viewMode === "card" ? "active" : ""}`,
-            onClick: () => setViewMode("card"),
-            title: "卡片视图"
-          },
-          createElement("i", { className: "ti ti-layout-grid" })
+        withTooltip(
+          "卡片视图",
+          createElement(
+            "div",
+            { 
+              className: `md-table-view-btn ${viewMode === "card" ? "active" : ""}`,
+              onClick: () => setViewMode("card"),
+            },
+            createElement("i", { className: "ti ti-layout-grid" })
+          )
         ),
-        createElement(
-          "div",
-          { 
-            className: `md-table-view-btn ${viewMode === "list" ? "active" : ""}`,
-            onClick: () => setViewMode("list"),
-            title: "列表视图"
-          },
-          createElement("i", { className: "ti ti-list" })
+        withTooltip(
+          "列表视图",
+          createElement(
+            "div",
+            { 
+              className: `md-table-view-btn ${viewMode === "list" ? "active" : ""}`,
+              onClick: () => setViewMode("list"),
+            },
+            createElement("i", { className: "ti ti-list" })
+          )
         )
       ),
       // Copy button
-      createElement(
-        "div",
-        { 
-          className: `md-table-copy-btn ${copied ? "copied" : ""}`,
-          onClick: handleCopy,
-          title: "复制为 Markdown 表格"
-        },
-        createElement("i", { className: copied ? "ti ti-check" : "ti ti-copy" }),
-        copied ? "Copied!" : "Copy"
+      withTooltip(
+        "复制为 Markdown 表格",
+        createElement(
+          "div",
+          { 
+            className: `md-table-copy-btn ${copied ? "copied" : ""}`,
+            onClick: handleCopy,
+          },
+          createElement("i", { className: copied ? "ti ti-check" : "ti ti-copy" }),
+          copied ? "Copied!" : "Copy"
+        )
       )
     ),
     // Content based on view mode
@@ -1037,14 +1046,16 @@ function GalleryBlock({ images }: { images: GalleryImage[] }) {
           { className: "md-gallery-lightbox-info" },
           createElement("span", null, `${selectedIndex + 1} / ${images.length}`),
           img.alt && createElement("span", { className: "md-gallery-lightbox-alt" }, img.alt),
-          createElement(
-            "button",
-            { 
-              className: "md-gallery-lightbox-open",
-              onClick: () => openInSystem(img.src),
-              title: "在系统中打开",
-            },
-            createElement("i", { className: "ti ti-external-link" })
+          withTooltip(
+            "在系统中打开",
+            createElement(
+              "button",
+              { 
+                className: "md-gallery-lightbox-open",
+                onClick: () => openInSystem(img.src),
+              },
+              createElement("i", { className: "ti ti-external-link" })
+            )
           )
         )
       )
@@ -1062,23 +1073,27 @@ function GalleryBlock({ images }: { images: GalleryImage[] }) {
       createElement(
         "div",
         { className: "md-gallery-view-switcher" },
-        createElement(
-          "button",
-          { 
-            className: `md-gallery-view-btn ${viewMode === "grid" ? "active" : ""}`,
-            onClick: () => setViewMode("grid"),
-            title: "网格视图",
-          },
-          createElement("i", { className: "ti ti-layout-grid" })
+        withTooltip(
+          "网格视图",
+          createElement(
+            "button",
+            { 
+              className: `md-gallery-view-btn ${viewMode === "grid" ? "active" : ""}`,
+              onClick: () => setViewMode("grid"),
+            },
+            createElement("i", { className: "ti ti-layout-grid" })
+          )
         ),
-        createElement(
-          "button",
-          { 
-            className: `md-gallery-view-btn ${viewMode === "list" ? "active" : ""}`,
-            onClick: () => setViewMode("list"),
-            title: "列表视图",
-          },
-          createElement("i", { className: "ti ti-list" })
+        withTooltip(
+          "列表视图",
+          createElement(
+            "button",
+            { 
+              className: `md-gallery-view-btn ${viewMode === "list" ? "active" : ""}`,
+              onClick: () => setViewMode("list"),
+            },
+            createElement("i", { className: "ti ti-list" })
+          )
         )
       )
     ),
@@ -1254,29 +1269,31 @@ function renderInlineNode(node: MarkdownInlineNode, key: number): any {
             return createElement(
               orca.components.BlockPreviewPopup,
               { key, blockId, delay: 300 },
-              createElement(
-                "span",
-                {
-                  style: {
-                    ...blockLinkContainerStyle,
-                    borderColor: "rgba(255, 100, 100, 0.3)",
-                    background: "rgba(255, 100, 100, 0.05)",
-                  },
-                  onClick: handleBlockNavigation,
-                  title: `⚠️ 链接文本(${linkTextNumber})与实际块ID(${blockId})不匹配`,
-                },
-                // 显示实际的 blockId 而不是错误的链接文本
-                createElement(
-                  "span",
-                  { style: { ...blockLinkTextStyle, color: "var(--orca-color-warning, #f59e0b)" } },
-                  `块 ${blockId}`,
-                ),
-                createElement(
-                  "span",
-                  { style: { ...blockLinkArrowStyle, color: "var(--orca-color-warning, #f59e0b)" } },
-                  createElement("i", { className: "ti ti-alert-triangle" }),
-                ),
-              )
+                withTooltip(
+                  `⚠️ 链接文本(${linkTextNumber})与实际块ID(${blockId})不匹配`,
+                  createElement(
+                    "span",
+                    {
+                      style: {
+                        ...blockLinkContainerStyle,
+                        borderColor: "rgba(255, 100, 100, 0.3)",
+                        background: "rgba(255, 100, 100, 0.05)",
+                      },
+                      onClick: handleBlockNavigation,
+                    },
+                    // 显示实际的 blockId 而不是错误的链接文本
+                    createElement(
+                      "span",
+                      { style: { ...blockLinkTextStyle, color: "var(--orca-color-warning, #f59e0b)" } },
+                      `块 ${blockId}`,
+                    ),
+                    createElement(
+                      "span",
+                      { style: { ...blockLinkArrowStyle, color: "var(--orca-color-warning, #f59e0b)" } },
+                      createElement("i", { className: "ti ti-alert-triangle" }),
+                    ),
+                  )
+                )
             );
           }
         }
@@ -1347,22 +1364,24 @@ function renderInlineNode(node: MarkdownInlineNode, key: number): any {
         );
       }
       // Normal external link - open in system default browser
-      return createElement(
-        "a",
-        {
-          key,
-          href: node.url,
-          target: "_blank",
-          rel: "noopener noreferrer",
-          title: node.url,
-          style: linkStyle,
-          onClick: (e: any) => {
-            e.preventDefault();
-            // Open in system default browser instead of internal webview
-            orca.invokeBackend("shell-open", node.url);
+      return withTooltip(
+        node.url,
+        createElement(
+          "a",
+          {
+            key,
+            href: node.url,
+            target: "_blank",
+            rel: "noopener noreferrer",
+            style: linkStyle,
+            onClick: (e: any) => {
+              e.preventDefault();
+              // Open in system default browser instead of internal webview
+              orca.invokeBackend("shell-open", node.url);
+            },
           },
-        },
-        ...node.children.map((child, i) => renderInlineNode(child, i)),
+          ...node.children.map((child, i) => renderInlineNode(child, i)),
+        )
       );
 
 

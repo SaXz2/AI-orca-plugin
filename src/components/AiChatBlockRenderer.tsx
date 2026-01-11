@@ -15,6 +15,7 @@ import MessageList from "./MessageList";
 import ChatNavigation from "./ChatNavigation";
 import type { Message } from "../services/session-service";
 import { estimateTokens } from "../utils/token-utils";
+import { withTooltip } from "../utils/orca-tooltip";
 
 const React = window.React as unknown as {
   createElement: typeof window.React.createElement;
@@ -54,28 +55,30 @@ function ToolbarButton({ icon, label, onClick, disabled }: {
   onClick: () => void;
   disabled?: boolean;
 }) {
-  return createElement(
-    "button",
-    {
-      onClick,
-      disabled,
-      title: label,
-      style: {
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        padding: "6px",
-        fontSize: "14px",
-        background: "transparent",
-        border: "1px solid var(--orca-color-border)",
-        borderRadius: "6px",
-        color: disabled ? "var(--orca-color-text-3)" : "var(--orca-color-text-2)",
-        cursor: disabled ? "not-allowed" : "pointer",
-        transition: "all 0.2s",
-        userSelect: "none",
+  return withTooltip(
+    label,
+    createElement(
+      "button",
+      {
+        onClick,
+        disabled,
+        style: {
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          padding: "6px",
+          fontSize: "14px",
+          background: "transparent",
+          border: "1px solid var(--orca-color-border)",
+          borderRadius: "6px",
+          color: disabled ? "var(--orca-color-text-3)" : "var(--orca-color-text-2)",
+          cursor: disabled ? "not-allowed" : "pointer",
+          transition: "all 0.2s",
+          userSelect: "none",
+        },
       },
-    },
-    createElement("i", { className: `ti ti-${icon}` })
+      createElement("i", { className: `ti ti-${icon}` })
+    )
   );
 }
 

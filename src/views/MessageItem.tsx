@@ -30,6 +30,7 @@ import {
 import type { Message } from "../services/session-service";
 import type { ToolCallInfo } from "../services/chat-stream-handler";
 import { formatTokenCount } from "../utils/token-utils";
+import { tooltipText, withTooltip } from "../utils/orca-tooltip";
 import { groupSourcesByDomain, normalizeWebSearchResults, type SourceGroup, type WebSearchSource } from "../utils/source-attribution";
 import {
   displaySettingsStore,
@@ -234,21 +235,23 @@ function SourceCardPanel({
           marginBottom: 8,
         },
       },
-      createElement(
-        "div",
-        {
-          style: {
-            fontSize: "12px",
-            fontWeight: 600,
-            color: "var(--orca-color-text-2)",
-            flex: 1,
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
+      withTooltip(
+        activeSource?.domain || group.label,
+        createElement(
+          "div",
+          {
+            style: {
+              fontSize: "12px",
+              fontWeight: 600,
+              color: "var(--orca-color-text-2)",
+              flex: 1,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            },
           },
-          title: activeSource?.domain || group.label,
-        },
-        activeSource?.domain || group.label
+          activeSource?.domain || group.label
+        )
       ),
       canNavigate &&
         createElement(
@@ -262,58 +265,64 @@ function SourceCardPanel({
               fontSize: "11px",
             },
           },
-          createElement(
-            "button",
-            {
-              style: {
-                background: "transparent",
-                border: "none",
-                color: "var(--orca-color-text-3)",
-                cursor: "pointer",
-                padding: 2,
+          withTooltip(
+            "Previous",
+            createElement(
+              "button",
+              {
+                style: {
+                  background: "transparent",
+                  border: "none",
+                  color: "var(--orca-color-text-3)",
+                  cursor: "pointer",
+                  padding: 2,
+                },
+                onClick: (e: any) => {
+                  e.stopPropagation();
+                  setActiveIndex((prev) => (prev - 1 + totalSources) % totalSources);
+                },
               },
-              onClick: (e: any) => {
-                e.stopPropagation();
-                setActiveIndex((prev) => (prev - 1 + totalSources) % totalSources);
-              },
-              title: "Previous",
-            },
-            createElement("i", { className: "ti ti-chevron-left", style: { fontSize: "13px" } })
+              createElement("i", { className: "ti ti-chevron-left", style: { fontSize: "13px" } })
+            )
           ),
           createElement("span", null, `${clampedIndex + 1}/${totalSources}`),
-          createElement(
-            "button",
-            {
-              style: {
-                background: "transparent",
-                border: "none",
-                color: "var(--orca-color-text-3)",
-                cursor: "pointer",
-                padding: 2,
+          withTooltip(
+            "Next",
+            createElement(
+              "button",
+              {
+                style: {
+                  background: "transparent",
+                  border: "none",
+                  color: "var(--orca-color-text-3)",
+                  cursor: "pointer",
+                  padding: 2,
+                },
+                onClick: (e: any) => {
+                  e.stopPropagation();
+                  setActiveIndex((prev) => (prev + 1) % totalSources);
+                },
               },
-              onClick: (e: any) => {
-                e.stopPropagation();
-                setActiveIndex((prev) => (prev + 1) % totalSources);
-              },
-              title: "Next",
-            },
-            createElement("i", { className: "ti ti-chevron-right", style: { fontSize: "13px" } })
+              createElement("i", { className: "ti ti-chevron-right", style: { fontSize: "13px" } })
+            )
           )
         ),
-      createElement(
-        "button",
-        {
-          style: {
-            background: "transparent",
-            border: "none",
-            color: "var(--orca-color-text-3)",
-            cursor: "pointer",
-            padding: 2,
+      withTooltip(
+        "Close",
+        createElement(
+          "button",
+          {
+            style: {
+              background: "transparent",
+              border: "none",
+              color: "var(--orca-color-text-3)",
+              cursor: "pointer",
+              padding: 2,
+            },
+            onClick: onClose,
           },
-          onClick: onClose,
-          title: "Close",
-        },
-        createElement("i", { className: "ti ti-x", style: { fontSize: "14px" } })
+          createElement("i", { className: "ti ti-x", style: { fontSize: "14px" } })
+        )
       )
     ),
     activeSource &&
@@ -355,23 +364,25 @@ function SourceCardPanel({
             },
             activeSource.title
           ),
-          createElement(
-            "button",
-            {
-              style: {
-                background: "transparent",
-                border: "none",
-                color: "var(--orca-color-text-3)",
-                cursor: "pointer",
-                padding: 2,
+          withTooltip(
+            "Open source",
+            createElement(
+              "button",
+              {
+                style: {
+                  background: "transparent",
+                  border: "none",
+                  color: "var(--orca-color-text-3)",
+                  cursor: "pointer",
+                  padding: 2,
+                },
+                onClick: (e: any) => {
+                  e.stopPropagation();
+                  openExternalUrl(activeSource.url);
+                },
               },
-              onClick: (e: any) => {
-                e.stopPropagation();
-                openExternalUrl(activeSource.url);
-              },
-              title: "Open source",
-            },
-            createElement("i", { className: "ti ti-external-link", style: { fontSize: "13px" } })
+              createElement("i", { className: "ti ti-external-link", style: { fontSize: "13px" } })
+            )
           )
         ),
         createElement(
@@ -404,7 +415,7 @@ function SourceCardPanel({
               },
             },
             activeSource.snippet
-          ),
+          )
       )
   );
 }
@@ -608,29 +619,31 @@ function ReasoningBlock({ reasoning, isStreaming }: { reasoning: string; isStrea
           onClick: (e: any) => e.stopPropagation(), // 防止触发折叠
         },
         // 复制按钮
-        createElement(
-          "button",
-          {
-            onClick: handleCopy,
-            style: {
-              padding: "4px 8px",
-              border: "none",
-              borderRadius: "4px",
-              background: "var(--orca-color-bg-4)",
-              color: "var(--orca-color-text-2)",
-              cursor: "pointer",
-              fontSize: "12px",
-              display: "flex",
-              alignItems: "center",
-              gap: "4px",
-              transition: "all 0.2s",
+        withTooltip(
+          "复制推理内容",
+          createElement(
+            "button",
+            {
+              onClick: handleCopy,
+              style: {
+                padding: "4px 8px",
+                border: "none",
+                borderRadius: "4px",
+                background: "var(--orca-color-bg-4)",
+                color: "var(--orca-color-text-2)",
+                cursor: "pointer",
+                fontSize: "12px",
+                display: "flex",
+                alignItems: "center",
+                gap: "4px",
+                transition: "all 0.2s",
+              },
             },
-            title: "复制推理内容",
-          },
-          createElement("i", {
-            className: "ti ti-copy",
-            style: { fontSize: "14px" },
-          })
+            createElement("i", {
+              className: "ti ti-copy",
+              style: { fontSize: "14px" },
+            })
+          )
         )
       ),
       createElement("i", {
@@ -1386,27 +1399,28 @@ export default function MessageItem({
           },
           ...message.files.map((file, index) => {
             const isImage = file.category === "image";
-            return createElement(
-              "div",
-              {
-                key: `${file.path}-${index}`,
-                style: {
-                  borderRadius: "8px",
-                  overflow: "hidden",
-                  maxWidth: isImage ? "200px" : "180px",
-                  cursor: "pointer",
-                  border: isImage ? undefined : "1px solid var(--orca-color-border)",
-                  background: isImage ? undefined : "var(--orca-color-bg-2)",
-                  padding: isImage ? undefined : "8px 12px",
-                  display: isImage ? undefined : "flex",
-                  alignItems: isImage ? undefined : "center",
-                  gap: isImage ? undefined : "8px",
+            return withTooltip(
+              file.name,
+              createElement(
+                "div",
+                {
+                  key: `${file.path}-${index}`,
+                  style: {
+                    borderRadius: "8px",
+                    overflow: "hidden",
+                    maxWidth: isImage ? "200px" : "180px",
+                    cursor: "pointer",
+                    border: isImage ? undefined : "1px solid var(--orca-color-border)",
+                    background: isImage ? undefined : "var(--orca-color-bg-2)",
+                    padding: isImage ? undefined : "8px 12px",
+                    display: isImage ? undefined : "flex",
+                    alignItems: isImage ? undefined : "center",
+                    gap: isImage ? undefined : "8px",
+                  },
+                  onClick: () => {
+                    orca.invokeBackend("shell-open", getFileFullPath(file));
+                  },
                 },
-                onClick: () => {
-                  orca.invokeBackend("shell-open", getFileFullPath(file));
-                },
-                title: file.name,
-              },
               isImage
                 ? createElement("img", {
                     src: getFileDisplayUrl(file),
@@ -1438,6 +1452,7 @@ export default function MessageItem({
                       },
                     }, file.name),
                   ]
+              )
             );
           })
         ),
@@ -1456,34 +1471,36 @@ export default function MessageItem({
             },
           },
           ...message.images.map((img, index) =>
-            createElement(
-              "div",
-              {
-                key: `${img.path}-${index}`,
-                style: {
-                  borderRadius: "8px",
-                  overflow: "hidden",
-                  maxWidth: "200px",
-                  cursor: "pointer",
+            withTooltip(
+              img.name,
+              createElement(
+                "div",
+                {
+                  key: `${img.path}-${index}`,
+                  style: {
+                    borderRadius: "8px",
+                    overflow: "hidden",
+                    maxWidth: "200px",
+                    cursor: "pointer",
+                  },
+                  onClick: () => {
+                    orca.invokeBackend("shell-open", getFileFullPath(img));
+                  },
                 },
-                onClick: () => {
-                  orca.invokeBackend("shell-open", getFileFullPath(img));
-                },
-                title: img.name,
-              },
-              createElement("img", {
-                src: getFileDisplayUrl(img),
-                alt: img.name,
-                style: {
-                  maxWidth: "100%",
-                  maxHeight: "200px",
-                  objectFit: "contain",
-                  display: "block",
-                },
-                onError: (e: any) => {
-                  e.target.style.display = "none";
-                },
-              })
+                createElement("img", {
+                  src: getFileDisplayUrl(img),
+                  alt: img.name,
+                  style: {
+                    maxWidth: "100%",
+                    maxHeight: "200px",
+                    objectFit: "contain",
+                    display: "block",
+                  },
+                  onError: (e: any) => {
+                    e.target.style.display = "none";
+                  },
+                })
+              )
             )
           )
         ),
@@ -1504,9 +1521,11 @@ export default function MessageItem({
             marginBottom: "8px",
           },
         },
-        ...message.contextRefs.map((ref, idx) => createElement(
-          "span",
-          {
+        ...message.contextRefs.map((ref, idx) => withTooltip(
+          ref.blockId ? "点击跳转到页面" : undefined,
+          createElement(
+            "span",
+            {
             key: idx,
             style: {
               display: "inline-flex",
@@ -1530,13 +1549,13 @@ export default function MessageItem({
                 console.error("[MessageItem] Navigation failed:", error);
               }
             } : undefined,
-            title: ref.blockId ? "点击跳转到页面" : undefined,
-          },
-          createElement("i", {
-            className: ref.kind === "page" ? "ti ti-file-text" : "ti ti-hash",
-            style: { fontSize: "12px" },
-          }),
-          ref.title
+            },
+            createElement("i", {
+              className: ref.kind === "page" ? "ti ti-file-text" : "ti ti-hash",
+              style: { fontSize: "12px" },
+            }),
+            ref.title
+          )
         ))
       ),
 
@@ -2017,42 +2036,44 @@ export default function MessageItem({
           // 时间 (controlled by showTimestamps setting)
           showTimestamp && message.createdAt && formatMessageTime(message.createdAt),
           // Token 统计
-          tokenStats && createElement(
-            "span",
-            {
-              style: {
-                display: "inline-flex",
-                alignItems: "center",
-                gap: "4px",
-                fontSize: "11px",
-                color: "var(--orca-color-text-3)",
-                background: "var(--orca-color-bg-3)",
-                padding: "2px 6px",
-                borderRadius: "4px",
-              },
-              title: `本条消息: ${tokenStats.messageTokens} tokens${tokenStats.cost ? ` (${tokenStats.currencySymbol || '$'}${tokenStats.cost.toFixed(4)})` : ''}\n累计上下文: ${tokenStats.cumulativeTokens} tokens${tokenStats.cumulativeCost ? ` (${tokenStats.currencySymbol || '$'}${tokenStats.cumulativeCost.toFixed(4)})` : ''}`,
-            },
-            createElement("i", {
-              className: "ti ti-chart-bar",
-              style: { fontSize: "10px" },
-            }),
-            `${formatTokenCount(tokenStats.messageTokens)}`,
+          tokenStats && withTooltip(
+            tooltipText(`本条消息: ${tokenStats.messageTokens} tokens${tokenStats.cost ? ` (${tokenStats.currencySymbol || '$'}${tokenStats.cost.toFixed(4)})` : ''}\n累计上下文: ${tokenStats.cumulativeTokens} tokens${tokenStats.cumulativeCost ? ` (${tokenStats.currencySymbol || '$'}${tokenStats.cumulativeCost.toFixed(4)})` : ''}`),
             createElement(
               "span",
-              { style: { opacity: 0.6 } },
-              `/ ${formatTokenCount(tokenStats.cumulativeTokens)}`
-            ),
-            // 显示本条消息费用（如果有）
-            tokenStats.cost !== undefined && tokenStats.cost > 0 && createElement(
-              "span",
-              { 
-                style: { 
-                  marginLeft: "4px",
-                  color: "var(--orca-color-warning)",
-                  fontWeight: 500,
-                } 
+              {
+                style: {
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "4px",
+                  fontSize: "11px",
+                  color: "var(--orca-color-text-3)",
+                  background: "var(--orca-color-bg-3)",
+                  padding: "2px 6px",
+                  borderRadius: "4px",
+                },
               },
-              `${tokenStats.currencySymbol || '$'}${tokenStats.cost < 0.001 ? tokenStats.cost.toFixed(5) : tokenStats.cost < 0.01 ? tokenStats.cost.toFixed(4) : tokenStats.cost.toFixed(3)}`
+              createElement("i", {
+                className: "ti ti-chart-bar",
+                style: { fontSize: "10px" },
+              }),
+              `${formatTokenCount(tokenStats.messageTokens)}`,
+              createElement(
+                "span",
+                { style: { opacity: 0.6 } },
+                `/ ${formatTokenCount(tokenStats.cumulativeTokens)}`
+              ),
+              // 显示本条消息费用（如果有）
+              tokenStats.cost !== undefined && tokenStats.cost > 0 && createElement(
+                "span",
+                { 
+                  style: { 
+                    marginLeft: "4px",
+                    color: "var(--orca-color-warning)",
+                    fontWeight: 500,
+                  } 
+                },
+                `${tokenStats.currencySymbol || '$'}${tokenStats.cost < 0.001 ? tokenStats.cost.toFixed(5) : tokenStats.cost < 0.01 ? tokenStats.cost.toFixed(4) : tokenStats.cost.toFixed(3)}`
+              )
             )
           ),
           // 模型名称（仅 AI 消息，显示在最右边）
@@ -2153,72 +2174,82 @@ export default function MessageItem({
           },
         },
         // Copy Button
-        createElement(
-          "button",
-          {
-            style: actionButtonStyle,
-            onClick: handleCopy,
-            title: "Copy message",
-          },
-          createElement("i", { className: "ti ti-copy" })
+        withTooltip(
+          "Copy message",
+          createElement(
+            "button",
+            {
+              style: actionButtonStyle,
+              onClick: handleCopy,
+            },
+            createElement("i", { className: "ti ti-copy" })
+          )
         ),
         // Pin Button (标记重要，压缩时保留)
         onTogglePinned &&
           !isStreaming &&
-          createElement(
-            "button",
-            {
-              style: {
-                ...actionButtonStyle,
-                color: isPinned ? "var(--orca-color-warning)" : undefined,
+          withTooltip(
+            isPinned ? "取消重要标记" : "标记为重要（压缩时保留）",
+            createElement(
+              "button",
+              {
+                style: {
+                  ...actionButtonStyle,
+                  color: isPinned ? "var(--orca-color-warning)" : undefined,
+                },
+                onClick: onTogglePinned,
               },
-              onClick: onTogglePinned,
-              title: isPinned ? "取消重要标记" : "标记为重要（压缩时保留）",
-            },
-            createElement("i", { className: isPinned ? "ti ti-pin-filled" : "ti ti-pin" })
+              createElement("i", { className: isPinned ? "ti ti-pin-filled" : "ti ti-pin" })
+            )
           ),
         // Delete Button
         onDelete &&
           !isStreaming &&
-          createElement(
-            "button",
-            {
-              style: actionButtonStyle,
-              onClick: onDelete,
-              title: "删除此消息",
-            },
-            createElement("i", { className: "ti ti-trash" })
+          withTooltip(
+            "删除此消息",
+            createElement(
+              "button",
+              {
+                style: actionButtonStyle,
+                onClick: onDelete,
+              },
+              createElement("i", { className: "ti ti-trash" })
+            )
           ),
         // Rollback Button (回档到此消息之前)
         onRollback &&
           !isStreaming &&
-          createElement(
-            "button",
-            {
-              style: actionButtonStyle,
-              onClick: onRollback,
-              title: "回档到此处（删除此消息及之后的所有消息）",
-            },
-            createElement("i", { className: "ti ti-arrow-back-up" })
+          withTooltip(
+            "回档到此处（删除此消息及之后的所有消息）",
+            createElement(
+              "button",
+              {
+                style: actionButtonStyle,
+                onClick: onRollback,
+              },
+              createElement("i", { className: "ti ti-arrow-back-up" })
+            )
           ),
         // Save to Journal Button (保存单条消息到日记)
         !isStreaming &&
           message.content &&
-          createElement(
-            "button",
-            {
-              style: actionButtonStyle,
-              onClick: async () => {
-                const result = await saveSingleMessageToJournal(message, message.model);
-                if (result.success) {
-                  orca.notify("success", result.message);
-                } else {
-                  orca.notify("error", result.message);
-                }
+          withTooltip(
+            "保存到日记",
+            createElement(
+              "button",
+              {
+                style: actionButtonStyle,
+                onClick: async () => {
+                  const result = await saveSingleMessageToJournal(message, message.model);
+                  if (result.success) {
+                    orca.notify("success", result.message);
+                  } else {
+                    orca.notify("error", result.message);
+                  }
+                },
               },
-              title: "保存到日记",
-            },
-            createElement("i", { className: "ti ti-notebook" })
+              createElement("i", { className: "ti ti-notebook" })
+            )
           ),
         // Extract Memory Button (Only for AI messages with content)
         isAssistant &&
@@ -2235,14 +2266,16 @@ export default function MessageItem({
         !isUser &&
           isLastAiMessage &&
           onRegenerate &&
-          createElement(
-            "button",
-            {
-              style: actionButtonStyle,
-              onClick: onRegenerate,
-              title: "Regenerate response",
-            },
-            createElement("i", { className: "ti ti-refresh" })
+          withTooltip(
+            "Regenerate response",
+            createElement(
+              "button",
+              {
+                style: actionButtonStyle,
+                onClick: onRegenerate,
+              },
+              createElement("i", { className: "ti ti-refresh" })
+            )
           )
       )
     )

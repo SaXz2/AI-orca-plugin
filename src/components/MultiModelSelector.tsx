@@ -6,6 +6,7 @@
 
 import type { AiChatSettings, AiProvider, ProviderModel, ModelCapability, MODEL_CAPABILITY_LABELS } from "../settings/ai-chat-settings";
 import { multiModelStore, toggleModelSelection, clearModelSelection, toggleMultiModelMode } from "../store/multi-model-store";
+import { withTooltip } from "../utils/orca-tooltip";
 
 const React = window.React as unknown as {
   createElement: typeof window.React.createElement;
@@ -139,13 +140,17 @@ export default function MultiModelSelector({ settings, onClose }: MultiModelSele
   const multiModelSnap = useSnapshot(multiModelStore);
   const [searchQuery, setSearchQuery] = useState("");
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const rawProviders = Array.isArray(settings.providers) ? settings.providers : [];
+  const enabledProviders = rawProviders.filter((provider) => provider.enabled !== false);
+  // 兼容旧配置：如果全部被判定为禁用，仍展示所有提供商
+  const providersForList = enabledProviders.length > 0 ? enabledProviders : rawProviders;
 
   // 按提供商分组的模型列表
   const groupedModels = useMemo(() => {
     const groups: { provider: AiProvider; models: ProviderModel[] }[] = [];
     
-    for (const provider of settings.providers) {
-      if (!provider.enabled) continue;
+    for (const provider of providersForList) {
+      if (!provider.enabled && enabledProviders.length > 0) continue;
       
       const filteredModels = provider.models.filter(model => {
         if (!searchQuery) return true;
@@ -163,10 +168,13 @@ export default function MultiModelSelector({ settings, onClose }: MultiModelSele
     }
     
     return groups;
-  }, [settings.providers, searchQuery]);
+  }, [providersForList, enabledProviders.length, searchQuery]);
 
   const selectedCount = multiModelSnap.selectedModels.length;
   const maxReached = selectedCount >= multiModelSnap.maxModels;
+  const hasEnabledProviders = enabledProviders.some(
+    (provider) => provider.models.length > 0
+  );
 
   // 点击外部关闭
   useEffect(() => {
@@ -312,7 +320,11 @@ export default function MultiModelSelector({ settings, onClose }: MultiModelSele
             fontSize: "13px",
           },
         },
-        searchQuery ? "没有找到匹配的模型" : "没有可用的模型"
+        !hasEnabledProviders
+          ? "没有启用的模型提供商"
+          : searchQuery
+          ? "没有找到匹配的模型"
+          : "没有可用的模型"
       )
     ),
     // Footer actions
@@ -342,7 +354,7 @@ export default function MultiModelSelector({ settings, onClose }: MultiModelSele
             cursor: "pointer",
           },
         },
-        "清空选择"
+        "清空"
       ),
       createElement(
         "button",
@@ -360,7 +372,7 @@ export default function MultiModelSelector({ settings, onClose }: MultiModelSele
             cursor: selectedCount >= 2 ? "pointer" : "not-allowed",
           },
         },
-        selectedCount >= 2 ? "确认" : "至少选择2个"
+        selectedCount >= 2 ? "开始并行" : "至少选择2个"
       )
     )
   );
@@ -398,41 +410,43 @@ export function MultiModelToggleButton({
   return createElement(
     "div",
     { style: { position: "relative" } },
-    createElement(
-      "button",
-      {
-        onClick: handleClick,
-        style: {
-          display: "flex",
-          alignItems: "center",
-          gap: "4px",
-          padding: "4px 8px",
-          border: multiModelSnap.enabled 
-            ? "1px solid var(--orca-color-primary)" 
-            : "1px solid var(--orca-color-border)",
-          borderRadius: "6px",
-          background: multiModelSnap.enabled 
-            ? "var(--orca-color-primary-bg, rgba(0, 123, 255, 0.1))" 
-            : "transparent",
-          color: multiModelSnap.enabled 
-            ? "var(--orca-color-primary)" 
-            : "var(--orca-color-text-2)",
-          fontSize: "12px",
-          cursor: "pointer",
-          transition: "all 0.15s ease",
+    withTooltip(
+      multiModelSnap.enabled
+        ? `多模型并行（${multiModelSnap.selectedModels.length}）`
+        : "启用多模型并行输出",
+      createElement(
+        "button",
+        {
+          onClick: handleClick,
+          style: {
+            display: "flex",
+            alignItems: "center",
+            gap: "4px",
+            padding: "4px 8px",
+            border: multiModelSnap.enabled
+              ? "1px solid var(--orca-color-primary)"
+              : "1px solid var(--orca-color-border)",
+            borderRadius: "6px",
+            background: multiModelSnap.enabled
+              ? "var(--orca-color-primary-bg, rgba(0, 123, 255, 0.1))"
+              : "transparent",
+            color: multiModelSnap.enabled
+              ? "var(--orca-color-primary)"
+              : "var(--orca-color-text-2)",
+            fontSize: "12px",
+            cursor: "pointer",
+            transition: "all 0.15s ease",
+          },
         },
-        title: multiModelSnap.enabled 
-          ? `多模型模式 (${multiModelSnap.selectedModels.length}个)` 
-          : "启用多模型并行输出",
-      },
-      createElement("i", { 
-        className: "ti ti-layout-columns", 
-        style: { fontSize: "14px" } 
-      }),
-      multiModelSnap.enabled && createElement(
-        "span",
-        { style: { fontWeight: 500 } },
-        multiModelSnap.selectedModels.length
+        createElement("i", {
+          className: "ti ti-layout-columns",
+          style: { fontSize: "14px" },
+        }),
+        multiModelSnap.enabled && createElement(
+          "span",
+          { style: { fontWeight: 500 } },
+          multiModelSnap.selectedModels.length
+        )
       )
     ),
     showSelector && createElement(MultiModelSelector, {

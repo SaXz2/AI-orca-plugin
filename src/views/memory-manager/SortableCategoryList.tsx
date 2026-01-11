@@ -4,6 +4,7 @@
  */
 
 import type { PortraitCategory } from "../../store/memory-store";
+import { withTooltip } from "../../utils/orca-tooltip";
 
 const React = window.React as unknown as {
   createElement: typeof window.React.createElement;
@@ -165,33 +166,37 @@ export default function SortableCategoryList({
       createElement(
         "div",
         { style: headerButtonsStyle },
-        createElement(
-          "button",
-          {
-            style: {
-              ...headerBtnStyle,
-              opacity: allCollapsed ? 0.5 : 1,
+        withTooltip(
+          "折叠全部",
+          createElement(
+            "button",
+            {
+              style: {
+                ...headerBtnStyle,
+                opacity: allCollapsed ? 0.5 : 1,
+              },
+              onClick: onCollapseAll,
+              disabled: allCollapsed,
             },
-            onClick: onCollapseAll,
-            title: "折叠全部",
-            disabled: allCollapsed,
-          },
-          createElement("i", { className: "ti ti-fold", style: { fontSize: "12px" } }),
-          "折叠"
+            createElement("i", { className: "ti ti-fold", style: { fontSize: "12px" } }),
+            "折叠"
+          )
         ),
-        createElement(
-          "button",
-          {
-            style: {
-              ...headerBtnStyle,
-              opacity: allExpanded ? 0.5 : 1,
+        withTooltip(
+          "展开全部",
+          createElement(
+            "button",
+            {
+              style: {
+                ...headerBtnStyle,
+                opacity: allExpanded ? 0.5 : 1,
+              },
+              onClick: onExpandAll,
+              disabled: allExpanded,
             },
-            onClick: onExpandAll,
-            title: "展开全部",
-            disabled: allExpanded,
-          },
-          createElement("i", { className: "ti ti-fold-up", style: { fontSize: "12px" } }),
-          "展开"
+            createElement("i", { className: "ti ti-fold-up", style: { fontSize: "12px" } }),
+            "展开"
+          )
         )
       )
     ),

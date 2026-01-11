@@ -9,6 +9,7 @@
  */
 
 import { ensureChatStyles } from "../styles/chat-animations";
+import { withTooltip } from "../utils/orca-tooltip";
 
 const React = window.React as unknown as {
   createElement: typeof window.React.createElement;
@@ -105,26 +106,28 @@ export default function ScrollToBottomButton({
         pointerEvents: visible ? "auto" : "none",
       },
     },
-    createElement(
-      "button",
-      {
-        style: buttonStyle,
-        onClick,
-        onMouseOver: (e: any) => {
-          Object.assign(e.currentTarget.style, buttonHoverStyle);
+    withTooltip(
+      "跳转到最新消息",
+      createElement(
+        "button",
+        {
+          style: buttonStyle,
+          onClick,
+          onMouseOver: (e: any) => {
+            Object.assign(e.currentTarget.style, buttonHoverStyle);
+          },
+          onMouseOut: (e: any) => {
+            Object.assign(e.currentTarget.style, buttonStyle);
+          },
         },
-        onMouseOut: (e: any) => {
-          Object.assign(e.currentTarget.style, buttonStyle);
-        },
-        title: "跳转到最新消息",
-      },
-      createElement("i", {
-        className: "ti ti-arrow-down",
-        style: iconStyle,
-      }),
-      newMessageCount && newMessageCount > 0
-        ? createElement("span", { style: badgeStyle }, newMessageCount > 99 ? "99+" : newMessageCount)
-        : null
+        createElement("i", {
+          className: "ti ti-arrow-down",
+          style: iconStyle,
+        }),
+        newMessageCount && newMessageCount > 0
+          ? createElement("span", { style: badgeStyle }, newMessageCount > 99 ? "99+" : newMessageCount)
+          : null
+      )
     )
   );
 }

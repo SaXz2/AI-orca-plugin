@@ -25,6 +25,7 @@ import {
   TOOL_DISPLAY_NAMES,
   type ToolStatus,
 } from "../store/tool-store";
+import { withTooltip } from "../utils/orca-tooltip";
 
 // 状态图标和颜色
 const STATUS_CONFIG: Record<ToolStatus, { icon: string; color: string; label: string }> = {
@@ -394,28 +395,30 @@ export default function ToolPanel() {
               `${category.tools.length} 个工具`
             ),
             // 分类状态按钮
-            createElement(
-              "button",
-              {
-                onClick: (e: React.MouseEvent) => cycleCategoryStatus(category.name, e),
-                title: "点击切换分类状态",
-                style: {
-                  background: "none",
-                  border: "none",
-                  cursor: "pointer",
-                  padding: "2px 6px",
-                  borderRadius: 4,
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 4,
+            withTooltip(
+              "点击切换分类状态",
+              createElement(
+                "button",
+                {
+                  onClick: (e: React.MouseEvent) => cycleCategoryStatus(category.name, e),
+                  style: {
+                    background: "none",
+                    border: "none",
+                    cursor: "pointer",
+                    padding: "2px 6px",
+                    borderRadius: 4,
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 4,
+                  },
                 },
-              },
-              categoryStatus === "mixed"
-                ? createElement("span", { style: { fontSize: 11, color: "var(--orca-color-text-2)" } }, "混合")
-                : createElement("i", {
-                    className: `ti ${STATUS_CONFIG[categoryStatus].icon}`,
-                    style: { color: STATUS_CONFIG[categoryStatus].color, fontSize: 14 },
-                  })
+                categoryStatus === "mixed"
+                  ? createElement("span", { style: { fontSize: 11, color: "var(--orca-color-text-2)" } }, "混合")
+                  : createElement("i", {
+                      className: `ti ${STATUS_CONFIG[categoryStatus].icon}`,
+                      style: { color: STATUS_CONFIG[categoryStatus].color, fontSize: 14 },
+                    })
+              )
             )
           ),
           // 工具列表
@@ -464,18 +467,20 @@ export default function ToolPanel() {
                     },
                     displayName
                   ),
-                  createElement(
-                    "span",
-                    {
-                      style: {
-                        fontSize: 10,
-                        color: "var(--orca-color-text-3)",
-                        fontFamily: "monospace",
-                        marginLeft: 8,
+                  withTooltip(
+                    toolName,
+                    createElement(
+                      "span",
+                      {
+                        style: {
+                          fontSize: 10,
+                          color: "var(--orca-color-text-3)",
+                          fontFamily: "monospace",
+                          marginLeft: 8,
+                        },
                       },
-                      title: toolName,
-                    },
-                    toolName
+                      toolName
+                    )
                   )
                 );
               })

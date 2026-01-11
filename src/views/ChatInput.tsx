@@ -8,6 +8,7 @@ import type { AiChatSettings, CurrencyType } from "../settings/ai-chat-settings"
 import type { FileRef, VideoProcessMode } from "../services/session-service";
 import { contextStore, addPageById, clearHighPriorityContexts } from "../store/context-store";
 import { estimateTokens, formatTokenCount, estimateCost, formatCost } from "../utils/token-utils";
+import { tooltipText, withTooltip } from "../utils/orca-tooltip";
 import {
   uploadFile,
   getFileDisplayUrl,
@@ -1009,47 +1010,51 @@ export default function ChatInput({
                           gap: "2px",
                         },
                       },
-                      createElement(
-                        "button",
-                        {
-                          onClick: (e: any) => {
-                            e.stopPropagation();
-                            handleSetVideoMode(index, "full");
+                      withTooltip(
+                        "完整识别（画面+音频）",
+                        createElement(
+                          "button",
+                          {
+                            onClick: (e: any) => {
+                              e.stopPropagation();
+                              handleSetVideoMode(index, "full");
+                            },
+                            style: {
+                              padding: "2px 5px",
+                              fontSize: "9px",
+                              border: file.videoMode !== "audio-only" ? "1px solid var(--orca-color-primary)" : "1px solid rgba(255,255,255,0.3)",
+                              borderRadius: "3px",
+                              cursor: "pointer",
+                              background: file.videoMode !== "audio-only" ? "var(--orca-color-primary)" : "rgba(0,0,0,0.6)",
+                              color: "#fff",
+                              fontWeight: file.videoMode !== "audio-only" ? "600" : "400",
+                            },
                           },
-                          style: {
-                            padding: "2px 5px",
-                            fontSize: "9px",
-                            border: file.videoMode !== "audio-only" ? "1px solid var(--orca-color-primary)" : "1px solid rgba(255,255,255,0.3)",
-                            borderRadius: "3px",
-                            cursor: "pointer",
-                            background: file.videoMode !== "audio-only" ? "var(--orca-color-primary)" : "rgba(0,0,0,0.6)",
-                            color: "#fff",
-                            fontWeight: file.videoMode !== "audio-only" ? "600" : "400",
-                          },
-                          title: "完整识别（画面+音频）",
-                        },
-                        "全"
+                          "全"
+                        )
                       ),
-                      createElement(
-                        "button",
-                        {
-                          onClick: (e: any) => {
-                            e.stopPropagation();
-                            handleSetVideoMode(index, "audio-only");
+                      withTooltip(
+                        "仅音频识别",
+                        createElement(
+                          "button",
+                          {
+                            onClick: (e: any) => {
+                              e.stopPropagation();
+                              handleSetVideoMode(index, "audio-only");
+                            },
+                            style: {
+                              padding: "2px 5px",
+                              fontSize: "9px",
+                              border: file.videoMode === "audio-only" ? "1px solid var(--orca-color-primary)" : "1px solid rgba(255,255,255,0.3)",
+                              borderRadius: "3px",
+                              cursor: "pointer",
+                              background: file.videoMode === "audio-only" ? "var(--orca-color-primary)" : "rgba(0,0,0,0.6)",
+                              color: "#fff",
+                              fontWeight: file.videoMode === "audio-only" ? "600" : "400",
+                            },
                           },
-                          style: {
-                            padding: "2px 5px",
-                            fontSize: "9px",
-                            border: file.videoMode === "audio-only" ? "1px solid var(--orca-color-primary)" : "1px solid rgba(255,255,255,0.3)",
-                            borderRadius: "3px",
-                            cursor: "pointer",
-                            background: file.videoMode === "audio-only" ? "var(--orca-color-primary)" : "rgba(0,0,0,0.6)",
-                            color: "#fff",
-                            fontWeight: file.videoMode === "audio-only" ? "600" : "400",
-                          },
-                          title: "仅音频识别",
-                        },
-                        "音"
+                          "音"
+                        )
                       )
                     ),
                   ]
@@ -1059,22 +1064,24 @@ export default function ChatInput({
                       className: getFileIcon(file.name, file.mimeType),
                       style: { fontSize: "20px", color: "var(--orca-color-primary)" },
                     }),
-                    createElement(
-                      "span",
-                      {
-                        key: "name",
-                        style: {
-                          fontSize: "10px",
-                          color: "var(--orca-color-text-2)",
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                          whiteSpace: "nowrap",
-                          maxWidth: "100%",
-                          textAlign: "center",
+                    withTooltip(
+                      file.name,
+                      createElement(
+                        "span",
+                        {
+                          key: "name",
+                          style: {
+                            fontSize: "10px",
+                            color: "var(--orca-color-text-2)",
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            whiteSpace: "nowrap",
+                            maxWidth: "100%",
+                            textAlign: "center",
+                          },
                         },
-                        title: file.name,
-                      },
-                      file.name.length > 12 ? file.name.slice(0, 10) + "..." : file.name
+                        file.name.length > 12 ? file.name.slice(0, 10) + "..." : file.name
+                      )
                     ),
                     // 视频模式切换按钮（无缩略图时）
                     isVideo &&
@@ -1088,73 +1095,79 @@ export default function ChatInput({
                             marginTop: "2px",
                           },
                         },
-                        createElement(
-                          "button",
-                          {
-                            onClick: (e: any) => {
-                              e.stopPropagation();
-                              handleSetVideoMode(index, "full");
+                        withTooltip(
+                          "完整识别（画面+音频）",
+                          createElement(
+                            "button",
+                            {
+                              onClick: (e: any) => {
+                                e.stopPropagation();
+                                handleSetVideoMode(index, "full");
+                              },
+                              style: {
+                                padding: "2px 5px",
+                                fontSize: "9px",
+                                border: file.videoMode !== "audio-only" ? "1px solid var(--orca-color-primary)" : "1px solid var(--orca-color-border)",
+                                borderRadius: "3px",
+                                cursor: "pointer",
+                                background: file.videoMode !== "audio-only" ? "var(--orca-color-primary)" : "var(--orca-color-bg-1)",
+                                color: file.videoMode !== "audio-only" ? "#fff" : "var(--orca-color-text-2)",
+                                fontWeight: file.videoMode !== "audio-only" ? "600" : "400",
+                              },
                             },
-                            style: {
-                              padding: "2px 5px",
-                              fontSize: "9px",
-                              border: file.videoMode !== "audio-only" ? "1px solid var(--orca-color-primary)" : "1px solid var(--orca-color-border)",
-                              borderRadius: "3px",
-                              cursor: "pointer",
-                              background: file.videoMode !== "audio-only" ? "var(--orca-color-primary)" : "var(--orca-color-bg-1)",
-                              color: file.videoMode !== "audio-only" ? "#fff" : "var(--orca-color-text-2)",
-                              fontWeight: file.videoMode !== "audio-only" ? "600" : "400",
-                            },
-                            title: "完整识别（画面+音频）",
-                          },
-                          "全"
+                            "全"
+                          )
                         ),
-                        createElement(
-                          "button",
-                          {
-                            onClick: (e: any) => {
-                              e.stopPropagation();
-                              handleSetVideoMode(index, "audio-only");
+                        withTooltip(
+                          "仅音频识别",
+                          createElement(
+                            "button",
+                            {
+                              onClick: (e: any) => {
+                                e.stopPropagation();
+                                handleSetVideoMode(index, "audio-only");
+                              },
+                              style: {
+                                padding: "2px 5px",
+                                fontSize: "9px",
+                                border: file.videoMode === "audio-only" ? "1px solid var(--orca-color-primary)" : "1px solid var(--orca-color-border)",
+                                borderRadius: "3px",
+                                cursor: "pointer",
+                                background: file.videoMode === "audio-only" ? "var(--orca-color-primary)" : "var(--orca-color-bg-1)",
+                                color: file.videoMode === "audio-only" ? "#fff" : "var(--orca-color-text-2)",
+                                fontWeight: file.videoMode === "audio-only" ? "600" : "400",
+                              },
                             },
-                            style: {
-                              padding: "2px 5px",
-                              fontSize: "9px",
-                              border: file.videoMode === "audio-only" ? "1px solid var(--orca-color-primary)" : "1px solid var(--orca-color-border)",
-                              borderRadius: "3px",
-                              cursor: "pointer",
-                              background: file.videoMode === "audio-only" ? "var(--orca-color-primary)" : "var(--orca-color-bg-1)",
-                              color: file.videoMode === "audio-only" ? "#fff" : "var(--orca-color-text-2)",
-                              fontWeight: file.videoMode === "audio-only" ? "600" : "400",
-                            },
-                            title: "仅音频识别",
-                          },
-                          "音"
+                            "音"
+                          )
                         )
                       ),
                   ],
-              createElement(
-                "button",
-                {
-                  onClick: () => handleRemoveFile(index),
-                  style: {
-                    position: "absolute",
-                    top: "2px",
-                    right: "2px",
-                    width: "18px",
-                    height: "18px",
-                    borderRadius: "50%",
-                    background: "rgba(0,0,0,0.6)",
-                    color: "#fff",
-                    border: "none",
-                    cursor: "pointer",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    fontSize: "10px",
+              withTooltip(
+                "移除文件",
+                createElement(
+                  "button",
+                  {
+                    onClick: () => handleRemoveFile(index),
+                    style: {
+                      position: "absolute",
+                      top: "2px",
+                      right: "2px",
+                      width: "18px",
+                      height: "18px",
+                      borderRadius: "50%",
+                      background: "rgba(0,0,0,0.6)",
+                      color: "#fff",
+                      border: "none",
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      fontSize: "10px",
+                    },
                   },
-                  title: "移除文件",
-                },
-                createElement("i", { className: "ti ti-x" })
+                  createElement("i", { className: "ti ti-x" })
+                )
               )
             );
           }),
@@ -1177,28 +1190,30 @@ export default function ChatInput({
       ),
 
       // 清除上下文提示标签
-      clearContextPending && createElement(
-        "div",
-        {
-          style: {
-            display: "flex",
-            alignItems: "center",
-            gap: "6px",
-            padding: "4px 10px",
-            marginBottom: "8px",
-            background: "var(--orca-color-warning-bg, rgba(255, 193, 7, 0.1))",
-            border: "1px solid var(--orca-color-warning, #ffc107)",
-            borderRadius: "6px",
-            fontSize: "12px",
-            color: "var(--orca-color-warning, #ffc107)",
-            cursor: "pointer",
+      clearContextPending && withTooltip(
+        "点击撤销清除上下文",
+        createElement(
+          "div",
+          {
+            style: {
+              display: "flex",
+              alignItems: "center",
+              gap: "6px",
+              padding: "4px 10px",
+              marginBottom: "8px",
+              background: "var(--orca-color-warning-bg, rgba(255, 193, 7, 0.1))",
+              border: "1px solid var(--orca-color-warning, #ffc107)",
+              borderRadius: "6px",
+              fontSize: "12px",
+              color: "var(--orca-color-warning, #ffc107)",
+              cursor: "pointer",
+            },
+            onClick: handleClearContextClick,
           },
-          onClick: handleClearContextClick,
-          title: "点击撤销清除上下文",
-        },
-        createElement("i", { className: "ti ti-refresh", style: { fontSize: "14px" } }),
-        "清除上下文",
-        createElement("span", { style: { color: "var(--orca-color-text-3)", marginLeft: "4px" } }, "(点击撤销)")
+          createElement("i", { className: "ti ti-refresh", style: { fontSize: "14px" } }),
+          "清除上下文",
+          createElement("span", { style: { color: "var(--orca-color-text-3)", marginLeft: "4px" } }, "(点击撤销)")
+        )
       ),
 
       // Row 1: TextArea
@@ -1266,15 +1281,17 @@ export default function ChatInput({
               ref: addContextBtnRef as any,
               style: { display: "flex", alignItems: "center" },
             },
-            createElement(
-              Button,
-              {
-                variant: "plain",
-                onClick: () => setPickerOpen(!pickerOpen),
-                title: "Add Context (@)",
-                style: { padding: "4px" },
-              },
-              createElement("i", { className: "ti ti-at" })
+            withTooltip(
+              "Add Context (@)",
+              createElement(
+                Button,
+                {
+                  variant: "plain",
+                  onClick: () => setPickerOpen(!pickerOpen),
+                  style: { padding: "4px" },
+                },
+                createElement("i", { className: "ti ti-at" })
+              )
             )
           ),
           // File upload button
@@ -1289,16 +1306,18 @@ export default function ChatInput({
               style: { display: "none" },
               onChange: (e: any) => handleFileSelect(e.target.files),
             }),
-            createElement(
-              Button,
-              {
-                variant: "plain",
-                onClick: handleFileButtonClick,
-                title: "\u6dfb\u52a0\u6587\u4ef6 (\u56fe\u7247\u3001\u6587\u6863\u3001\u4ee3\u7801\u7b49)",
-                style: { padding: "4px" },
-                disabled: isUploading,
-              },
-              createElement("i", { className: isUploading ? "ti ti-loader" : "ti ti-paperclip" })
+            withTooltip(
+              "\u6dfb\u52a0\u6587\u4ef6 (\u56fe\u7247\u3001\u6587\u6863\u3001\u4ee3\u7801\u7b49)",
+              createElement(
+                Button,
+                {
+                  variant: "plain",
+                  onClick: handleFileButtonClick,
+                  style: { padding: "4px" },
+                  disabled: isUploading,
+                },
+                createElement("i", { className: isUploading ? "ti ti-loader" : "ti ti-paperclip" })
+              )
             )
           ),
           createElement(ModelSelectorButton, {
@@ -1306,98 +1325,112 @@ export default function ChatInput({
             onSelect: onModelSelect,
             onUpdateSettings,
           }),
-          !overflowFlags.hideClear && createElement(
-            Button,
-            {
-              variant: "plain",
-              onClick: handleClearContextClick,
-              title: clearContextPending ? "\u64a4\u9500\u6e05\u9664\u4e0a\u4e0b\u6587" : "\u6e05\u9664\u4e0a\u4e0b\u6587\uff08\u5f00\u59cb\u65b0\u5bf9\u8bdd\uff09",
-              style: {
-                padding: "4px",
-                color: clearContextPending ? "var(--orca-color-warning, #ffc107)" : undefined,
+          !overflowFlags.hideClear && withTooltip(
+            clearContextPending ? "\u64a4\u9500\u6e05\u9664\u4e0a\u4e0b\u6587" : "\u6e05\u9664\u4e0a\u4e0b\u6587\uff08\u5f00\u59cb\u65b0\u5bf9\u8bdd\uff09",
+            createElement(
+              Button,
+              {
+                variant: "plain",
+                onClick: handleClearContextClick,
+                style: {
+                  padding: "4px",
+                  color: clearContextPending ? "var(--orca-color-warning, #ffc107)" : undefined,
+                },
               },
-            },
-            createElement("i", { className: "ti ti-refresh" })
+              createElement("i", { className: "ti ti-refresh" })
+            )
           ),
           !overflowFlags.hideMulti && createElement(MultiModelToggleButton, {
             settings,
           }),
           !overflowFlags.hideInjection && createElement(InjectionModeSelector, null),
           !overflowFlags.hideMode && createElement(ModeSelectorButton, null),
-          !overflowFlags.hideWeb && createElement(
-            Button,
-            {
-              variant: "plain",
-              onClick: toggleWebSearch,
-              title: toolSnap.webSearchEnabled ? "\u5173\u95ed\u8054\u7f51\u641c\u7d22" : "\u5f00\u542f\u8054\u7f51\u641c\u7d22",
-              style: {
-                padding: "4px",
-                color: toolSnap.webSearchEnabled ? "var(--orca-color-primary, #007bff)" : undefined,
-                background: toolSnap.webSearchEnabled ? "var(--orca-color-primary-bg, rgba(0, 123, 255, 0.1))" : undefined,
-                borderRadius: "4px",
+          !overflowFlags.hideWeb && withTooltip(
+            toolSnap.webSearchEnabled ? "\u5173\u95ed\u8054\u7f51\u641c\u7d22" : "\u5f00\u542f\u8054\u7f51\u641c\u7d22",
+            createElement(
+              Button,
+              {
+                variant: "plain",
+                onClick: toggleWebSearch,
+                style: {
+                  padding: "4px",
+                  color: toolSnap.webSearchEnabled ? "var(--orca-color-primary, #007bff)" : undefined,
+                  background: toolSnap.webSearchEnabled ? "var(--orca-color-primary-bg, rgba(0, 123, 255, 0.1))" : undefined,
+                  borderRadius: "4px",
+                },
               },
-            },
-            createElement("i", { className: "ti ti-world-search" })
+              createElement("i", { className: "ti ti-world-search" })
+            )
           ),
-          !overflowFlags.hideRag && createElement(
-            Button,
-            {
-              variant: "plain",
-              onClick: toggleAgenticRAG,
-              title: toolSnap.agenticRAGEnabled
+          !overflowFlags.hideRag && withTooltip(
+            tooltipText(
+              toolSnap.agenticRAGEnabled
                 ? "\u5173\u95ed\u6df1\u5ea6\u68c0\u7d22\uff08Agentic RAG\uff09\\n\u5f53\u524d\uff1aAI \u4f1a\u591a\u8f6e\u8fed\u4ee3\u68c0\u7d22\uff0c\u6d88\u8017\u66f4\u591atoken"
-                : "\u5f00\u542f\u6df1\u5ea6\u68c0\u7d22\uff08Agentic RAG\uff09\\n\u5f00\u542f\u540e\uff1aAI \u4f1a\u81ea\u4e3b\u89c4\u5212\u68c0\u7d22\u7b56\u7565\uff0c\u591a\u8f6e\u8fed\u4ee3\u76f4\u5230\u4fe1\u606f\u5145\u8db3",
-              style: {
-                padding: "4px",
-                color: toolSnap.agenticRAGEnabled ? "var(--orca-color-warning, #f59e0b)" : undefined,
-                background: toolSnap.agenticRAGEnabled ? "rgba(245, 158, 11, 0.1)" : undefined,
-                borderRadius: "4px",
+                : "\u5f00\u542f\u6df1\u5ea6\u68c0\u7d22\uff08Agentic RAG\uff09\\n\u5f00\u542f\u540e\uff1aAI \u4f1a\u81ea\u4e3b\u89c4\u5212\u68c0\u7d22\u7b56\u7565\uff0c\u591a\u8f6e\u8fed\u4ee3\u76f4\u5230\u4fe1\u606f\u5145\u8db3"
+            ),
+            createElement(
+              Button,
+              {
+                variant: "plain",
+                onClick: toggleAgenticRAG,
+                style: {
+                  padding: "4px",
+                  color: toolSnap.agenticRAGEnabled ? "var(--orca-color-warning, #f59e0b)" : undefined,
+                  background: toolSnap.agenticRAGEnabled ? "rgba(245, 158, 11, 0.1)" : undefined,
+                  borderRadius: "4px",
+                },
               },
-            },
-            createElement("i", { className: "ti ti-brain" })
+              createElement("i", { className: "ti ti-brain" })
+            )
           ),
-          !overflowFlags.hideScript && createElement(
-            Button,
-            {
-              variant: "plain",
-              onClick: toggleScriptAnalysis,
-              title: toolSnap.scriptAnalysisEnabled
+          !overflowFlags.hideScript && withTooltip(
+            tooltipText(
+              toolSnap.scriptAnalysisEnabled
                 ? "\u5173\u95ed\u6570\u636e\u5206\u6790\\n\u5f53\u524d\uff1aAI \u53ef\u4ee5\u6267\u884c\u811a\u672c\u5206\u6790\u7b14\u8bb0\u6570\u636e"
-                : "\u5f00\u542f\u6570\u636e\u5206\u6790\\n\u5f00\u542f\u540e\uff1aAI \u53ef\u4ee5\u7edf\u8ba1\u8bcd\u9891\u3001\u641c\u7d22\u6b21\u6570\u7b49\uff0c\u8fd4\u56de\u771f\u5b9e\u6570\u636e",
-              style: {
-                padding: "4px",
-                color: toolSnap.scriptAnalysisEnabled ? "var(--orca-color-success, #10b981)" : undefined,
-                background: toolSnap.scriptAnalysisEnabled ? "rgba(16, 185, 129, 0.1)" : undefined,
-                borderRadius: "4px",
+                : "\u5f00\u542f\u6570\u636e\u5206\u6790\\n\u5f00\u542f\u540e\uff1aAI \u53ef\u4ee5\u7edf\u8ba1\u8bcd\u9891\u3001\u641c\u7d22\u6b21\u6570\u7b49\uff0c\u8fd4\u56de\u771f\u5b9e\u6570\u636e"
+            ),
+            createElement(
+              Button,
+              {
+                variant: "plain",
+                onClick: toggleScriptAnalysis,
+                style: {
+                  padding: "4px",
+                  color: toolSnap.scriptAnalysisEnabled ? "var(--orca-color-success, #10b981)" : undefined,
+                  background: toolSnap.scriptAnalysisEnabled ? "rgba(16, 185, 129, 0.1)" : undefined,
+                  borderRadius: "4px",
+                },
               },
-            },
-            createElement("i", { className: "ti ti-chart-bar" })
+              createElement("i", { className: "ti ti-chart-bar" })
+            )
           ),
         ),
 
         createElement(
           "div",
           { style: { display: "flex", alignItems: "center", gap: 8, flexShrink: 0 } },
-          showTokenIndicator && createElement(
-            "div",
-            {
-              style: {
-                display: "flex",
-                alignItems: "center",
-                gap: "4px",
-                fontSize: "11px",
-                color: "var(--orca-color-text-3)",
-                padding: "2px 8px",
-                background: "var(--orca-color-bg-3)",
-                borderRadius: "10px",
-                whiteSpace: "nowrap",
-                flexShrink: 0,
+          showTokenIndicator && withTooltip(
+            tooltipText(`预估输入: ${formatTokenCount(tokenEstimate.inputTokens)} tokens
+预估输出: ${formatTokenCount(tokenEstimate.outputTokens)} tokens`),
+            createElement(
+              "div",
+              {
+                style: {
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "4px",
+                  fontSize: "11px",
+                  color: "var(--orca-color-text-3)",
+                  padding: "2px 8px",
+                  background: "var(--orca-color-bg-3)",
+                  borderRadius: "10px",
+                  whiteSpace: "nowrap",
+                  flexShrink: 0,
+                },
               },
-              title: `预估输入: ${formatTokenCount(tokenEstimate.inputTokens)} tokens
-预估输出: ${formatTokenCount(tokenEstimate.outputTokens)} tokens`,
-            },
-            createElement("i", { className: "ti ti-coins", style: { fontSize: "12px" } }),
-            `~${formatTokenCount(tokenEstimate.inputTokens)}`
+              createElement("i", { className: "ti ti-coins", style: { fontSize: "12px" } }),
+              `~${formatTokenCount(tokenEstimate.inputTokens)}`
+            )
           ),
           overflowFlags.hasOverflow && createElement(
             ContextMenu as any,
@@ -1448,120 +1481,132 @@ export default function ChatInput({
                     "div",
                     { style: overflowItemStyle },
                     createElement("span", { style: overflowItemLabelStyle }, "\u8054\u7f51\u641c\u7d22"),
-                    createElement(
-                      Button,
-                      {
-                        variant: "plain",
-                        onClick: toggleWebSearch,
-                        title: toolSnap.webSearchEnabled ? "\u5173\u95ed\u8054\u7f51\u641c\u7d22" : "\u5f00\u542f\u8054\u7f51\u641c\u7d22",
-                        style: {
-                          ...overflowToggleButtonStyle,
-                          color: toolSnap.webSearchEnabled ? "var(--orca-color-primary, #007bff)" : undefined,
-                          background: toolSnap.webSearchEnabled ? "var(--orca-color-primary-bg, rgba(0, 123, 255, 0.1))" : undefined,
+                    withTooltip(
+                      toolSnap.webSearchEnabled ? "\u5173\u95ed\u8054\u7f51\u641c\u7d22" : "\u5f00\u542f\u8054\u7f51\u641c\u7d22",
+                      createElement(
+                        Button,
+                        {
+                          variant: "plain",
+                          onClick: toggleWebSearch,
+                          style: {
+                            ...overflowToggleButtonStyle,
+                            color: toolSnap.webSearchEnabled ? "var(--orca-color-primary, #007bff)" : undefined,
+                            background: toolSnap.webSearchEnabled ? "var(--orca-color-primary-bg, rgba(0, 123, 255, 0.1))" : undefined,
+                          },
                         },
-                      },
-                      createElement("i", { className: "ti ti-world-search" })
+                        createElement("i", { className: "ti ti-world-search" })
+                      )
                     )
                   ),
                   overflowFlags.hideRag && createElement(
                     "div",
                     { style: overflowItemStyle },
                     createElement("span", { style: overflowItemLabelStyle }, "\u6df1\u5ea6\u68c0\u7d22"),
-                    createElement(
-                      Button,
-                      {
-                        variant: "plain",
-                        onClick: toggleAgenticRAG,
-                        title: toolSnap.agenticRAGEnabled ? "\u5173\u95ed\u6df1\u5ea6\u68c0\u7d22" : "\u5f00\u542f\u6df1\u5ea6\u68c0\u7d22",
-                        style: {
-                          ...overflowToggleButtonStyle,
-                          color: toolSnap.agenticRAGEnabled ? "var(--orca-color-warning, #f59e0b)" : undefined,
-                          background: toolSnap.agenticRAGEnabled ? "rgba(245, 158, 11, 0.1)" : undefined,
+                    withTooltip(
+                      toolSnap.agenticRAGEnabled ? "\u5173\u95ed\u6df1\u5ea6\u68c0\u7d22" : "\u5f00\u542f\u6df1\u5ea6\u68c0\u7d22",
+                      createElement(
+                        Button,
+                        {
+                          variant: "plain",
+                          onClick: toggleAgenticRAG,
+                          style: {
+                            ...overflowToggleButtonStyle,
+                            color: toolSnap.agenticRAGEnabled ? "var(--orca-color-warning, #f59e0b)" : undefined,
+                            background: toolSnap.agenticRAGEnabled ? "rgba(245, 158, 11, 0.1)" : undefined,
+                          },
                         },
-                      },
-                      createElement("i", { className: "ti ti-brain" })
+                        createElement("i", { className: "ti ti-brain" })
+                      )
                     )
                   ),
                   overflowFlags.hideScript && createElement(
                     "div",
                     { style: overflowItemStyle },
                     createElement("span", { style: overflowItemLabelStyle }, "\u6570\u636e\u5206\u6790"),
-                    createElement(
-                      Button,
-                      {
-                        variant: "plain",
-                        onClick: toggleScriptAnalysis,
-                        title: toolSnap.scriptAnalysisEnabled ? "\u5173\u95ed\u6570\u636e\u5206\u6790" : "\u5f00\u542f\u6570\u636e\u5206\u6790",
-                        style: {
-                          ...overflowToggleButtonStyle,
-                          color: toolSnap.scriptAnalysisEnabled ? "var(--orca-color-success, #10b981)" : undefined,
-                          background: toolSnap.scriptAnalysisEnabled ? "rgba(16, 185, 129, 0.1)" : undefined,
+                    withTooltip(
+                      toolSnap.scriptAnalysisEnabled ? "\u5173\u95ed\u6570\u636e\u5206\u6790" : "\u5f00\u542f\u6570\u636e\u5206\u6790",
+                      createElement(
+                        Button,
+                        {
+                          variant: "plain",
+                          onClick: toggleScriptAnalysis,
+                          style: {
+                            ...overflowToggleButtonStyle,
+                            color: toolSnap.scriptAnalysisEnabled ? "var(--orca-color-success, #10b981)" : undefined,
+                            background: toolSnap.scriptAnalysisEnabled ? "rgba(16, 185, 129, 0.1)" : undefined,
+                          },
                         },
-                      },
-                      createElement("i", { className: "ti ti-chart-bar" })
+                        createElement("i", { className: "ti ti-chart-bar" })
+                      )
                     )
                   ),
                 ),
             },
             (openMenu: (e: any) => void) =>
-              createElement(
-                Button,
-                {
-                  variant: "plain",
-                  onClick: openMenu,
-                  title: "\u66f4\u591a\u64cd\u4f5c",
-                  style: { padding: "4px" },
-                },
-                createElement("i", { className: "ti ti-dots" })
+              withTooltip(
+                "\u66f4\u591a\u64cd\u4f5c",
+                createElement(
+                  Button,
+                  {
+                    variant: "plain",
+                    onClick: openMenu,
+                    style: { padding: "4px" },
+                  },
+                  createElement("i", { className: "ti ti-dots" })
+                )
               )
           ),
           // Right Tool: Send/Stop Button
           disabled && onStop
-            ? createElement(
-                Button,
-                {
-                  variant: "solid",
-                  onClick: onStop,
-                  title: "Stop generation",
-                  style: {
-                    ...sendButtonStyle(true),
-                    borderRadius: "50%",
-                    width: "32px",
-                    height: "32px",
-                    padding: 0,
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    background: "var(--orca-color-error, #cf222e)",
+            ? withTooltip(
+                "Stop generation",
+                createElement(
+                  Button,
+                  {
+                    variant: "solid",
+                    onClick: onStop,
+                    style: {
+                      ...sendButtonStyle(true),
+                      borderRadius: "50%",
+                      width: "32px",
+                      height: "32px",
+                      padding: 0,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      background: "var(--orca-color-error, #cf222e)",
+                    },
                   },
-                },
-                createElement("i", { className: "ti ti-player-stop" })
+                  createElement("i", { className: "ti ti-player-stop" })
+                )
               )
-            : createElement(
-                Button,
-                {
-                  variant: "solid",
-                  disabled: !canSend,
-                  onClick: handleSend,
-                  title: isSending ? "正在加载内容..." : "发送消息",
-                  style: {
-                    ...sendButtonStyle(canSend),
-                    borderRadius: "50%",
-                    width: "32px",
-                    height: "32px",
-                    padding: 0,
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    opacity: isSending ? 0.7 : 1,
+            : withTooltip(
+                isSending ? "正在加载内容..." : "发送消息",
+                createElement(
+                  Button,
+                  {
+                    variant: "solid",
+                    disabled: !canSend,
+                    onClick: handleSend,
+                    style: {
+                      ...sendButtonStyle(canSend),
+                      borderRadius: "50%",
+                      width: "32px",
+                      height: "32px",
+                      padding: 0,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      opacity: isSending ? 0.7 : 1,
+                    },
                   },
-                },
-                createElement("i", {
-                  className: isSending ? "ti ti-loader" : "ti ti-arrow-up",
-                  style: isSending ? {
-                    animation: "spin 1s linear infinite",
-                  } : undefined,
-                })
+                  createElement("i", {
+                    className: isSending ? "ti ti-loader" : "ti ti-arrow-up",
+                    style: isSending ? {
+                      animation: "spin 1s linear infinite",
+                    } : undefined,
+                  })
+                )
               )
         )
       )

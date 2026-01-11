@@ -18,6 +18,7 @@ const { useSnapshot } = (window as any).Valtio as {
 };
 
 import { skillStore } from "../store/skill-store";
+import { withTooltip } from "../utils/orca-tooltip";
 import {
   createSkillTemplate,
   deleteSkill,
@@ -1082,32 +1083,39 @@ export default function SkillManagerModal({ isOpen, onClose }: SkillManagerModal
           "div",
           { style: { display: "flex", justifyContent: "space-between", alignItems: "center" } },
           createElement("div", { style: titleStyle }, `编辑技能：${editingSkill.name}`),
-          createElement(
-            Button,
-            { variant: "plain", onClick: handleCloseEditor, title: "关闭" },
-            createElement("i", { className: "ti ti-x" })
+          withTooltip(
+            "关闭",
+            createElement(
+              Button,
+              { variant: "plain", onClick: handleCloseEditor },
+              createElement("i", { className: "ti ti-x" })
+            )
           )
         ),
         createElement(
           "div",
           { style: modeToggleStyle },
-          createElement(
-            Button,
-            {
-              variant: editorMode === "simple" ? "secondary" : "plain",
-              onClick: () => handleSwitchMode("simple"),
-              title: simpleSupported ? "使用简化编辑" : formHint ?? "尝试简化编辑",
-            },
-            "简化模式"
+          withTooltip(
+            simpleSupported ? "使用简化编辑" : formHint ?? "尝试简化编辑",
+            createElement(
+              Button,
+              {
+                variant: editorMode === "simple" ? "secondary" : "plain",
+                onClick: () => handleSwitchMode("simple"),
+              },
+              "简化模式"
+            )
           ),
-          createElement(
-            Button,
-            {
-              variant: editorMode === "advanced" ? "secondary" : "plain",
-              onClick: () => handleSwitchMode("advanced"),
-              title: "使用高级编辑",
-            },
-            "高级模式"
+          withTooltip(
+            "使用高级编辑",
+            createElement(
+              Button,
+              {
+                variant: editorMode === "advanced" ? "secondary" : "plain",
+                onClick: () => handleSwitchMode("advanced"),
+              },
+              "高级模式"
+            )
           )
         ),
         formHint &&
@@ -1193,16 +1201,18 @@ export default function SkillManagerModal({ isOpen, onClose }: SkillManagerModal
                                   createElement(
                                     "div",
                                     { style: stepHeaderStyle },
-                                    createElement(
-                                      "div",
-                                      {
-                                        style: dragHandleStyle,
-                                        draggable: true,
-                                        onDragStart: (event: any) => handleDragStart(step.id, event),
-                                        onDragEnd: handleDragEnd,
-                                        title: "拖拽排序",
-                                      },
-                                      createElement("i", { className: "ti ti-grip-vertical" })
+                                    withTooltip(
+                                      "拖拽排序",
+                                      createElement(
+                                        "div",
+                                        {
+                                          style: dragHandleStyle,
+                                          draggable: true,
+                                          onDragStart: (event: any) => handleDragStart(step.id, event),
+                                          onDragEnd: handleDragEnd,
+                                        },
+                                        createElement("i", { className: "ti ti-grip-vertical" })
+                                      )
                                     ),
                                     createElement(
                                       "div",
@@ -1218,14 +1228,16 @@ export default function SkillManagerModal({ isOpen, onClose }: SkillManagerModal
                                     createElement(
                                       "div",
                                       { style: stepActionsStyle },
-                                      createElement(
-                                        Button,
-                                        {
-                                          variant: "plain",
-                                          onClick: () => handleRemoveStep(step.id),
-                                          title: "删除步骤",
-                                        },
-                                        createElement("i", { className: "ti ti-trash" })
+                                      withTooltip(
+                                        "删除步骤",
+                                        createElement(
+                                          Button,
+                                          {
+                                            variant: "plain",
+                                            onClick: () => handleRemoveStep(step.id),
+                                          },
+                                          createElement("i", { className: "ti ti-trash" })
+                                        )
                                       )
                                     )
                                   ),
@@ -1527,10 +1539,13 @@ export default function SkillManagerModal({ isOpen, onClose }: SkillManagerModal
         "div",
         { style: { display: "flex", justifyContent: "space-between", alignItems: "center" } },
         createElement("div", { style: titleStyle }, "技能管理"),
-        createElement(
-          Button,
-          { variant: "plain", onClick: onClose, title: "关闭" },
-          createElement("i", { className: "ti ti-x" })
+        withTooltip(
+          "关闭",
+          createElement(
+            Button,
+            { variant: "plain", onClick: onClose },
+            createElement("i", { className: "ti ti-x" })
+          )
         )
       ),
       createElement(
@@ -1647,23 +1662,27 @@ export default function SkillManagerModal({ isOpen, onClose }: SkillManagerModal
                     createElement(
                       "div",
                       { style: actionRowStyle },
-                      createElement(
-                        Button,
-                        {
-                          variant: "plain",
-                          onClick: () => handleOpenEditor(skill),
-                          title: "编辑技能",
-                        },
-                        createElement("i", { className: "ti ti-edit" })
+                      withTooltip(
+                        "编辑技能",
+                        createElement(
+                          Button,
+                          {
+                            variant: "plain",
+                            onClick: () => handleOpenEditor(skill),
+                          },
+                          createElement("i", { className: "ti ti-edit" })
+                        )
                       ),
-                      createElement(
-                        Button,
-                        {
-                          variant: "plain",
-                          onClick: () => handleDeleteSkill(skill),
-                          title: "删除技能",
-                        },
-                        createElement("i", { className: "ti ti-trash" })
+                      withTooltip(
+                        "删除技能",
+                        createElement(
+                          Button,
+                          {
+                            variant: "plain",
+                            onClick: () => handleDeleteSkill(skill),
+                          },
+                          createElement("i", { className: "ti ti-trash" })
+                        )
                       )
                     )
                   )

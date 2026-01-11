@@ -9,6 +9,7 @@
 
 import MarkdownMessage from "./MarkdownMessage";
 import TypingIndicator from "./TypingIndicator";
+import { withTooltip } from "../utils/orca-tooltip";
 
 const React = window.React as unknown as {
   createElement: typeof window.React.createElement;
@@ -191,48 +192,52 @@ function ModelResponseCard({
           },
           // Copy button
           onCopy &&
-            createElement(
-              "button",
-              {
-                onClick: handleCopy,
-                style: {
-                  padding: "4px 8px",
-                  border: "none",
-                  borderRadius: "4px",
-                  background: "var(--orca-color-bg-3)",
-                  color: "var(--orca-color-text-2)",
-                  cursor: "pointer",
-                  fontSize: "12px",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "4px",
+            withTooltip(
+              "复制内容",
+              createElement(
+                "button",
+                {
+                  onClick: handleCopy,
+                  style: {
+                    padding: "4px 8px",
+                    border: "none",
+                    borderRadius: "4px",
+                    background: "var(--orca-color-bg-3)",
+                    color: "var(--orca-color-text-2)",
+                    cursor: "pointer",
+                    fontSize: "12px",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "4px",
+                  },
                 },
-                title: "复制内容",
-              },
-              createElement("i", { className: "ti ti-copy", style: { fontSize: "14px" } })
+                createElement("i", { className: "ti ti-copy", style: { fontSize: "14px" } })
+              )
             ),
           // Adopt button
           onAdopt &&
-            createElement(
-              "button",
-              {
-                onClick: handleAdopt,
-                style: {
-                  padding: "4px 8px",
-                  border: "none",
-                  borderRadius: "4px",
-                  background: "var(--orca-color-primary)",
-                  color: "white",
-                  cursor: "pointer",
-                  fontSize: "12px",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "4px",
+            withTooltip(
+              "采用此回答",
+              createElement(
+                "button",
+                {
+                  onClick: handleAdopt,
+                  style: {
+                    padding: "4px 8px",
+                    border: "none",
+                    borderRadius: "4px",
+                    background: "var(--orca-color-primary)",
+                    color: "white",
+                    cursor: "pointer",
+                    fontSize: "12px",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "4px",
+                  },
                 },
-                title: "采用此回答",
-              },
-              createElement("i", { className: "ti ti-check", style: { fontSize: "14px" } }),
-              "采用"
+                createElement("i", { className: "ti ti-check", style: { fontSize: "14px" } }),
+                "采用"
+              )
             )
         )
       )

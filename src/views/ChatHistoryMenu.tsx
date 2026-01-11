@@ -10,6 +10,7 @@
 
 import type { SavedSession } from "../services/session-service";
 import { formatSessionTime, generateSessionTitle } from "../services/session-service";
+import { withTooltip } from "../utils/orca-tooltip";
 
 const React = window.React as unknown as {
   createElement: typeof window.React.createElement;
@@ -371,81 +372,89 @@ export default function ChatHistoryMenu({
             },
           },
           onRename &&
-            createElement(
-              "button",
-              {
-                style: { ...actionButtonStyle, opacity: isHovered ? 0.6 : 0 },
-                onClick: (e: any) => handleStartRename(e, session),
-                title: "重命名",
-                onMouseOver: (e: any) => {
-                  e.currentTarget.style.opacity = "1";
-                  e.currentTarget.style.color = "var(--orca-color-primary)";
+            withTooltip(
+              "重命名",
+              createElement(
+                "button",
+                {
+                  style: { ...actionButtonStyle, opacity: isHovered ? 0.6 : 0 },
+                  onClick: (e: any) => handleStartRename(e, session),
+                  onMouseOver: (e: any) => {
+                    e.currentTarget.style.opacity = "1";
+                    e.currentTarget.style.color = "var(--orca-color-primary)";
+                  },
+                  onMouseOut: (e: any) => {
+                    e.currentTarget.style.opacity = "0.6";
+                    e.currentTarget.style.color = "var(--orca-color-text-3)";
+                  },
                 },
-                onMouseOut: (e: any) => {
-                  e.currentTarget.style.opacity = "0.6";
-                  e.currentTarget.style.color = "var(--orca-color-text-3)";
-                },
-              },
-              createElement("i", { className: "ti ti-edit", style: { fontSize: 12 } })
+                createElement("i", { className: "ti ti-edit", style: { fontSize: 12 } })
+              )
             ),
           onTogglePin &&
+            withTooltip(
+              isPinned ? "取消置顶" : "置顶",
+              createElement(
+                "button",
+                {
+                  style: { ...actionButtonStyle, opacity: isHovered ? 0.6 : 0 },
+                  onClick: (e: any) => handleTogglePin(e, session.id),
+                  onMouseOver: (e: any) => {
+                    e.currentTarget.style.opacity = "1";
+                    e.currentTarget.style.color = "var(--orca-color-primary)";
+                  },
+                  onMouseOut: (e: any) => {
+                    e.currentTarget.style.opacity = "0.6";
+                    e.currentTarget.style.color = "var(--orca-color-text-3)";
+                  },
+                },
+                createElement("i", {
+                  className: isPinned ? "ti ti-pinned-off" : "ti ti-pin",
+                  style: { fontSize: 12 },
+                })
+              )
+            ),
+          onToggleFavorite &&
+            withTooltip(
+              session.favorited ? "取消收藏" : "收藏",
+              createElement(
+                "button",
+                {
+                  style: { ...actionButtonStyle, opacity: isHovered || session.favorited ? 0.6 : 0 },
+                  onClick: (e: any) => handleToggleFavorite(e, session.id),
+                  onMouseOver: (e: any) => {
+                    e.currentTarget.style.opacity = "1";
+                    e.currentTarget.style.color = session.favorited ? "#fbbf24" : "var(--orca-color-primary)";
+                  },
+                  onMouseOut: (e: any) => {
+                    e.currentTarget.style.opacity = session.favorited ? "0.6" : "0.6";
+                    e.currentTarget.style.color = session.favorited ? "#fbbf24" : "var(--orca-color-text-3)";
+                  },
+                },
+                createElement("i", {
+                  className: session.favorited ? "ti ti-star-filled" : "ti ti-star",
+                  style: { fontSize: 12, color: session.favorited ? "#fbbf24" : undefined },
+                })
+              )
+            ),
+          withTooltip(
+            "删除",
             createElement(
               "button",
               {
                 style: { ...actionButtonStyle, opacity: isHovered ? 0.6 : 0 },
-                onClick: (e: any) => handleTogglePin(e, session.id),
-                title: isPinned ? "取消置顶" : "置顶",
+                onClick: (e: any) => handleDelete(e, session.id),
                 onMouseOver: (e: any) => {
                   e.currentTarget.style.opacity = "1";
-                  e.currentTarget.style.color = "var(--orca-color-primary)";
+                  e.currentTarget.style.color = "var(--orca-color-danger, #dc3545)";
                 },
                 onMouseOut: (e: any) => {
                   e.currentTarget.style.opacity = "0.6";
                   e.currentTarget.style.color = "var(--orca-color-text-3)";
                 },
               },
-              createElement("i", {
-                className: isPinned ? "ti ti-pinned-off" : "ti ti-pin",
-                style: { fontSize: 12 },
-              })
-            ),
-          onToggleFavorite &&
-            createElement(
-              "button",
-              {
-                style: { ...actionButtonStyle, opacity: isHovered || session.favorited ? 0.6 : 0 },
-                onClick: (e: any) => handleToggleFavorite(e, session.id),
-                title: session.favorited ? "取消收藏" : "收藏",
-                onMouseOver: (e: any) => {
-                  e.currentTarget.style.opacity = "1";
-                  e.currentTarget.style.color = session.favorited ? "#fbbf24" : "var(--orca-color-primary)";
-                },
-                onMouseOut: (e: any) => {
-                  e.currentTarget.style.opacity = session.favorited ? "0.6" : "0.6";
-                  e.currentTarget.style.color = session.favorited ? "#fbbf24" : "var(--orca-color-text-3)";
-                },
-              },
-              createElement("i", {
-                className: session.favorited ? "ti ti-star-filled" : "ti ti-star",
-                style: { fontSize: 12, color: session.favorited ? "#fbbf24" : undefined },
-              })
-            ),
-          createElement(
-            "button",
-            {
-              style: { ...actionButtonStyle, opacity: isHovered ? 0.6 : 0 },
-              onClick: (e: any) => handleDelete(e, session.id),
-              title: "删除",
-              onMouseOver: (e: any) => {
-                e.currentTarget.style.opacity = "1";
-                e.currentTarget.style.color = "var(--orca-color-danger, #dc3545)";
-              },
-              onMouseOut: (e: any) => {
-                e.currentTarget.style.opacity = "0.6";
-                e.currentTarget.style.color = "var(--orca-color-text-3)";
-              },
-            },
-            createElement("i", { className: "ti ti-trash", style: { fontSize: 12 } })
+              createElement("i", { className: "ti ti-trash", style: { fontSize: 12 } })
+            )
           )
         )
     );
@@ -457,14 +466,16 @@ export default function ChatHistoryMenu({
       ref: menuRef as any,
       style: { position: "relative", display: "inline-block" },
     },
-    createElement(
-      Button,
-      {
-        variant: "plain",
-        onClick: () => setIsOpen(!isOpen),
-        title: "历史对话",
-      },
-      createElement("i", { className: "ti ti-history" })
+    withTooltip(
+      "历史对话",
+      createElement(
+        Button,
+        {
+          variant: "plain",
+          onClick: () => setIsOpen(!isOpen),
+        },
+        createElement("i", { className: "ti ti-history" })
+      )
     ),
     isOpen &&
       createElement(
@@ -482,36 +493,40 @@ export default function ChatHistoryMenu({
           createElement(
             "div",
             { style: { display: "flex", gap: 4 } },
-            createElement(
-              "button",
-              {
-                onClick: () => setShowFavoritesOnly(!showFavoritesOnly),
-                title: showFavoritesOnly ? "显示全部对话" : "只看收藏",
-                style: {
-                  ...newButtonStyle,
-                  background: showFavoritesOnly ? "#fbbf24" : "var(--orca-color-bg-3)",
-                  color: showFavoritesOnly ? "#000" : "var(--orca-color-text-2)",
-                  fontWeight: showFavoritesOnly ? 600 : 400,
+            withTooltip(
+              showFavoritesOnly ? "显示全部对话" : "只看收藏",
+              createElement(
+                "button",
+                {
+                  onClick: () => setShowFavoritesOnly(!showFavoritesOnly),
+                  style: {
+                    ...newButtonStyle,
+                    background: showFavoritesOnly ? "#fbbf24" : "var(--orca-color-bg-3)",
+                    color: showFavoritesOnly ? "#000" : "var(--orca-color-text-2)",
+                    fontWeight: showFavoritesOnly ? 600 : 400,
+                  },
+                  onMouseOver: (e: any) => (e.currentTarget.style.opacity = "0.85"),
+                  onMouseOut: (e: any) => (e.currentTarget.style.opacity = "1"),
                 },
-                onMouseOver: (e: any) => (e.currentTarget.style.opacity = "0.85"),
-                onMouseOut: (e: any) => (e.currentTarget.style.opacity = "1"),
-              },
-              createElement("i", { 
-                className: showFavoritesOnly ? "ti ti-star-filled" : "ti ti-star", 
-                style: { fontSize: 12 } 
-              })
+                createElement("i", { 
+                  className: showFavoritesOnly ? "ti ti-star-filled" : "ti ti-star", 
+                  style: { fontSize: 12 } 
+                })
+              )
             ),
-            createElement(
-              "button",
-              {
-                onClick: handleNewSession,
-                title: "新建对话",
-                style: newButtonStyle,
-                onMouseOver: (e: any) => (e.currentTarget.style.opacity = "0.85"),
-                onMouseOut: (e: any) => (e.currentTarget.style.opacity = "1"),
-              },
-              createElement("i", { className: "ti ti-plus", style: { fontSize: 12 } }),
-              "新建"
+            withTooltip(
+              "新建对话",
+              createElement(
+                "button",
+                {
+                  onClick: handleNewSession,
+                  style: newButtonStyle,
+                  onMouseOver: (e: any) => (e.currentTarget.style.opacity = "0.85"),
+                  onMouseOut: (e: any) => (e.currentTarget.style.opacity = "1"),
+                },
+                createElement("i", { className: "ti ti-plus", style: { fontSize: 12 } }),
+                "新建"
+              )
             )
           )
         ),

@@ -3,6 +3,8 @@
  * 显示AI回复中的引用来源，类似ChatGPT的引用功能
  */
 
+import { withTooltip } from "../utils/orca-tooltip";
+
 const React = window.React as unknown as {
   createElement: typeof window.React.createElement;
   useState: <T>(initial: T | (() => T)) => [T, (next: T | ((prev: T) => T)) => void];
@@ -68,37 +70,39 @@ export default function CitationList({ citations, compact = false, defaultCollap
       },
       ...citations.map((citation, index) => {
         const number = index + 1;
-        return createElement(
-          "button",
-          {
-            key: citation.id,
-            style: {
-              background: "var(--orca-color-primary)",
-              color: "white",
-              border: "none",
-              borderRadius: "50%",
-              width: "18px",
-              height: "18px",
-              fontSize: "10px",
-              fontWeight: 600,
-              cursor: "pointer",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              transition: "all 0.2s",
+        return withTooltip(
+          `${citation.title} - ${citation.domain || citation.url}`,
+          createElement(
+            "button",
+            {
+              key: citation.id,
+              style: {
+                background: "var(--orca-color-primary)",
+                color: "white",
+                border: "none",
+                borderRadius: "50%",
+                width: "18px",
+                height: "18px",
+                fontSize: "10px",
+                fontWeight: 600,
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                transition: "all 0.2s",
+              },
+              onClick: () => handleCitationClick(citation),
+              onMouseEnter: (e: any) => {
+                e.currentTarget.style.transform = "scale(1.1)";
+                e.currentTarget.style.background = "var(--orca-color-primary-hover)";
+              },
+              onMouseLeave: (e: any) => {
+                e.currentTarget.style.transform = "scale(1)";
+                e.currentTarget.style.background = "var(--orca-color-primary)";
+              },
             },
-            onClick: () => handleCitationClick(citation),
-            onMouseEnter: (e: any) => {
-              e.currentTarget.style.transform = "scale(1.1)";
-              e.currentTarget.style.background = "var(--orca-color-primary-hover)";
-            },
-            onMouseLeave: (e: any) => {
-              e.currentTarget.style.transform = "scale(1)";
-              e.currentTarget.style.background = "var(--orca-color-primary)";
-            },
-            title: `${citation.title} - ${citation.domain || citation.url}`,
-          },
-          String(number)
+            String(number)
+          )
         );
       })
     );
@@ -272,39 +276,41 @@ export default function CitationList({ citations, compact = false, defaultCollap
               )
             ),
             // 展开/折叠按钮（仅当有摘要时显示）
-            hasSnippet && createElement(
-              "button",
-              {
-                style: {
-                  background: "none",
-                  border: "none",
-                  color: "var(--orca-color-text-3)",
-                  cursor: "pointer",
-                  padding: "4px",
-                  borderRadius: "4px",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  transition: "all 0.2s",
+            hasSnippet && withTooltip(
+              isExpanded ? "收起摘要" : "展开摘要",
+              createElement(
+                "button",
+                {
+                  style: {
+                    background: "none",
+                    border: "none",
+                    color: "var(--orca-color-text-3)",
+                    cursor: "pointer",
+                    padding: "4px",
+                    borderRadius: "4px",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    transition: "all 0.2s",
+                  },
+                  onClick: (e: any) => {
+                    e.stopPropagation();
+                    toggleExpanded(citation.id);
+                  },
+                  onMouseEnter: (e: any) => {
+                    e.currentTarget.style.background = "var(--orca-color-bg-3)";
+                    e.currentTarget.style.color = "var(--orca-color-text-2)";
+                  },
+                  onMouseLeave: (e: any) => {
+                    e.currentTarget.style.background = "none";
+                    e.currentTarget.style.color = "var(--orca-color-text-3)";
+                  },
                 },
-                onClick: (e: any) => {
-                  e.stopPropagation();
-                  toggleExpanded(citation.id);
-                },
-                onMouseEnter: (e: any) => {
-                  e.currentTarget.style.background = "var(--orca-color-bg-3)";
-                  e.currentTarget.style.color = "var(--orca-color-text-2)";
-                },
-                onMouseLeave: (e: any) => {
-                  e.currentTarget.style.background = "none";
-                  e.currentTarget.style.color = "var(--orca-color-text-3)";
-                },
-                title: isExpanded ? "收起摘要" : "展开摘要",
-              },
-              createElement("i", {
-                className: isExpanded ? "ti ti-chevron-up" : "ti ti-chevron-down",
-                style: { fontSize: "14px" },
-              })
+                createElement("i", {
+                  className: isExpanded ? "ti ti-chevron-up" : "ti ti-chevron-down",
+                  style: { fontSize: "14px" },
+                })
+              )
             ),
             // 外部链接图标
             createElement("i", {

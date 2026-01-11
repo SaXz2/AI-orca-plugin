@@ -4,6 +4,7 @@
  */
 
 import { openImagePreview } from "../services/image-preview-service";
+import { withTooltip } from "../utils/orca-tooltip";
 
 const React = window.React as unknown as {
   createElement: typeof window.React.createElement;
@@ -297,41 +298,43 @@ export default function ImageGallery({
             )
           ),
           // 来源链接按钮
-          image.sourceUrl && isLoaded && createElement(
-            "button",
-            {
-              style: {
-                position: "absolute",
-                top: "4px",
-                right: "4px",
-                background: "rgba(0,0,0,0.6)",
-                border: "none",
-                borderRadius: "3px",
-                color: "white",
-                padding: "3px 5px",
-                fontSize: "clamp(8px, 1.5vw, 10px)", // 响应式字体
-                cursor: "pointer",
-                opacity: 0,
-                transition: "opacity 0.2s",
-                display: "flex",
-                alignItems: "center",
-                gap: "2px",
+          image.sourceUrl && isLoaded && withTooltip(
+            "查看来源",
+            createElement(
+              "button",
+              {
+                style: {
+                  position: "absolute",
+                  top: "4px",
+                  right: "4px",
+                  background: "rgba(0,0,0,0.6)",
+                  border: "none",
+                  borderRadius: "3px",
+                  color: "white",
+                  padding: "3px 5px",
+                  fontSize: "clamp(8px, 1.5vw, 10px)", // 响应式字体
+                  cursor: "pointer",
+                  opacity: 0,
+                  transition: "opacity 0.2s",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "2px",
+                },
+                onClick: (e: any) => handleSourceClick(e, image.sourceUrl!),
+                onMouseEnter: (e: any) => {
+                  e.currentTarget.style.opacity = "1";
+                  e.currentTarget.style.background = "rgba(0,0,0,0.8)";
+                },
+                onMouseLeave: (e: any) => {
+                  e.currentTarget.style.opacity = "0";
+                  e.currentTarget.style.background = "rgba(0,0,0,0.6)";
+                },
               },
-              onClick: (e: any) => handleSourceClick(e, image.sourceUrl!),
-              onMouseEnter: (e: any) => {
-                e.currentTarget.style.opacity = "1";
-                e.currentTarget.style.background = "rgba(0,0,0,0.8)";
-              },
-              onMouseLeave: (e: any) => {
-                e.currentTarget.style.opacity = "0";
-                e.currentTarget.style.background = "rgba(0,0,0,0.6)";
-              },
-              title: "查看来源",
-            },
-            createElement("i", {
-              className: "ti ti-external-link",
-              style: { fontSize: "clamp(10px, 2vw, 12px)" }, // 响应式图标
-            })
+              createElement("i", {
+                className: "ti ti-external-link",
+                style: { fontSize: "clamp(10px, 2vw, 12px)" }, // 响应式图标
+              })
+            )
           )
         );
       })

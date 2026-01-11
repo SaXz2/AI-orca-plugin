@@ -10,6 +10,7 @@
  */
 
 import type { Message } from "../services/session-service";
+import { withTooltip } from "../utils/orca-tooltip";
 
 const React = window.React as unknown as {
   createElement: typeof window.React.createElement;
@@ -336,19 +337,21 @@ export default function ChatNavigation({ messages, listRef, visible = true }: Ch
     "div",
     { ref: panelRef },
     // 目录按钮
-    createElement(
-      "div",
-      {
-        style: isHovered ? tocFabHoverStyle : tocFabStyle,
-        onClick: () => setIsOpen(!isOpen),
-        onMouseEnter: () => setIsHovered(true),
-        onMouseLeave: () => setIsHovered(false),
-        title: "对话目录",
-      },
-      createElement("i", {
-        className: "ti ti-list-tree",
-        style: { fontSize: "18px", color: "var(--orca-color-text-1)" },
-      })
+    withTooltip(
+      "对话目录",
+      createElement(
+        "div",
+        {
+          style: isHovered ? tocFabHoverStyle : tocFabStyle,
+          onClick: () => setIsOpen(!isOpen),
+          onMouseEnter: () => setIsHovered(true),
+          onMouseLeave: () => setIsHovered(false),
+        },
+        createElement("i", {
+          className: "ti ti-list-tree",
+          style: { fontSize: "18px", color: "var(--orca-color-text-1)" },
+        })
+      )
     ),
     // 目录面板
     createElement(
@@ -364,22 +367,24 @@ export default function ChatNavigation({ messages, listRef, visible = true }: Ch
           createElement("i", { className: "ti ti-list-tree" }),
           `目录`
         ),
-        createElement(
-          "div",
-          {
-            style: tocCloseStyle,
-            onClick: () => setIsOpen(false),
-            onMouseEnter: (e: any) => {
-              e.currentTarget.style.background = "var(--orca-color-bg-3)";
-              e.currentTarget.style.color = "var(--orca-color-text-1)";
+        withTooltip(
+          "关闭目录",
+          createElement(
+            "div",
+            {
+              style: tocCloseStyle,
+              onClick: () => setIsOpen(false),
+              onMouseEnter: (e: any) => {
+                e.currentTarget.style.background = "var(--orca-color-bg-3)";
+                e.currentTarget.style.color = "var(--orca-color-text-1)";
+              },
+              onMouseLeave: (e: any) => {
+                e.currentTarget.style.background = "transparent";
+                e.currentTarget.style.color = "var(--orca-color-text-3)";
+              },
             },
-            onMouseLeave: (e: any) => {
-              e.currentTarget.style.background = "transparent";
-              e.currentTarget.style.color = "var(--orca-color-text-3)";
-            },
-            title: "关闭目录",
-          },
-          createElement("i", { className: "ti ti-x" })
+            createElement("i", { className: "ti ti-x" })
+          )
         )
       ),
       // 目录列表

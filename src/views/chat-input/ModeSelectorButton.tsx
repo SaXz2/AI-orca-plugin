@@ -10,6 +10,7 @@
 import type { ChatMode } from "../../store/chat-mode-store";
 import { chatModeStore, setMode } from "../../store/chat-mode-store";
 import { toolStore, toggleToolPanel } from "../../store/tool-store";
+import { withTooltip } from "../../utils/orca-tooltip";
 
 const React = window.React as unknown as {
   createElement: typeof window.React.createElement;
@@ -197,18 +198,20 @@ export default function ModeSelectorButton() {
     "div",
     { style: { display: "flex", alignItems: "center", gap: 4 } },
     // Tool button (only in Agent mode)
-    isAgentMode && createElement(
-      Button,
-      {
-        variant: "plain",
-        onClick: handleToolClick,
-        title: "工具管理",
-        style: {
-          ...selectorButtonStyle,
-          color: toolSnap.showPanel ? "var(--orca-color-primary)" : "var(--orca-color-text-2)",
+    isAgentMode && withTooltip(
+      "工具管理",
+      createElement(
+        Button,
+        {
+          variant: "plain",
+          onClick: handleToolClick,
+          style: {
+            ...selectorButtonStyle,
+            color: toolSnap.showPanel ? "var(--orca-color-primary)" : "var(--orca-color-text-2)",
+          },
         },
-      },
-      createElement("i", { className: "ti ti-tool" })
+        createElement("i", { className: "ti ti-tool" })
+      )
     ),
     // Mode selector
     createElement(
@@ -222,15 +225,17 @@ export default function ModeSelectorButton() {
         menu: renderMenu,
       },
       (openMenu: (e: any) => void) =>
-        createElement(
-          Button,
-          {
-            variant: "plain",
-            onClick: openMenu,
-            title: `${currentConfig.label}: ${currentConfig.description}`,
-            style: selectorButtonStyle,
-          },
-          createElement("i", { className: currentConfig.icon })
+        withTooltip(
+          `${currentConfig.label}: ${currentConfig.description}`,
+          createElement(
+            Button,
+            {
+              variant: "plain",
+              onClick: openMenu,
+              style: selectorButtonStyle,
+            },
+            createElement("i", { className: currentConfig.icon })
+          )
         )
     )
   );

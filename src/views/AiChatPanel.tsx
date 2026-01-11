@@ -10,6 +10,7 @@ import { findViewPanelById } from "../utils/panel-tree";
 import { generateSuggestedReplies } from "../services/suggestion-service";
 import { estimateTokens, formatTokenCount } from "../utils/token-utils";
 import { isSameDay, formatDateSeparator, getTimeGreeting } from "../utils/chat-ui-utils";
+import { withTooltip } from "../utils/orca-tooltip";
 import ChatInput from "./ChatInput";
 import MarkdownMessage from "../components/MarkdownMessage";
 import MessageItem from "./MessageItem";
@@ -261,44 +262,46 @@ function EditableTitle({ title, onSave }: EditableTitleProps) {
     });
   }
 
-  return createElement(
-    "div",
-    {
-      style: {
-        ...headerTitleStyle,
-        cursor: "pointer",
-        display: "flex",
-        alignItems: "center",
-        gap: 4,
-        padding: "2px 4px",
-        borderRadius: 4,
-        transition: "background 0.15s",
+  return withTooltip(
+    "点击编辑标题",
+    createElement(
+      "div",
+      {
+        style: {
+          ...headerTitleStyle,
+          cursor: "pointer",
+          display: "flex",
+          alignItems: "center",
+          gap: 4,
+          padding: "2px 4px",
+          borderRadius: 4,
+          transition: "background 0.15s",
+        },
+        onClick: () => setIsEditing(true),
+        onMouseOver: (e: any) => {
+          e.currentTarget.style.background = "var(--orca-color-bg-2)";
+        },
+        onMouseOut: (e: any) => {
+          e.currentTarget.style.background = "transparent";
+        },
       },
-      onClick: () => setIsEditing(true),
-      title: "点击编辑标题",
-      onMouseOver: (e: any) => {
-        e.currentTarget.style.background = "var(--orca-color-bg-2)";
-      },
-      onMouseOut: (e: any) => {
-        e.currentTarget.style.background = "transparent";
-      },
-    },
-    createElement("span", {
-      style: {
-        overflow: "hidden",
-        textOverflow: "ellipsis",
-        whiteSpace: "nowrap",
-        maxWidth: 180,
-      },
-    }, title),
-    createElement("i", {
-      className: "ti ti-edit",
-      style: {
-        fontSize: 12,
-        opacity: 0.5,
-        flexShrink: 0,
-      },
-    })
+      createElement("span", {
+        style: {
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+          maxWidth: 180,
+        },
+      }, title),
+      createElement("i", {
+        className: "ti ti-edit",
+        style: {
+          fontSize: 12,
+          opacity: 0.5,
+          flexShrink: 0,
+        },
+      })
+    )
   );
 }
 
@@ -2977,37 +2980,43 @@ graph TD
                 border: "1px solid var(--orca-color-border)",
               },
             },
-            createElement(
-              "span",
-              {
-                style: { display: "flex", alignItems: "center", gap: "4px" },
-                title: "系统提示词消耗",
-              },
-              createElement("i", { className: "ti ti-prompt", style: { fontSize: "12px" } }),
-              `提示词 ${formatTokenCount(systemPromptTokens)}`
-            ),
-            memoryTokens > 0 && createElement(
-              "span",
-              {
-                style: { display: "flex", alignItems: "center", gap: "4px" },
-                title: "记忆消耗（用户画像+记忆）",
-              },
-              createElement("i", { className: "ti ti-brain", style: { fontSize: "12px" } }),
-              `记忆 ${formatTokenCount(memoryTokens)}`
-            ),
-            createElement(
-              "span",
-              {
-                style: { 
-                  display: "flex", 
-                  alignItems: "center", 
-                  gap: "4px",
-                  fontWeight: 500,
-                  color: "var(--orca-color-text-2)",
+            withTooltip(
+              "系统提示词消耗",
+              createElement(
+                "span",
+                {
+                  style: { display: "flex", alignItems: "center", gap: "4px" },
                 },
-                title: "基础开销合计",
-              },
-              `= ${formatTokenCount(baseOverheadTokens)} tokens`
+                createElement("i", { className: "ti ti-prompt", style: { fontSize: "12px" } }),
+                `提示词 ${formatTokenCount(systemPromptTokens)}`
+              )
+            ),
+            memoryTokens > 0 && withTooltip(
+              "记忆消耗（用户画像+记忆）",
+              createElement(
+                "span",
+                {
+                  style: { display: "flex", alignItems: "center", gap: "4px" },
+                },
+                createElement("i", { className: "ti ti-brain", style: { fontSize: "12px" } }),
+                `记忆 ${formatTokenCount(memoryTokens)}`
+              )
+            ),
+            withTooltip(
+              "基础开销合计",
+              createElement(
+                "span",
+                {
+                  style: { 
+                    display: "flex", 
+                    alignItems: "center", 
+                    gap: "4px",
+                    fontWeight: 500,
+                    color: "var(--orca-color-text-2)",
+                  },
+                },
+                `= ${formatTokenCount(baseOverheadTokens)} tokens`
+              )
             )
           )
         )
@@ -3394,37 +3403,43 @@ graph TD
         },
       }),
       // New Session Button
-      createElement(
-        Button,
-        {
-          variant: "plain",
-          onClick: handleNewSession,
-          title: "新对话",
-        },
-        createElement("i", { className: "ti ti-plus" })
+      withTooltip(
+        "新对话",
+        createElement(
+          Button,
+          {
+            variant: "plain",
+            onClick: handleNewSession,
+          },
+          createElement("i", { className: "ti ti-plus" })
+        )
       ),
       // Todoist Button
-      createElement(
-        Button,
-        {
-          variant: "plain",
-          onClick: () => {
-            todoistModalStore.viewMode = "today";
-            todoistModalStore.showTaskList = true;
+      withTooltip(
+        "Todoist 今日任务",
+        createElement(
+          Button,
+          {
+            variant: "plain",
+            onClick: () => {
+              todoistModalStore.viewMode = "today";
+              todoistModalStore.showTaskList = true;
+            },
           },
-          title: "Todoist 今日任务",
-        },
-        createElement("i", { className: "ti ti-checkbox" })
+          createElement("i", { className: "ti ti-checkbox" })
+        )
       ),
       // Skill Manager Button
-      createElement(
-        Button,
-        {
-          variant: "plain",
-          onClick: () => setShowSkillManager(true),
-          title: "技能管理",
-        },
-        createElement("i", { className: "ti ti-stars" })
+      withTooltip(
+        "技能管理",
+        createElement(
+          Button,
+          {
+            variant: "plain",
+            onClick: () => setShowSkillManager(true),
+          },
+          createElement("i", { className: "ti ti-stars" })
+        )
       ),
       // Chat History
       createElement(ChatHistoryMenu, {
@@ -3476,7 +3491,14 @@ graph TD
         onSaveSelected: handleSaveSelectedMessages,
       }),
       // Close Button
-      createElement(Button, { variant: "plain", onClick: () => closeAiChatPanel(panelId), title: "Close" }, createElement("i", { className: "ti ti-x" }))
+      withTooltip(
+        "Close",
+        createElement(
+          Button,
+          { variant: "plain", onClick: () => closeAiChatPanel(panelId) },
+          createElement("i", { className: "ti ti-x" })
+        )
+      )
     ),
     // Message List or Empty State (wrapped in relative container for ScrollToBottomButton)
     createElement(

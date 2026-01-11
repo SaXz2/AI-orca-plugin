@@ -11,6 +11,7 @@
 
 import { calculateTokenPercentage, getProgressColor } from "../utils/chat-ui-utils";
 import { formatTokenCount } from "../utils/token-utils";
+import { withTooltip } from "../utils/orca-tooltip";
 
 const React = window.React as unknown as {
   createElement: typeof window.React.createElement;
@@ -84,28 +85,30 @@ export default function TokenProgressBar({
     return null;
   }
 
-  return createElement(
-    "div",
-    { 
-      style: { ...containerStyle, ...style },
-      title: `${formatTokenCount(currentTokens)} / ${formatTokenCount(maxTokens)} tokens (${percentage.toFixed(1)}%)`,
-    },
-    // 进度条
+  return withTooltip(
+    `${formatTokenCount(currentTokens)} / ${formatTokenCount(maxTokens)} tokens (${percentage.toFixed(1)}%)`,
     createElement(
       "div",
-      { style: progressBarOuterStyle },
-      createElement("div", { style: getProgressBarInnerStyle(percentage, color) })
-    ),
-    // 标签
-    showLabel && createElement(
-      "span",
       { 
-        style: {
-          ...labelStyle,
-          color: percentage >= 80 ? color : labelStyle.color,
-        },
+        style: { ...containerStyle, ...style },
       },
-      `${formatTokenCount(currentTokens)}/${formatTokenCount(maxTokens)}`
+      // 进度条
+      createElement(
+        "div",
+        { style: progressBarOuterStyle },
+        createElement("div", { style: getProgressBarInnerStyle(percentage, color) })
+      ),
+      // 标签
+      showLabel && createElement(
+        "span",
+        { 
+          style: {
+            ...labelStyle,
+            color: percentage >= 80 ? color : labelStyle.color,
+          },
+        },
+        `${formatTokenCount(currentTokens)}/${formatTokenCount(maxTokens)}`
+      )
     )
   );
 }

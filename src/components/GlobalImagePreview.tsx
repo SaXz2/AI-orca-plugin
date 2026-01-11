@@ -4,6 +4,7 @@
  */
 
 import { subscribeToPreview, closeImagePreview, getCurrentPreviewImage, type ImagePreviewItem } from "../services/image-preview-service";
+import { withTooltip } from "../utils/orca-tooltip";
 
 const React = window.React as unknown as {
   createElement: typeof window.React.createElement;
@@ -179,86 +180,92 @@ export default function GlobalImagePreview() {
               },
             },
             // 复制图片链接按钮
-            createElement(
-              "button",
-              {
-                style: {
-                  background: "var(--orca-color-bg-3)",
-                  color: "var(--orca-color-text-1)",
-                  border: "1px solid var(--orca-color-border)",
-                  borderRadius: "4px",
-                  padding: "4px 8px",
-                  fontSize: "clamp(10px, 1.8vw, 12px)",
-                  cursor: "pointer",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "4px",
-                  minWidth: "fit-content",
+            withTooltip(
+              "复制图片链接",
+              createElement(
+                "button",
+                {
+                  style: {
+                    background: "var(--orca-color-bg-3)",
+                    color: "var(--orca-color-text-1)",
+                    border: "1px solid var(--orca-color-border)",
+                    borderRadius: "4px",
+                    padding: "4px 8px",
+                    fontSize: "clamp(10px, 1.8vw, 12px)",
+                    cursor: "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "4px",
+                    minWidth: "fit-content",
+                  },
+                  onClick: () => {
+                    navigator.clipboard.writeText(selectedImage.url).then(() => {
+                      console.log('图片链接已复制');
+                    });
+                  },
                 },
-                onClick: () => {
-                  navigator.clipboard.writeText(selectedImage.url).then(() => {
-                    console.log('图片链接已复制');
-                  });
-                },
-                title: "复制图片链接",
-              },
-              createElement("i", {
-                className: "ti ti-copy",
-                style: { fontSize: "clamp(10px, 1.8vw, 12px)" },
-              }),
-              "复制链接"
+                createElement("i", {
+                  className: "ti ti-copy",
+                  style: { fontSize: "clamp(10px, 1.8vw, 12px)" },
+                }),
+                "复制链接"
+              )
             ),
             // 系统打开按钮
-            createElement(
-              "button",
-              {
-                style: {
-                  background: "var(--orca-color-bg-3)",
-                  color: "var(--orca-color-text-1)",
-                  border: "1px solid var(--orca-color-border)",
-                  borderRadius: "4px",
-                  padding: "4px 8px",
-                  fontSize: "clamp(10px, 1.8vw, 12px)",
-                  cursor: "pointer",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "4px",
-                  minWidth: "fit-content",
+            withTooltip(
+              "在系统中打开",
+              createElement(
+                "button",
+                {
+                  style: {
+                    background: "var(--orca-color-bg-3)",
+                    color: "var(--orca-color-text-1)",
+                    border: "1px solid var(--orca-color-border)",
+                    borderRadius: "4px",
+                    padding: "4px 8px",
+                    fontSize: "clamp(10px, 1.8vw, 12px)",
+                    cursor: "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "4px",
+                    minWidth: "fit-content",
+                  },
+                  onClick: () => handleSystemOpen(selectedImage.url),
                 },
-                onClick: () => handleSystemOpen(selectedImage.url),
-                title: "在系统中打开",
-              },
-              createElement("i", {
-                className: "ti ti-external-link",
-                style: { fontSize: "clamp(10px, 1.8vw, 12px)" },
-              }),
-              "系统打开"
+                createElement("i", {
+                  className: "ti ti-external-link",
+                  style: { fontSize: "clamp(10px, 1.8vw, 12px)" },
+                }),
+                "系统打开"
+              )
             ),
             // 查看来源按钮（如果有不同的来源URL）
-            selectedImage.sourceUrl && selectedImage.sourceUrl !== selectedImage.url && createElement(
-              "button",
-              {
-                style: {
-                  background: "var(--orca-color-primary)",
-                  color: "white",
-                  border: "none",
-                  borderRadius: "4px",
-                  padding: "4px 8px",
-                  fontSize: "clamp(10px, 1.8vw, 12px)",
-                  cursor: "pointer",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "4px",
-                  minWidth: "fit-content",
+            selectedImage.sourceUrl && selectedImage.sourceUrl !== selectedImage.url && withTooltip(
+              "查看来源",
+              createElement(
+                "button",
+                {
+                  style: {
+                    background: "var(--orca-color-primary)",
+                    color: "white",
+                    border: "none",
+                    borderRadius: "4px",
+                    padding: "4px 8px",
+                    fontSize: "clamp(10px, 1.8vw, 12px)",
+                    cursor: "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "4px",
+                    minWidth: "fit-content",
+                  },
+                  onClick: (e: any) => handleSourceClick(e, selectedImage.sourceUrl!),
                 },
-                onClick: (e: any) => handleSourceClick(e, selectedImage.sourceUrl!),
-                title: "查看来源",
-              },
-              createElement("i", {
-                className: "ti ti-external-link",
-                style: { fontSize: "clamp(10px, 1.8vw, 12px)" },
-              }),
-              "查看来源"
+                createElement("i", {
+                  className: "ti ti-external-link",
+                  style: { fontSize: "clamp(10px, 1.8vw, 12px)" },
+                }),
+                "查看来源"
+              )
             )
           )
         )

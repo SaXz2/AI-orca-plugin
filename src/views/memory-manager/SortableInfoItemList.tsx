@@ -4,6 +4,7 @@
  */
 
 import type { PortraitInfoItem, PortraitCategory } from "../../store/memory-store";
+import { withTooltip } from "../../utils/orca-tooltip";
 
 const React = window.React as unknown as {
   createElement: typeof window.React.createElement;
@@ -436,10 +437,13 @@ export default function SortableInfoItemList({
           onMouseEnter: () => setHoveredItemId(item.id),
           onMouseLeave: () => setHoveredItemId(null),
         },
-        isHovered && createElement(
-          "button",
-          { style: itemDeleteBtnStyle, onClick: (e: any) => { e.stopPropagation(); onDeleteItem(item.id); }, title: "删除" },
-          createElement("i", { className: "ti ti-x" })
+        isHovered && withTooltip(
+          "删除",
+          createElement(
+            "button",
+            { style: itemDeleteBtnStyle, onClick: (e: any) => { e.stopPropagation(); onDeleteItem(item.id); } },
+            createElement("i", { className: "ti ti-x" })
+          )
         ),
         createElement(
           "div",
@@ -457,10 +461,13 @@ export default function SortableInfoItemList({
                   onClick: (e: any) => e.stopPropagation(),
                   style: { color: "var(--orca-color-text-2)", fontWeight: 500, background: "var(--orca-color-bg-1)", border: "1px solid var(--orca-color-primary)", borderRadius: "4px", padding: "2px 6px", fontSize: "13px", outline: "none", minWidth: "60px" },
                 })
-              : createElement(
-                  "span",
-                  { style: { color: "var(--orca-color-text-2)", fontWeight: 500, cursor: "pointer" }, onClick: (e: any) => { e.stopPropagation(); handleStartEditLabel(item.id, item.label); }, title: "点击编辑标签" },
-                  item.label + "："
+              : withTooltip(
+                  "点击编辑标签",
+                  createElement(
+                    "span",
+                    { style: { color: "var(--orca-color-text-2)", fontWeight: 500, cursor: "pointer" }, onClick: (e: any) => { e.stopPropagation(); handleStartEditLabel(item.id, item.label); } },
+                    item.label + "："
+                  )
                 )
           ) : null
         ),
@@ -497,8 +504,14 @@ export default function SortableInfoItemList({
                 onDragOver: (e: any) => handleValueDragOver(e, item.id, index),
                 onDrop: (e: any) => { e.preventDefault(); e.stopPropagation(); },
               },
-              createElement("span", { onClick: (e: any) => { e.stopPropagation(); handleStartEditValue(item.id, index, value); }, title: "点击编辑，拖拽排序" }, value),
-              index > 0 && createElement("button", { style: valueDeleteBtnStyle, onClick: (e: any) => { e.stopPropagation(); onRemoveValue(item.id, index - 1); }, title: "删除" }, createElement("i", { className: "ti ti-x", style: { fontSize: "10px" } })),
+              withTooltip(
+                "点击编辑，拖拽排序",
+                createElement("span", { onClick: (e: any) => { e.stopPropagation(); handleStartEditValue(item.id, index, value); } }, value)
+              ),
+              index > 0 && withTooltip(
+                "删除",
+                createElement("button", { style: valueDeleteBtnStyle, onClick: (e: any) => { e.stopPropagation(); onRemoveValue(item.id, index - 1); } }, createElement("i", { className: "ti ti-x", style: { fontSize: "10px" } }))
+              ),
               isEditing && createElement(
                 "div",
                 { style: floatingEditStyle, onClick: (e: any) => e.stopPropagation() },
@@ -529,7 +542,10 @@ export default function SortableInfoItemList({
           }),
           isAddingValue
             ? createElement("input", { ref: inputRef, type: "text", placeholder: "输入值...", value: newValue, onChange: (e: any) => setNewValue(e.target.value), onKeyDown: (e: any) => handleKeyDown(e, item.id), onBlur: () => { if (!newValue.trim()) setAddingValueToId(null); }, style: addValueInputStyle })
-            : createElement("button", { style: { ...valueChipStyle, background: "transparent", border: "1px dashed var(--orca-color-border)", cursor: "pointer" }, onClick: (e: any) => { e.stopPropagation(); setAddingValueToId(item.id); }, title: "添加值" }, createElement("i", { className: "ti ti-plus", style: { fontSize: "10px" } }))
+            : withTooltip(
+                "添加值",
+                createElement("button", { style: { ...valueChipStyle, background: "transparent", border: "1px dashed var(--orca-color-border)", cursor: "pointer" }, onClick: (e: any) => { e.stopPropagation(); setAddingValueToId(item.id); } }, createElement("i", { className: "ti ti-plus", style: { fontSize: "10px" } }))
+              )
         )
       ),
       // Only show item drop indicator when not dragging a value

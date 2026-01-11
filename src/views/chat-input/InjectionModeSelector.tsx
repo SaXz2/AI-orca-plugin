@@ -8,6 +8,7 @@
 
 import type { InjectionMode, UserProfile, SelectionPreset } from "../../store/memory-store";
 import { memoryStore, memoryStoreState } from "../../store/memory-store";
+import { withTooltip } from "../../utils/orca-tooltip";
 
 const React = window.React as unknown as {
   createElement: typeof window.React.createElement;
@@ -312,35 +313,41 @@ export default function InjectionModeSelector() {
           createElement(
             "div",
             { style: modeTabsStyle },
-            createElement(
-              "button",
-              {
-                style: modeTabStyle(currentMode === "ALL"),
-                onClick: () => handleModeChange("ALL"),
-                title: "注入所有用户的记忆",
-              },
-              createElement("i", { className: "ti ti-users", style: { fontSize: "11px" } }),
-              "全部"
+            withTooltip(
+              "注入所有用户的记忆",
+              createElement(
+                "button",
+                {
+                  style: modeTabStyle(currentMode === "ALL"),
+                  onClick: () => handleModeChange("ALL"),
+                },
+                createElement("i", { className: "ti ti-users", style: { fontSize: "11px" } }),
+                "全部"
+              )
             ),
-            createElement(
-              "button",
-              {
-                style: modeTabStyle(currentMode === "CURRENT"),
-                onClick: () => handleModeChange("CURRENT"),
-                title: "只注入当前用户的记忆",
-              },
-              createElement("i", { className: "ti ti-user", style: { fontSize: "11px" } }),
-              "当前"
+            withTooltip(
+              "只注入当前用户的记忆",
+              createElement(
+                "button",
+                {
+                  style: modeTabStyle(currentMode === "CURRENT"),
+                  onClick: () => handleModeChange("CURRENT"),
+                },
+                createElement("i", { className: "ti ti-user", style: { fontSize: "11px" } }),
+                "当前"
+              )
             ),
-            createElement(
-              "button",
-              {
-                style: modeTabStyle(currentMode === "SELECTED"),
-                onClick: () => handleModeChange("SELECTED"),
-                title: "选择多个用户的记忆进行注入",
-              },
-              createElement("i", { className: "ti ti-list-check", style: { fontSize: "11px" } }),
-              "多选"
+            withTooltip(
+              "选择多个用户的记忆进行注入",
+              createElement(
+                "button",
+                {
+                  style: modeTabStyle(currentMode === "SELECTED"),
+                  onClick: () => handleModeChange("SELECTED"),
+                },
+                createElement("i", { className: "ti ti-list-check", style: { fontSize: "11px" } }),
+                "多选"
+              )
             )
           ),
 
@@ -372,22 +379,24 @@ export default function InjectionModeSelector() {
                   },
                   createElement("i", { className: "ti ti-bookmark", style: { fontSize: "10px" } }),
                   preset.name,
-                  createElement(
-                    "button",
-                    {
-                      style: presetDeleteStyle,
-                      onClick: (e: any) => handleDeletePreset(preset.id, e),
-                      title: "删除预设",
-                      onMouseEnter: (e: any) => {
-                        e.currentTarget.style.opacity = "1";
-                        e.currentTarget.style.color = "var(--orca-color-danger, #dc3545)";
+                  withTooltip(
+                    "删除预设",
+                    createElement(
+                      "button",
+                      {
+                        style: presetDeleteStyle,
+                        onClick: (e: any) => handleDeletePreset(preset.id, e),
+                        onMouseEnter: (e: any) => {
+                          e.currentTarget.style.opacity = "1";
+                          e.currentTarget.style.color = "var(--orca-color-danger, #dc3545)";
+                        },
+                        onMouseLeave: (e: any) => {
+                          e.currentTarget.style.opacity = "0.5";
+                          e.currentTarget.style.color = "var(--orca-color-text-3)";
+                        },
                       },
-                      onMouseLeave: (e: any) => {
-                        e.currentTarget.style.opacity = "0.5";
-                        e.currentTarget.style.color = "var(--orca-color-text-3)";
-                      },
-                    },
-                    createElement("i", { className: "ti ti-x" })
+                      createElement("i", { className: "ti ti-x" })
+                    )
                   )
                 );
               })
@@ -419,36 +428,38 @@ export default function InjectionModeSelector() {
                 onClick = () => handleSelectCurrentUser(user.id, close);
               }
 
-              return createElement(
-                "div",
-                {
-                  key: user.id,
-                  style: userPillStyle(isSelected),
-                  onClick: currentMode !== "ALL" ? onClick : undefined,
-                  title: `${user.name} (${memoryCount}条记忆)`,
-                  onMouseEnter: (e: any) => {
-                    if (currentMode !== "ALL") {
-                      e.currentTarget.style.borderColor = "var(--orca-color-primary)";
-                      if (!isSelected) {
-                        e.currentTarget.style.background = "var(--orca-color-bg-3)";
+              return withTooltip(
+                `${user.name} (${memoryCount}条记忆)`,
+                createElement(
+                  "div",
+                  {
+                    key: user.id,
+                    style: userPillStyle(isSelected),
+                    onClick: currentMode !== "ALL" ? onClick : undefined,
+                    onMouseEnter: (e: any) => {
+                      if (currentMode !== "ALL") {
+                        e.currentTarget.style.borderColor = "var(--orca-color-primary)";
+                        if (!isSelected) {
+                          e.currentTarget.style.background = "var(--orca-color-bg-3)";
+                        }
                       }
-                    }
+                    },
+                    onMouseLeave: (e: any) => {
+                      e.currentTarget.style.borderColor = isSelected 
+                        ? "var(--orca-color-primary)" 
+                        : "var(--orca-color-border)";
+                      e.currentTarget.style.background = isSelected 
+                        ? "rgba(0, 123, 255, 0.1)" 
+                        : "var(--orca-color-bg-2)";
+                    },
                   },
-                  onMouseLeave: (e: any) => {
-                    e.currentTarget.style.borderColor = isSelected 
-                      ? "var(--orca-color-primary)" 
-                      : "var(--orca-color-border)";
-                    e.currentTarget.style.background = isSelected 
-                      ? "rgba(0, 123, 255, 0.1)" 
-                      : "var(--orca-color-bg-2)";
-                  },
-                },
-                createElement("span", { style: userPillEmojiStyle }, user.emoji),
-                createElement("span", { style: userPillNameStyle }, user.name),
-                memoryCount > 0 && createElement(
-                  "span",
-                  { style: userPillBadgeStyle },
-                  memoryCount
+                  createElement("span", { style: userPillEmojiStyle }, user.emoji),
+                  createElement("span", { style: userPillNameStyle }, user.name),
+                  memoryCount > 0 && createElement(
+                    "span",
+                    { style: userPillBadgeStyle },
+                    memoryCount
+                  )
                 )
               );
             })
@@ -494,20 +505,22 @@ export default function InjectionModeSelector() {
                 },
                 "清空"
               ),
-              selectedUserIds.length > 0 && createElement(
-                "button",
-                {
-                  style: { ...actionButtonStyle, color: "var(--orca-color-primary)" },
-                  onClick: () => setShowSavePreset(true),
-                  onMouseEnter: (e: any) => {
-                    e.currentTarget.style.background = "var(--orca-color-bg-2)";
+              selectedUserIds.length > 0 && withTooltip(
+                "保存为预设",
+                createElement(
+                  "button",
+                  {
+                    style: { ...actionButtonStyle, color: "var(--orca-color-primary)" },
+                    onClick: () => setShowSavePreset(true),
+                    onMouseEnter: (e: any) => {
+                      e.currentTarget.style.background = "var(--orca-color-bg-2)";
+                    },
+                    onMouseLeave: (e: any) => {
+                      e.currentTarget.style.background = "transparent";
+                    },
                   },
-                  onMouseLeave: (e: any) => {
-                    e.currentTarget.style.background = "transparent";
-                  },
-                  title: "保存为预设",
-                },
-                createElement("i", { className: "ti ti-bookmark-plus", style: { fontSize: "12px" } })
+                  createElement("i", { className: "ti ti-bookmark-plus", style: { fontSize: "12px" } })
+                )
               )
             )
           ),
@@ -555,25 +568,27 @@ export default function InjectionModeSelector() {
         ),
     },
     (openMenu: (e: any) => void) =>
-      createElement(
-        Button,
-        {
-          variant: "plain",
-          onClick: openMenu,
-          title: `记忆注入模式`,
-          style: selectorButtonStyle,
-        },
-        createElement("i", { className: `ti ${displayIcon}` }),
-        currentMode === "SELECTED" && selectedUserIds.length > 0 && createElement(
-          "span",
-          { 
-            style: { 
-              fontSize: "11px", 
-              color: "var(--orca-color-primary)",
-              fontWeight: 500,
-            } 
+      withTooltip(
+        "记忆注入模式",
+        createElement(
+          Button,
+          {
+            variant: "plain",
+            onClick: openMenu,
+            style: selectorButtonStyle,
           },
-          selectedUserIds.length
+          createElement("i", { className: `ti ${displayIcon}` }),
+          currentMode === "SELECTED" && selectedUserIds.length > 0 && createElement(
+            "span",
+            { 
+              style: { 
+                fontSize: "11px", 
+                color: "var(--orca-color-primary)",
+                fontWeight: 500,
+              } 
+            },
+            selectedUserIds.length
+          )
         )
       )
   );

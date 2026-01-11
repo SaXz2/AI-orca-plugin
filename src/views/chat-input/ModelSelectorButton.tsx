@@ -7,6 +7,7 @@ import type { AiChatSettings } from "../../settings/ai-chat-settings";
 import { getSelectedProvider, getSelectedModel } from "../../settings/ai-chat-settings";
 import { modelButtonStyle, modelLabelStyle } from "./chat-input-styles";
 import ModelSelectorMenu from "./ModelSelectorMenu";
+import { withTooltip } from "../../utils/orca-tooltip";
 
 const React = window.React as unknown as {
   createElement: typeof window.React.createElement;
@@ -57,32 +58,36 @@ export default function ModelSelectorButton({
         }),
     },
     (openMenu: (e: any) => void) =>
-      createElement(
-        Button,
-        {
-          variant: "plain",
-          onClick: openMenu,
-          title: `${displayInfo.providerName}: ${settings.selectedModelId}`,
-          style: {
-            ...modelButtonStyle,
-            borderColor: displayInfo.hasApiKey ? undefined : "var(--orca-color-warning)",
-          },
-        },
-        createElement("i", { className: "ti ti-cpu" }),
+      withTooltip(
+        `${displayInfo.providerName}: ${settings.selectedModelId}`,
         createElement(
-          "span",
-          { style: modelLabelStyle },
-          displayInfo.modelLabel
-        ),
-        !displayInfo.hasApiKey && createElement(
-          "i",
-          { 
-            className: "ti ti-alert-triangle", 
-            style: { color: "var(--orca-color-warning)", fontSize: "12px" },
-            title: "未配置 API 密钥",
-          }
-        ),
-        createElement("i", { className: "ti ti-chevron-up" })
+          Button,
+          {
+            variant: "plain",
+            onClick: openMenu,
+            style: {
+              ...modelButtonStyle,
+              borderColor: displayInfo.hasApiKey ? undefined : "var(--orca-color-warning)",
+            },
+          },
+          createElement("i", { className: "ti ti-cpu" }),
+          createElement(
+            "span",
+            { style: modelLabelStyle },
+            displayInfo.modelLabel
+          ),
+          !displayInfo.hasApiKey && withTooltip(
+            "未配置 API 密钥",
+            createElement(
+              "i",
+              { 
+                className: "ti ti-alert-triangle", 
+                style: { color: "var(--orca-color-warning)", fontSize: "12px" },
+              }
+            )
+          ),
+          createElement("i", { className: "ti ti-chevron-up" })
+        )
       )
   );
 }
