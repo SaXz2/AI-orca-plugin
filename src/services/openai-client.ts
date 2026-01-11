@@ -123,7 +123,8 @@ type StreamChunk = {
 };
 
 function parseDataUrl(url: string): { mediaType: string; base64: string } | null {
-  const match = url.match(/^data:([^;]+);base64,(.+)$/i);
+  // 兼容带参数的 data URL，例如 data:image/png;name=xxx;base64,...
+  const match = url.match(/^data:([^;,]+)(?:;[^,]+)*;base64,(.+)$/i);
   if (!match) return null;
   const mediaType = match[1].trim();
   const base64 = match[2].trim();
@@ -149,7 +150,11 @@ function openAIContentToAnthropicBlocks(content: any): any[] {
       // OpenAI multimodal image part: { type: "image_url", image_url: { url } }
       if (part.type === "image_url" && typeof part.image_url?.url === "string") {
         const parsed = parseDataUrl(part.image_url.url);
-        if (parsed && parsed.mediaType.toLowerCase().startsWith("image/")) {
+        // Anthropic 仅支持 image/jpeg, image/png, image/gif, image/webp
+        // 参考: https://docs.anthropic.com/en/docs/build-with-claude/vision#supported-image-formats
+        const supportedTypes = ["image/jpeg", "image/png", "image/gif", "image/webp"];
+        
+        if (parsed && supportedTypes.includes(parsed.mediaType.toLowerCase())) {
           blocks.push({
             type: "image",
             source: {
@@ -159,8 +164,12 @@ function openAIContentToAnthropicBlocks(content: any): any[] {
             },
           });
         } else {
-          // Anthropic 不支持直接传 URL，这里降级为文本提示
-          blocks.push({ type: "text", text: `[image: ${part.image_url.url}]` });
+          // 不支持的格式或无法解析，降级为文本提示
+          // 如果是 base64，截断显示
+          const urlPreview = part.image_url.url.length > 100
+            ? part.image_url.url.substring(0, 50) + "..."
+            : part.image_url.url;
+          blocks.push({ type: "text", text: `[image: ${urlPreview}]` });
         }
         continue;
       }
@@ -246,7 +255,14 @@ function buildAnthropicMessagesFromOpenAI(
 
     // Anthropic 要求 content 非空；否则降级加一个空文本块
     const safeBlocks = blocks.length > 0 ? blocks : [{ type: "text", text: "" }];
-    messages.push({ role: m.role, content: safeBlocks });
+
+    // 合并连续的相同角色消息
+    const lastMsg = messages[messages.length - 1];
+    if (lastMsg && lastMsg.role === m.role) {
+      lastMsg.content.push(...safeBlocks);
+    } else {
+      messages.push({ role: m.role, content: safeBlocks });
+    }
   }
 
   return { system: system || undefined, messages };
@@ -462,6 +478,11 @@ export async function* openAIChatCompletionsStream(
     } else {
       requestBody.tools = args.tools;
     }
+  }
+
+  // DEBUG: Log the full request body to help troubleshoot 400 errors
+  if (protocol === "anthropic") {
+    console.log("[Anthropic Debug] Request Body:", JSON.stringify(requestBody, null, 2));
   }
 
   const body = JSON.stringify(requestBody);
