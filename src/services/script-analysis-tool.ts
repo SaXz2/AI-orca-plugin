@@ -17,7 +17,7 @@ import {
   analyzeWordFrequency,
   type ScriptExecutionResult,
 } from "./script-executor-service";
-import { runPythonStep } from "./python-runtime";
+import { runPythonStep, runLocalPythonFile, readLocalFile, writeLocalFile, listLocalDir, deleteLocalFile } from "./python-runtime";
 
 /**
  * 笔记统计分析工具定义
@@ -261,6 +261,229 @@ export const PYTHON_INTERPRETER_TOOL: OpenAITool = {
 };
 
 /**
+ * 本地 Python 脚本执行工具
+ * 执行用户本地的 .py 文件
+ */
+export const LOCAL_PYTHON_SCRIPT_TOOL: OpenAITool = {
+  type: "function",
+  function: {
+    name: "runLocalPythonScript",
+    description: `执行用户本地的 Python 脚本文件（.py）。
+
+【前提条件】
+用户需要先启动本地 Python 服务器：
+  python scripts/python-server.py
+
+【何时使用】
+- 用户要求运行本地的 .py 文件
+- 用户提供了脚本路径
+- 需要执行复杂的本地 Python 项目
+
+【参数】
+- file: Python 脚本的完整路径（必填），如 "D:/scripts/analysis.py"
+- args: 命令行参数列表（可选），如 ["--input", "data.csv"]
+- timeout: 超时时间秒数（可选），默认 60 秒
+- cwd: 工作目录（可选），默认为脚本所在目录
+
+【注意】
+- 需要本地 Python 服务器运行
+- 脚本在用户本地 Python 环境中执行
+- 可以访问本地文件系统
+- 可以使用本地安装的所有 Python 包`,
+    parameters: {
+      type: "object",
+      properties: {
+        file: {
+          type: "string",
+          description: "Python 脚本的完整路径，如 \"D:/scripts/analysis.py\"",
+        },
+        args: {
+          type: "array",
+          items: { type: "string" },
+          description: "命令行参数列表",
+        },
+        timeout: {
+          type: "number",
+          description: "超时时间（秒），默认 60",
+        },
+        cwd: {
+          type: "string",
+          description: "工作目录，默认为脚本所在目录",
+        },
+      },
+      required: ["file"],
+    },
+  },
+};
+
+/**
+ * 读取本地文件工具
+ */
+export const READ_LOCAL_FILE_TOOL: OpenAITool = {
+  type: "function",
+  function: {
+    name: "readLocalFile",
+    description: `读取用户本地文件的内容。
+
+【前提条件】
+需要本地 Python 服务器运行。
+
+【何时使用】
+- 用户要求查看本地文件内容
+- 需要读取 Python 脚本进行分析或修改
+- 读取配置文件、数据文件等
+
+【参数】
+- path: 文件的完整路径（必填），如 "D:/scripts/test.py"
+- encoding: 文件编码（可选），默认 "utf-8"`,
+    parameters: {
+      type: "object",
+      properties: {
+        path: {
+          type: "string",
+          description: "文件的完整路径",
+        },
+        encoding: {
+          type: "string",
+          description: "文件编码，默认 utf-8",
+        },
+      },
+      required: ["path"],
+    },
+  },
+};
+
+/**
+ * 写入本地文件工具
+ */
+export const WRITE_LOCAL_FILE_TOOL: OpenAITool = {
+  type: "function",
+  function: {
+    name: "writeLocalFile",
+    description: `写入内容到用户本地文件。
+
+【前提条件】
+需要本地 Python 服务器运行。
+
+【何时使用】
+- 用户要求创建或修改本地文件
+- 保存生成的 Python 脚本
+- 修改配置文件
+
+【参数】
+- path: 文件的完整路径（必填），如 "D:/scripts/new_script.py"
+- content: 要写入的内容（必填）
+- encoding: 文件编码（可选），默认 "utf-8"
+- createDirs: 是否自动创建目录（可选），默认 false
+
+【注意】
+- 会覆盖已存在的文件
+- 写入前请确认用户同意`,
+    parameters: {
+      type: "object",
+      properties: {
+        path: {
+          type: "string",
+          description: "文件的完整路径",
+        },
+        content: {
+          type: "string",
+          description: "要写入的内容",
+        },
+        encoding: {
+          type: "string",
+          description: "文件编码，默认 utf-8",
+        },
+        createDirs: {
+          type: "boolean",
+          description: "是否自动创建不存在的目录",
+        },
+      },
+      required: ["path", "content"],
+    },
+  },
+};
+
+/**
+ * 列出目录内容工具
+ */
+export const LIST_LOCAL_DIR_TOOL: OpenAITool = {
+  type: "function",
+  function: {
+    name: "listLocalDir",
+    description: `列出用户本地目录的内容。
+
+【前提条件】
+需要本地 Python 服务器运行。
+
+【何时使用】
+- 用户要求查看某个目录下的文件
+- 需要了解项目结构
+- 查找特定类型的文件
+
+【参数】
+- path: 目录路径（必填），如 "D:/projects"
+- pattern: 文件名过滤（可选），如 ".py" 只显示包含 .py 的文件`,
+    parameters: {
+      type: "object",
+      properties: {
+        path: {
+          type: "string",
+          description: "目录路径",
+        },
+        pattern: {
+          type: "string",
+          description: "文件名过滤模式",
+        },
+      },
+      required: ["path"],
+    },
+  },
+};
+
+/**
+ * 删除本地文件工具
+ */
+export const DELETE_LOCAL_FILE_TOOL: OpenAITool = {
+  type: "function",
+  function: {
+    name: "deleteLocalFile",
+    description: `删除用户本地的文件或目录。
+
+【前提条件】
+需要本地 Python 服务器运行。
+
+【何时使用】
+- 用户要求删除本地文件
+- 清理临时文件
+- 删除不需要的目录
+
+【参数】
+- path: 文件或目录的完整路径（必填），如 "D:/temp/old_file.py"
+- recursive: 是否递归删除目录（可选），默认 false。设为 true 可删除非空目录
+
+【注意】
+- 删除操作不可恢复，请谨慎使用
+- 删除非空目录需要设置 recursive: true
+- 删除前请确认用户同意`,
+    parameters: {
+      type: "object",
+      properties: {
+        path: {
+          type: "string",
+          description: "文件或目录的完整路径",
+        },
+        recursive: {
+          type: "boolean",
+          description: "是否递归删除目录（删除非空目录时需要设为 true）",
+        },
+      },
+      required: ["path"],
+    },
+  },
+};
+
+/**
  * 执行笔记统计分析
  */
 export async function executeNotesStatsTool(): Promise<string> {
@@ -470,7 +693,12 @@ export async function executePythonInterpreterTool(args: {
     });
     const executionTime = Date.now() - startTime;
 
-    const runtimeLabel = result.runtime === "backend" ? "后端 Python" : "Pyodide (浏览器)";
+    const runtimeLabels: Record<string, string> = {
+      "backend": "后端 Python",
+      "pyodide": "Pyodide (浏览器)",
+      "local-server": "本地 Python 服务器",
+    };
+    const runtimeLabel = runtimeLabels[result.runtime] || result.runtime;
 
     return `✅ Python 执行成功
 
@@ -494,12 +722,208 @@ ${result.output || "(无输出)"}
 }
 
 /**
+ * 执行本地 Python 脚本
+ */
+export async function executeLocalPythonScriptTool(args: {
+  file: string;
+  args?: string[];
+  timeout?: number;
+  cwd?: string;
+}): Promise<string> {
+  const { file, args: scriptArgs, timeout, cwd } = args;
+
+  if (!file || file.trim() === "") {
+    return "❌ 请提供 Python 脚本路径";
+  }
+
+  console.log("[LocalPythonScript] Executing:", file, scriptArgs);
+
+  try {
+    const startTime = Date.now();
+    const result = await runLocalPythonFile({
+      file,
+      args: scriptArgs,
+      timeout,
+      cwd,
+    });
+    const executionTime = Date.now() - startTime;
+
+    return `✅ Python 脚本执行成功
+
+**脚本：** ${file}
+${scriptArgs && scriptArgs.length > 0 ? `**参数：** ${scriptArgs.join(" ")}` : ""}
+**执行时间：** ${executionTime}ms
+
+**输出：**
+\`\`\`
+${result.output || "(无输出)"}
+\`\`\``;
+  } catch (e: any) {
+    console.error("[LocalPythonScript] Error:", e);
+    return `❌ 脚本执行失败：${e.message}`;
+  }
+}
+
+/**
+ * 读取本地文件
+ */
+export async function executeReadLocalFileTool(args: {
+  path: string;
+  encoding?: string;
+}): Promise<string> {
+  const { path, encoding } = args;
+
+  if (!path || path.trim() === "") {
+    return "❌ 请提供文件路径";
+  }
+
+  console.log("[ReadLocalFile] Reading:", path);
+
+  try {
+    const content = await readLocalFile(path, encoding);
+    const lines = content.split("\n").length;
+    
+    return `✅ 文件读取成功
+
+**路径：** ${path}
+**行数：** ${lines}
+
+**内容：**
+\`\`\`
+${content}
+\`\`\``;
+  } catch (e: any) {
+    console.error("[ReadLocalFile] Error:", e);
+    return `❌ 读取失败：${e.message}`;
+  }
+}
+
+/**
+ * 写入本地文件
+ */
+export async function executeWriteLocalFileTool(args: {
+  path: string;
+  content: string;
+  encoding?: string;
+  createDirs?: boolean;
+}): Promise<string> {
+  const { path, content, encoding, createDirs } = args;
+
+  if (!path || path.trim() === "") {
+    return "❌ 请提供文件路径";
+  }
+
+  if (content === undefined || content === null) {
+    return "❌ 请提供要写入的内容";
+  }
+
+  console.log("[WriteLocalFile] Writing:", path);
+
+  try {
+    await writeLocalFile(path, content, { encoding, createDirs });
+    const lines = content.split("\n").length;
+    
+    return `✅ 文件写入成功
+
+**路径：** ${path}
+**行数：** ${lines}
+**大小：** ${content.length} 字符`;
+  } catch (e: any) {
+    console.error("[WriteLocalFile] Error:", e);
+    return `❌ 写入失败：${e.message}`;
+  }
+}
+
+/**
+ * 列出目录内容
+ */
+export async function executeListLocalDirTool(args: {
+  path: string;
+  pattern?: string;
+}): Promise<string> {
+  const { path, pattern } = args;
+
+  if (!path || path.trim() === "") {
+    return "❌ 请提供目录路径";
+  }
+
+  console.log("[ListLocalDir] Listing:", path);
+
+  try {
+    const entries = await listLocalDir(path, pattern);
+    
+    if (entries.length === 0) {
+      return `📁 目录 ${path} 为空${pattern ? `（过滤: ${pattern}）` : ""}`;
+    }
+    
+    const dirs = entries.filter(e => e.isDir);
+    const files = entries.filter(e => !e.isDir);
+    
+    let result = `📁 目录 ${path}\n\n`;
+    
+    if (dirs.length > 0) {
+      result += `**目录 (${dirs.length})：**\n`;
+      for (const d of dirs) {
+        result += `- 📁 ${d.name}/\n`;
+      }
+      result += "\n";
+    }
+    
+    if (files.length > 0) {
+      result += `**文件 (${files.length})：**\n`;
+      for (const f of files) {
+        const size = f.size < 1024 ? `${f.size} B` : 
+                     f.size < 1024 * 1024 ? `${(f.size / 1024).toFixed(1)} KB` :
+                     `${(f.size / 1024 / 1024).toFixed(1)} MB`;
+        result += `- 📄 ${f.name} (${size})\n`;
+      }
+    }
+    
+    return result;
+  } catch (e: any) {
+    console.error("[ListLocalDir] Error:", e);
+    return `❌ 列出目录失败：${e.message}`;
+  }
+}
+
+/**
+ * 删除本地文件或目录
+ */
+export async function executeDeleteLocalFileTool(args: {
+  path: string;
+  recursive?: boolean;
+}): Promise<string> {
+  const { path, recursive } = args;
+
+  if (!path || path.trim() === "") {
+    return "❌ 请提供文件或目录路径";
+  }
+
+  console.log("[DeleteLocalFile] Deleting:", path, { recursive });
+
+  try {
+    const result = await deleteLocalFile(path, { recursive });
+    
+    const typeLabel = result.type === "directory" ? "目录" : "文件";
+    return `✅ ${typeLabel}已删除：${path}`;
+  } catch (e: any) {
+    console.error("[DeleteLocalFile] Error:", e);
+    return `❌ 删除失败：${e.message}`;
+  }
+}
+
+/**
  * 获取所有脚本分析相关工具
  */
 export function getScriptAnalysisTools(): OpenAITool[] {
   return [
-    CODE_INTERPRETER_TOOL,    // JavaScript 执行
-    PYTHON_INTERPRETER_TOOL,  // Python 执行
+    CODE_INTERPRETER_TOOL,       // JavaScript 执行
+    PYTHON_INTERPRETER_TOOL,     // Python 执行
+    LOCAL_PYTHON_SCRIPT_TOOL,    // 本地 Python 脚本
+    READ_LOCAL_FILE_TOOL,        // 读取本地文件
+    WRITE_LOCAL_FILE_TOOL,       // 写入本地文件
+    DELETE_LOCAL_FILE_TOOL,      // 删除本地文件
+    LIST_LOCAL_DIR_TOOL,         // 列出目录
     NOTES_STATS_TOOL,
     KEYWORD_SEARCH_TOOL,
     WORD_FREQUENCY_TOOL,
@@ -520,6 +944,21 @@ export async function handleScriptAnalysisTool(
     
     case "runPythonCode":
       return executePythonInterpreterTool(args);
+    
+    case "runLocalPythonScript":
+      return executeLocalPythonScriptTool(args);
+    
+    case "readLocalFile":
+      return executeReadLocalFileTool(args);
+    
+    case "writeLocalFile":
+      return executeWriteLocalFileTool(args);
+    
+    case "deleteLocalFile":
+      return executeDeleteLocalFileTool(args);
+    
+    case "listLocalDir":
+      return executeListLocalDirTool(args);
     
     case "analyzeNotesStats":
       return executeNotesStatsTool();

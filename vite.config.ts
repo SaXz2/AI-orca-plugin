@@ -37,13 +37,28 @@ export default defineConfig(({ command }) => {
         "react-dom": "ReactDOM",
         valtio: "Valtio",
       }),
-      // 复制 Pyodide 静态文件到 dist/pyodide
-      // 包括 js, wasm, json 和 zip 文件
+      // 复制静态文件到 dist
       viteStaticCopy({
         targets: [
+          // Pyodide 文件
           {
             src: "node_modules/pyodide/*.{js,wasm,json,zip}",
             dest: "pyodide",
+          },
+          // Python 服务器脚本
+          {
+            src: "scripts/python-server.py",
+            dest: "scripts",
+          },
+          // Python 服务器启动脚本 (Windows - 有窗口)
+          {
+            src: "scripts/start-python-server.bat",
+            dest: "scripts",
+          },
+          // Python 服务器启动脚本 (Windows - 静默无窗口)
+          {
+            src: "scripts/start-python-server-silent.vbs",
+            dest: "scripts",
           },
         ],
       }),

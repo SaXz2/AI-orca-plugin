@@ -17,6 +17,9 @@ interface HeaderMenuProps {
   onOpenCompressionSettings?: () => void;
   onOpenWebSearchSettings?: () => void;
   onOpenTodoistSettings?: () => void;
+  onStartPythonServer?: () => void;
+  onStopPythonServer?: () => void;
+  pythonServerStatus?: "running" | "stopped" | "starting";
   onExportMarkdown?: () => void;
   onSaveToJournal?: () => void;
   onToggleSelectionMode?: () => void;
@@ -32,6 +35,9 @@ export default function HeaderMenu({
   onOpenCompressionSettings,
   onOpenWebSearchSettings,
   onOpenTodoistSettings,
+  onStartPythonServer,
+  onStopPythonServer,
+  pythonServerStatus,
   onExportMarkdown,
   onSaveToJournal,
   onToggleSelectionMode,
@@ -203,6 +209,39 @@ export default function HeaderMenu({
           },
           createElement("i", { className: "ti ti-checkbox" }),
           "Todoist"
+        ),
+        // Python Server
+        onStartPythonServer && createElement(
+          "div",
+          {
+            style: {
+              ...menuItemStyle,
+              color: pythonServerStatus === "running" 
+                ? "var(--orca-color-success, #28a745)" 
+                : pythonServerStatus === "starting"
+                  ? "var(--orca-color-warning, #ffc107)"
+                  : undefined,
+            },
+            onClick: pythonServerStatus === "starting" 
+              ? undefined 
+              : pythonServerStatus === "running"
+                ? () => onStopPythonServer && handleItemClick(onStopPythonServer)
+                : () => handleItemClick(onStartPythonServer),
+            onMouseEnter: (e: any) => (e.currentTarget.style.background = "var(--orca-color-bg-2)"),
+            onMouseLeave: (e: any) => (e.currentTarget.style.background = "transparent"),
+          },
+          createElement("i", { 
+            className: pythonServerStatus === "running" 
+              ? "ti ti-player-stop" 
+              : pythonServerStatus === "starting"
+                ? "ti ti-loader"
+                : "ti ti-brand-python" 
+          }),
+          pythonServerStatus === "running" 
+            ? "停止 Python 服务" 
+            : pythonServerStatus === "starting"
+              ? "正在启动..."
+              : "启动 Python 服务"
         ),
         // Divider
         createElement("div", {

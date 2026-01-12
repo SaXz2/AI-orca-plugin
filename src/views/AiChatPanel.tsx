@@ -72,6 +72,7 @@ import {
   type SkillStep,
 } from "../services/skill-service";
 import { TODOIST_TOOLS, executeTodoistTool, isTodoistTool } from "../services/todoist-tools";
+import { startPythonServer, stopPythonServer, getPythonServerStatus } from "../services/python-runtime";
 import { getToolStatus, isToolDisabled, shouldAskForTool, isAgenticRAGEnabled, getAgenticRAGConfig, isSkillPrecheckEnabled } from "../store/tool-store";
 import { skillStore } from "../store/skill-store";
 import { nowId, safeText } from "../utils/text-utils";
@@ -360,6 +361,9 @@ export default function AiChatPanel({ panelId }: PanelProps) {
 
   // Todoist settings modal state
   const [showTodoistSettings, setShowTodoistSettings] = useState(false);
+
+  // Python server state
+  const [pythonServerStatus, setPythonServerStatus] = useState<"running" | "stopped" | "starting">("stopped");
 
   // Message selection mode state (for batch save)
   const [selectionMode, setSelectionMode] = useState(false);
@@ -1153,6 +1157,48 @@ ${toolSummary || "- （未提供工具列表）"}`;
   useEffect(() => () => { clearSessionStore(); }, []);
   useEffect(() => () => { if (abortRef.current) abortRef.current.abort(); }, []);
   useEffect(() => () => { cancelAutoScroll(); }, [cancelAutoScroll]);
+
+  // Check Python server status on mount
+  useEffect(() => {
+    getPythonServerStatus().then((status) => {
+      setPythonServerStatus(status.running ? "running" : "stopped");
+    });
+  }, []);
+
+  // Handle Python server start
+  const handleStartPythonServer = useCallback(async () => {
+    if (pythonServerStatus === "starting") return;
+    
+    if (pythonServerStatus === "running") {
+      orca.notify("info", "Python 服务器已在运行");
+      return;
+    }
+    
+    setPythonServerStatus("starting");
+    const result = await startPythonServer();
+    
+    if (result.success) {
+      setPythonServerStatus("running");
+      orca.notify("success", result.message);
+    } else {
+      setPythonServerStatus("stopped");
+      orca.notify("error", result.message);
+    }
+  }, [pythonServerStatus]);
+
+  // Handle Python server stop
+  const handleStopPythonServer = useCallback(async () => {
+    if (pythonServerStatus !== "running") return;
+    
+    const result = await stopPythonServer();
+    
+    if (result.success) {
+      setPythonServerStatus("stopped");
+      orca.notify("success", result.message);
+    } else {
+      orca.notify("error", result.message);
+    }
+  }, [pythonServerStatus]);
 
   // ─────────────────────────────────────────────────────────────────────────
   // Scroll to Bottom Button Detection
@@ -2356,9 +2402,27 @@ graph TD
 
           // Helper function to attempt JSON repair for common AI model errors
           const tryRepairJson = (jsonStr: string): string | null => {
+            let repaired = jsonStr.trim();
+            
+            // Fix 0: If string doesn't start with {, try to find and extract JSON object
+            if (!repaired.startsWith('{')) {
+              // Try to find a JSON object pattern
+              const jsonMatch = repaired.match(/\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}/);
+              if (jsonMatch) {
+                repaired = jsonMatch[0];
+              } else {
+                // If first char is a digit or other non-{ char followed by ", assume { was corrupted
+                // e.g., 0"blockId": 9807} -> {"blockId": 9807}
+                const firstQuoteIdx = repaired.indexOf('"');
+                if (firstQuoteIdx > 0 && firstQuoteIdx < 5) {
+                  repaired = '{' + repaired.slice(firstQuoteIdx);
+                }
+              }
+            }
+            
             // Fix 1: Remove duplicate keys (e.g., "key": "val1""key": "val2" -> "key": "val2")
             // This handles cases where AI model outputs duplicate fields
-            let repaired = jsonStr.replace(/"([^"]+)":\s*"[^"]*"\s*"(\1)":\s*/g, '"$1": ');
+            repaired = repaired.replace(/"([^"]+)":\s*"[^"]*"\s*"(\1)":\s*/g, '"$1": ');
             
             // Fix 2: Replace ) with } at the end if mismatched
             if (repaired.includes(')') && !repaired.includes('(')) {
@@ -2381,6 +2445,9 @@ graph TD
                 repaired = repaired.slice(0, lastBraceIndex + 1);
               }
             }
+            
+            // Fix 5: Fix common typos in key names (blockld -> blockId)
+            repaired = repaired.replace(/"blockld"/gi, '"blockId"');
             
             try {
               JSON.parse(repaired);
@@ -3519,6 +3586,9 @@ graph TD
         onOpenCompressionSettings: () => setShowCompressionSettings(true),
         onOpenWebSearchSettings: () => setShowWebSearchSettings(true),
         onOpenTodoistSettings: () => setShowTodoistSettings(true),
+        onStartPythonServer: handleStartPythonServer,
+        onStopPythonServer: handleStopPythonServer,
+        pythonServerStatus,
         onExportMarkdown: () => {
           if (messages.length === 0) {
             orca.notify("warn", "没有可导出的消息");

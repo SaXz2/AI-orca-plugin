@@ -12,8 +12,121 @@ export type PythonRunOptions = {
 
 export type PythonRunResult = {
   output: string;
-  runtime: "backend" | "pyodide";
+  runtime: "backend" | "pyodide" | "local-server";
 };
+
+export type LocalPythonFileOptions = {
+  file: string;
+  args?: string[];
+  timeout?: number;
+  cwd?: string;
+};
+
+// 本地 Python 服务器配置
+const LOCAL_PYTHON_SERVER_URL = "http://127.0.0.1:18765";
+let localServerAvailable: boolean | null = null;
+
+/**
+ * 检查本地 Python 服务器是否可用
+ */
+async function checkLocalServer(): Promise<boolean> {
+  if (localServerAvailable !== null) {
+    return localServerAvailable;
+  }
+  
+  try {
+    const response = await fetch(`${LOCAL_PYTHON_SERVER_URL}/health`, {
+      method: "GET",
+      signal: AbortSignal.timeout(2000),
+    });
+    localServerAvailable = response.ok;
+    if (localServerAvailable) {
+      console.log("[PythonRuntime] Local Python server is available");
+    }
+    return localServerAvailable;
+  } catch {
+    localServerAvailable = false;
+    return false;
+  }
+}
+
+/**
+ * 重置本地服务器状态（用于重新检测）
+ */
+export function resetLocalServerStatus(): void {
+  localServerAvailable = null;
+}
+
+/**
+ * 通过本地服务器执行 Python 代码
+ */
+async function runWithLocalServer(options: PythonRunOptions): Promise<string> {
+  const response = await fetch(`${LOCAL_PYTHON_SERVER_URL}/execute`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      code: options.code,
+      input: options.input ?? null,
+      timeout: 30,
+    }),
+  });
+  
+  if (!response.ok) {
+    throw new Error(`Local server error: ${response.status}`);
+  }
+  
+  const result = await response.json();
+  
+  if (!result.ok) {
+    return `Python error: ${result.error || "Unknown error"}\n${result.stderr || ""}`;
+  }
+  
+  const parts = [result.stdout, result.stderr].filter(Boolean);
+  return parts.join("\n").trim() || "Python executed.";
+}
+
+/**
+ * 通过本地服务器执行 Python 文件
+ */
+export async function runLocalPythonFile(options: LocalPythonFileOptions): Promise<PythonRunResult> {
+  // 检查本地服务器
+  const serverAvailable = await checkLocalServer();
+  if (!serverAvailable) {
+    throw new Error(
+      "本地 Python 服务器未运行。\n\n" +
+      "请先启动服务器：\n" +
+      "  python scripts/python-server.py\n\n" +
+      "或在插件目录运行：\n" +
+      "  python python-server.py"
+    );
+  }
+  
+  const response = await fetch(`${LOCAL_PYTHON_SERVER_URL}/run-file`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      file: options.file,
+      args: options.args || [],
+      timeout: options.timeout || 60,
+      cwd: options.cwd,
+    }),
+  });
+  
+  if (!response.ok) {
+    throw new Error(`Local server error: ${response.status}`);
+  }
+  
+  const result = await response.json();
+  
+  if (!result.ok) {
+    const output = `Python error: ${result.error || "Unknown error"}\n${result.stderr || ""}`;
+    return { output, runtime: "local-server" };
+  }
+  
+  const parts = [result.stdout, result.stderr].filter(Boolean);
+  const output = parts.join("\n").trim() || "Python executed.";
+  return { output, runtime: "local-server" };
+}
 
 let pyodidePromise: Promise<any> | null = null;
 const pyodidePackages = new Set<string>();
@@ -252,6 +365,22 @@ __skill_output_json = json.dumps(__skill_output, default=str)
 }
 
 export async function runPythonStep(options: PythonRunOptions): Promise<PythonRunResult> {
+  // 优先级：本地服务器 > Orca 后端 > Pyodide
+  
+  // 1. 尝试本地 Python 服务器
+  const serverAvailable = await checkLocalServer();
+  if (serverAvailable) {
+    try {
+      console.log("[PythonRuntime] Using local Python server");
+      const output = await runWithLocalServer(options);
+      return { output, runtime: "local-server" };
+    } catch (err) {
+      console.warn("[PythonRuntime] Local server failed:", err);
+      // 继续尝试其他方式
+    }
+  }
+  
+  // 2. 尝试 Orca 后端
   try {
     const output = await runWithBackend(options);
     return { output, runtime: "backend" };
@@ -263,7 +392,276 @@ export async function runPythonStep(options: PythonRunOptions): Promise<PythonRu
       throw err;
     }
     console.log("[PythonRuntime] Backend unavailable, falling back to Pyodide:", message);
-    const output = await runWithPyodide(options);
-    return { output, runtime: "pyodide" };
   }
+  
+  // 3. 回退到 Pyodide
+  const output = await runWithPyodide(options);
+  return { output, runtime: "pyodide" };
+}
+
+/**
+ * 获取插件 dist 目录的本地路径
+ */
+function getPluginDistPath(): string {
+  try {
+    const moduleUrl = import.meta.url;
+    if (moduleUrl) {
+      // file:///C:/Users/xxx/Documents/orca/plugins/AI/dist/main.js
+      // -> C:\Users\xxx\Documents\orca\plugins\AI\dist\
+      const baseUrl = moduleUrl.substring(0, moduleUrl.lastIndexOf("/") + 1);
+      if (baseUrl.startsWith("file:///")) {
+        return baseUrl.substring(8).replace(/\//g, "\\");
+      }
+      return baseUrl;
+    }
+  } catch (e) {
+    console.log("[PythonRuntime] Cannot get dist path from import.meta.url");
+  }
+  return "";
+}
+
+/**
+ * 获取 Python 服务器脚本的路径
+ */
+export function getPythonServerScriptPath(): string {
+  const distPath = getPluginDistPath();
+  if (distPath) {
+    return distPath + "scripts\\python-server.py";
+  }
+  return "scripts/python-server.py";
+}
+
+/**
+ * 获取 Python 服务器启动脚本的路径 (Windows .bat - 有窗口)
+ */
+export function getPythonServerBatPath(): string {
+  const distPath = getPluginDistPath();
+  if (distPath) {
+    return distPath + "scripts\\start-python-server.bat";
+  }
+  return "scripts/start-python-server.bat";
+}
+
+/**
+ * 获取 Python 服务器静默启动脚本的路径 (Windows .vbs - 无窗口)
+ */
+export function getPythonServerVbsPath(): string {
+  const distPath = getPluginDistPath();
+  if (distPath) {
+    return distPath + "scripts\\start-python-server-silent.vbs";
+  }
+  return "scripts/start-python-server-silent.vbs";
+}
+
+/**
+ * 启动本地 Python 服务器
+ */
+export async function startPythonServer(): Promise<{ success: boolean; message: string }> {
+  // 先检查是否已经在运行
+  const alreadyRunning = await checkLocalServer();
+  if (alreadyRunning) {
+    return { success: true, message: "Python 服务器已在运行" };
+  }
+  
+  // 使用 .bat 文件启动（有窗口）
+  const batPath = getPythonServerBatPath();
+  const pyPath = getPythonServerScriptPath();
+  console.log("[PythonRuntime] Starting Python server via:", batPath);
+  
+  try {
+    // 使用 shell-open 打开 .bat 文件（Windows 会在新终端窗口运行）
+    await orca.invokeBackend("shell-open", batPath);
+    
+    // 等待服务器启动（最多等待 8 秒）
+    for (let i = 0; i < 16; i++) {
+      await new Promise(resolve => setTimeout(resolve, 500));
+      resetLocalServerStatus();
+      const running = await checkLocalServer();
+      if (running) {
+        return { success: true, message: "Python 服务器已启动" };
+      }
+    }
+    
+    return { 
+      success: false, 
+      message: `服务器启动超时。请确保已安装 Python，并手动运行脚本：\n${pyPath}` 
+    };
+  } catch (err: any) {
+    return { 
+      success: false, 
+      message: `启动失败: ${err.message}\n\n请手动运行：python "${pyPath}"` 
+    };
+  }
+}
+
+/**
+ * 获取本地服务器状态
+ */
+export async function getPythonServerStatus(): Promise<{
+  running: boolean;
+  pythonVersion?: string;
+  cwd?: string;
+}> {
+  try {
+    const response = await fetch(`${LOCAL_PYTHON_SERVER_URL}/health`, {
+      method: "GET",
+      signal: AbortSignal.timeout(2000),
+    });
+    
+    if (response.ok) {
+      const data = await response.json();
+      return {
+        running: true,
+        pythonVersion: data.python_version,
+        cwd: data.cwd,
+      };
+    }
+  } catch {
+    // 服务器未运行
+  }
+  
+  return { running: false };
+}
+
+/**
+ * 停止本地 Python 服务器
+ */
+export async function stopPythonServer(): Promise<{ success: boolean; message: string }> {
+  const status = await getPythonServerStatus();
+  if (!status.running) {
+    return { success: true, message: "服务器未运行" };
+  }
+  
+  try {
+    await fetch(`${LOCAL_PYTHON_SERVER_URL}/shutdown`, {
+      method: "POST",
+      signal: AbortSignal.timeout(3000),
+    });
+  } catch {
+    // 服务器关闭时连接会断开，这是正常的
+  }
+  
+  // 等待确认关闭
+  await new Promise(resolve => setTimeout(resolve, 500));
+  resetLocalServerStatus();
+  
+  const stillRunning = await checkLocalServer();
+  if (stillRunning) {
+    return { success: false, message: "服务器关闭失败" };
+  }
+  
+  return { success: true, message: "Python 服务器已停止" };
+}
+
+/**
+ * 读取本地文件
+ */
+export async function readLocalFile(path: string, encoding = "utf-8"): Promise<string> {
+  const serverAvailable = await checkLocalServer();
+  if (!serverAvailable) {
+    throw new Error("本地 Python 服务器未运行");
+  }
+  
+  const response = await fetch(`${LOCAL_PYTHON_SERVER_URL}/read-file`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path, encoding }),
+  });
+  
+  const result = await response.json();
+  if (!result.ok) {
+    throw new Error(result.error || "读取文件失败");
+  }
+  
+  return result.content;
+}
+
+/**
+ * 写入本地文件
+ */
+export async function writeLocalFile(
+  path: string, 
+  content: string, 
+  options?: { encoding?: string; createDirs?: boolean }
+): Promise<void> {
+  const serverAvailable = await checkLocalServer();
+  if (!serverAvailable) {
+    throw new Error("本地 Python 服务器未运行");
+  }
+  
+  const response = await fetch(`${LOCAL_PYTHON_SERVER_URL}/write-file`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      path,
+      content,
+      encoding: options?.encoding || "utf-8",
+      createDirs: options?.createDirs || false,
+    }),
+  });
+  
+  const result = await response.json();
+  if (!result.ok) {
+    throw new Error(result.error || "写入文件失败");
+  }
+}
+
+export type DirEntry = {
+  name: string;
+  path: string;
+  isDir: boolean;
+  size: number;
+  modified: number;
+};
+
+/**
+ * 列出目录内容
+ */
+export async function listLocalDir(path: string, pattern?: string): Promise<DirEntry[]> {
+  const serverAvailable = await checkLocalServer();
+  if (!serverAvailable) {
+    throw new Error("本地 Python 服务器未运行");
+  }
+  
+  const response = await fetch(`${LOCAL_PYTHON_SERVER_URL}/list-dir`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path, pattern }),
+  });
+  
+  const result = await response.json();
+  if (!result.ok) {
+    throw new Error(result.error || "列出目录失败");
+  }
+  
+  return result.entries;
+}
+
+/**
+ * 删除本地文件或目录
+ */
+export async function deleteLocalFile(
+  path: string, 
+  options?: { recursive?: boolean }
+): Promise<{ type: "file" | "directory" }> {
+  const serverAvailable = await checkLocalServer();
+  if (!serverAvailable) {
+    throw new Error("本地 Python 服务器未运行");
+  }
+  
+  const response = await fetch(`${LOCAL_PYTHON_SERVER_URL}/delete-file`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      path,
+      recursive: options?.recursive || false,
+    }),
+  });
+  
+  const result = await response.json();
+  if (!result.ok) {
+    throw new Error(result.error || "删除失败");
+  }
+  
+  return { type: result.type };
 }
