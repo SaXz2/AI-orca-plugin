@@ -528,7 +528,7 @@ export default function SortableInfoItemList({
                   { style: floatingEditButtonsStyle },
                   createElement("span", { style: { fontSize: "11px", color: "var(--orca-color-text-3)", marginRight: "auto" } }, "Enter 保存，Shift+Enter 换行"),
                   createElement("button", { style: { ...floatingEditBtnStyle, background: "var(--orca-color-bg-3)", color: "var(--orca-color-text-2)" }, onClick: () => { setEditingValue(null); setEditingText(""); } }, "取消"),
-                  createElement("button", { style: { ...floatingEditBtnStyle, background: "var(--orca-color-primary)", color: "#fff" }, onClick: handleSaveEditValue }, "保存")
+                  createElement("button", { style: { ...floatingEditBtnStyle, background: "var(--orca-color-bg-3)", color: "var(--orca-color-text-1)", border: "1px solid var(--orca-color-border)" }, onClick: handleSaveEditValue }, "保存")
                 )
               )
             ));

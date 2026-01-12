@@ -246,9 +246,9 @@ export default function GlobalImagePreview() {
                 "button",
                 {
                   style: {
-                    background: "var(--orca-color-primary)",
-                    color: "white",
-                    border: "none",
+                    background: "var(--orca-color-bg-3)",
+                    color: "var(--orca-color-text-1)",
+                    border: "1px solid var(--orca-color-border)",
                     borderRadius: "4px",
                     padding: "4px 8px",
                     fontSize: "clamp(10px, 1.8vw, 12px)",

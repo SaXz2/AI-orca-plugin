@@ -397,10 +397,10 @@ export default function MultiModelSelector({ settings, onClose }: MultiModelSele
           disabled: selectedCount < 2,
           style: {
             padding: "6px 16px",
-            border: "none",
+            border: "1px solid var(--orca-color-border)",
             borderRadius: "6px",
-            background: selectedCount >= 2 ? "var(--orca-color-primary)" : "var(--orca-color-bg-3)",
-            color: selectedCount >= 2 ? "#fff" : "var(--orca-color-text-3)",
+            background: selectedCount >= 2 ? "var(--orca-color-bg-3)" : "var(--orca-color-bg-2)",
+            color: selectedCount >= 2 ? "var(--orca-color-text-1)" : "var(--orca-color-text-3)",
             fontSize: "12px",
             fontWeight: 500,
             cursor: selectedCount >= 2 ? "pointer" : "not-allowed",

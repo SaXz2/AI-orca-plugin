@@ -226,10 +226,10 @@ function ModelResponseCard({
                   onClick: handleAdopt,
                   style: {
                     padding: "4px 8px",
-                    border: "none",
+                    border: "1px solid var(--orca-color-border)",
                     borderRadius: "4px",
-                    background: "var(--orca-color-primary)",
-                    color: "white",
+                    background: "var(--orca-color-bg-3)",
+                    color: "var(--orca-color-text-1)",
                     cursor: "pointer",
                     fontSize: "12px",
                     display: "flex",

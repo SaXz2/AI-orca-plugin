@@ -267,8 +267,9 @@ export const chatAnimations = `
 }
 
 .md-table-view-btn.active {
-    background: var(--orca-color-primary-5, var(--orca-color-primary, #007bff));
-    color: #fff;
+    background: var(--orca-color-bg-3, rgba(128, 128, 128, 0.15));
+    color: var(--orca-color-text-1, inherit);
+    border: 1px solid var(--orca-color-border, rgba(128, 128, 128, 0.3));
 }
 
 .md-table-copy-btn {
@@ -505,8 +506,9 @@ export const chatAnimations = `
     gap: 10px;
     padding: 10px 14px;
     border-radius: 10px;
-    background: linear-gradient(135deg, var(--orca-color-primary, #007bff) 0%, color-mix(in srgb, var(--orca-color-primary, #007bff) 80%, #000) 100%);
-    color: #fff;
+    background: var(--orca-color-bg-3, rgba(128, 128, 128, 0.1));
+    border: 1px solid var(--orca-color-border, rgba(128, 128, 128, 0.2));
+    color: var(--orca-color-text-1, inherit);
     font-weight: 600;
     font-size: 14px;
 }
@@ -624,9 +626,9 @@ export const chatAnimations = `
 }
 
 .md-checkbox.checked {
-    background: var(--orca-color-primary, #007bff);
-    border-color: var(--orca-color-primary, #007bff);
-    color: #fff;
+    background: var(--orca-color-bg-3, rgba(128, 128, 128, 0.15));
+    border-color: var(--orca-color-border, rgba(128, 128, 128, 0.3));
+    color: var(--orca-color-text-1, inherit);
 }
 
 .md-checklist-text {
@@ -976,8 +978,9 @@ br + .md-block-dot {
 }
 
 .md-gallery-view-btn.active {
-    background: var(--orca-color-primary, #007bff);
-    color: #fff;
+    background: var(--orca-color-bg-3, rgba(128, 128, 128, 0.15));
+    color: var(--orca-color-text-1, inherit);
+    border: 1px solid var(--orca-color-border, rgba(128, 128, 128, 0.3));
 }
 
 /* Grid View */

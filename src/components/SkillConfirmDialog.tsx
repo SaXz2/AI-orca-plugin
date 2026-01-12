@@ -101,9 +101,9 @@ export default function SkillConfirmDialog({
           style: {
             padding: "6px 12px",
             borderRadius: 4,
-            border: "none",
-            background: "var(--orca-color-primary)",
-            color: "#fff",
+            border: "1px solid var(--orca-color-border)",
+            background: "var(--orca-color-bg-3)",
+            color: "var(--orca-color-text-1)",
             cursor: "pointer",
             fontSize: 12,
           },

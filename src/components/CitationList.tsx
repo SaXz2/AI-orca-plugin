@@ -77,9 +77,9 @@ export default function CitationList({ citations, compact = false, defaultCollap
             {
               key: citation.id,
               style: {
-                background: "var(--orca-color-primary)",
-                color: "white",
-                border: "none",
+                background: "var(--orca-color-bg-3)",
+                color: "var(--orca-color-text-1)",
+                border: "1px solid var(--orca-color-border)",
                 borderRadius: "50%",
                 width: "18px",
                 height: "18px",
@@ -94,7 +94,7 @@ export default function CitationList({ citations, compact = false, defaultCollap
               onClick: () => handleCitationClick(citation),
               onMouseEnter: (e: any) => {
                 e.currentTarget.style.transform = "scale(1.1)";
-                e.currentTarget.style.background = "var(--orca-color-primary-hover)";
+                e.currentTarget.style.background = "var(--orca-color-bg-2)";
               },
               onMouseLeave: (e: any) => {
                 e.currentTarget.style.transform = "scale(1)";
@@ -209,8 +209,9 @@ export default function CitationList({ citations, compact = false, defaultCollap
               "div",
               {
                 style: {
-                  background: "var(--orca-color-primary)",
-                  color: "white",
+                  background: "var(--orca-color-bg-3)",
+                  border: "1px solid var(--orca-color-border)",
+                  color: "var(--orca-color-text-1)",
                   borderRadius: "50%",
                   width: "20px",
                   height: "20px",

@@ -64,9 +64,9 @@ const headerTitleStyle: React.CSSProperties = {
 };
 
 const newButtonStyle: React.CSSProperties = {
-  background: "var(--orca-color-primary, #007bff)",
-  color: "#fff",
-  border: "none",
+  background: "var(--orca-color-bg-3)",
+  color: "var(--orca-color-text-1)",
+  border: "1px solid var(--orca-color-border)",
   borderRadius: 6,
   padding: "5px 10px",
   cursor: "pointer",
@@ -107,8 +107,9 @@ const sessionIconStyle = (isPinned: boolean): React.CSSProperties => ({
   width: 22,
   height: 22,
   borderRadius: 4,
-  background: isPinned ? "var(--orca-color-primary, #007bff)" : "var(--orca-color-bg-3)",
-  color: isPinned ? "#fff" : "var(--orca-color-text-2)",
+  background: isPinned ? "var(--orca-color-bg-3)" : "var(--orca-color-bg-3)",
+  border: isPinned ? "1px solid var(--orca-color-border)" : "none",
+  color: isPinned ? "var(--orca-color-text-1)" : "var(--orca-color-text-2)",
   display: "flex",
   alignItems: "center",
   justifyContent: "center",

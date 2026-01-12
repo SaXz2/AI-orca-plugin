@@ -685,9 +685,11 @@ export default function UserPortraitCard({
                     {
                       style: {
                         ...addInfoActionBtnStyle,
-                        background: newInfoValue.trim() ? "var(--orca-color-primary)" : "var(--orca-color-bg-3)",
-                        color: newInfoValue.trim() ? "#fff" : "var(--orca-color-text-2)",
+                        background: newInfoValue.trim() ? "var(--orca-color-bg-3)" : "var(--orca-color-bg-2)",
+                        color: "var(--orca-color-text-1)",
+                        border: "1px solid var(--orca-color-border)",
                         cursor: newInfoValue.trim() ? "pointer" : "not-allowed",
+                        opacity: newInfoValue.trim() ? 1 : 0.5,
                       },
                       onClick: () => {
                         if (newInfoValue.trim()) {
@@ -844,9 +846,11 @@ export default function UserPortraitCard({
               {
                 style: {
                   ...addCategoryActionBtnStyle,
-                  background: newCategoryTitle.trim() ? "var(--orca-color-primary)" : "var(--orca-color-bg-3)",
-                  color: newCategoryTitle.trim() ? "#fff" : "var(--orca-color-text-2)",
+                  background: newCategoryTitle.trim() ? "var(--orca-color-bg-3)" : "var(--orca-color-bg-2)",
+                  color: "var(--orca-color-text-1)",
+                  border: "1px solid var(--orca-color-border)",
                   cursor: newCategoryTitle.trim() ? "pointer" : "not-allowed",
+                  opacity: newCategoryTitle.trim() ? 1 : 0.5,
                 },
                 onClick: () => {
                   if (newCategoryTitle.trim()) {
@@ -1109,9 +1113,11 @@ export default function UserPortraitCard({
             {
               style: {
                 ...modalBtnStyle,
-                background: editingInfoValue.trim() ? "var(--orca-color-primary)" : "var(--orca-color-bg-3)",
-                color: editingInfoValue.trim() ? "#fff" : "var(--orca-color-text-2)",
+                background: editingInfoValue.trim() ? "var(--orca-color-bg-3)" : "var(--orca-color-bg-2)",
+                color: "var(--orca-color-text-1)",
+                border: "1px solid var(--orca-color-border)",
                 cursor: editingInfoValue.trim() ? "pointer" : "not-allowed",
+                opacity: editingInfoValue.trim() ? 1 : 0.5,
               },
               onClick: editingInfoValue.trim() ? handleSaveInfoItemModal : undefined,
             },

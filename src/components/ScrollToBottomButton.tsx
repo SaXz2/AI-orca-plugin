@@ -71,8 +71,9 @@ const badgeStyle: React.CSSProperties = {
   height: "18px",
   padding: "0 5px",
   borderRadius: "9px",
-  background: "var(--orca-color-primary, #007bff)",
-  color: "#fff",
+  background: "var(--orca-color-bg-3)",
+  border: "1px solid var(--orca-color-border)",
+  color: "var(--orca-color-text-1)",
   fontSize: "11px",
   fontWeight: 600,
 };

@@ -242,9 +242,9 @@ export const memorySearchInputStyle: React.CSSProperties = {
 export const memoryAddButtonStyle: React.CSSProperties = {
   padding: "6px 12px",
   borderRadius: "6px",
-  border: "none",
-  background: "var(--orca-color-primary, #007bff)",
-  color: "#fff",
+  border: "1px solid var(--orca-color-border)",
+  background: "var(--orca-color-bg-3)",
+  color: "var(--orca-color-text-1)",
   fontSize: "13px",
   fontWeight: 500,
   cursor: "pointer",
@@ -252,7 +252,7 @@ export const memoryAddButtonStyle: React.CSSProperties = {
   alignItems: "center",
   gap: "4px",
   whiteSpace: "nowrap",
-  transition: "opacity 0.15s ease",
+  transition: "opacity 0.15s ease, background 0.15s ease",
 };
 
 export const memoryListStyle: React.CSSProperties = {
@@ -404,17 +404,17 @@ export const emptyHighlightStyle: React.CSSProperties = {
 export const emptyAddButtonStyle: React.CSSProperties = {
   padding: "16px 32px",
   borderRadius: "14px",
-  border: "none",
-  background: "linear-gradient(135deg, var(--orca-color-primary, #007bff) 0%, #0056b3 100%)",
-  color: "#fff",
+  border: "1px solid var(--orca-color-border)",
+  background: "var(--orca-color-bg-3)",
+  color: "var(--orca-color-text-1)",
   fontSize: "16px",
   fontWeight: 600,
   cursor: "pointer",
   display: "flex",
   alignItems: "center",
   gap: "12px",
-  transition: "transform 0.2s ease, box-shadow 0.2s ease",
-  boxShadow: "0 6px 20px rgba(0, 123, 255, 0.4)",
+  transition: "transform 0.2s ease, box-shadow 0.2s ease, background 0.15s ease",
+  boxShadow: "0 4px 12px rgba(0, 0, 0, 0.1)",
   position: "relative",
   zIndex: 1,
   letterSpacing: "0.3px",
@@ -543,9 +543,9 @@ export const cancelButtonStyle: React.CSSProperties = {
 export const dangerButtonStyle: React.CSSProperties = {
   padding: "8px 16px",
   borderRadius: "6px",
-  border: "none",
-  background: "var(--orca-color-danger, #dc3545)",
-  color: "#fff",
+  border: "1px solid var(--orca-color-danger, #dc3545)",
+  background: "var(--orca-color-bg-danger, rgba(220, 53, 69, 0.1))",
+  color: "var(--orca-color-danger, #dc3545)",
   fontSize: "14px",
   cursor: "pointer",
 };

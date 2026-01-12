@@ -270,7 +270,7 @@ export default function ExtractMemoryButton({
         createElement(
           "button",
           {
-            style: { ...promptInputBtnStyle, background: "var(--orca-color-primary)", color: "#fff" },
+            style: { ...promptInputBtnStyle, background: "var(--orca-color-bg-3)", color: "var(--orca-color-text-1)", border: "1px solid var(--orca-color-border)" },
             onClick: handleConfirmExtract,
           },
           "提取"

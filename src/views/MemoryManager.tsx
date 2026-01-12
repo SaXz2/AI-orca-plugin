@@ -90,8 +90,9 @@ const betaBadgeStyle: React.CSSProperties = {
   fontSize: "10px",
   padding: "2px 6px",
   borderRadius: "4px",
-  background: "var(--orca-color-primary, #007bff)",
-  color: "#fff",
+  background: "var(--orca-color-bg-3)",
+  border: "1px solid var(--orca-color-border)",
+  color: "var(--orca-color-text-2)",
   fontWeight: 500,
 };
 
@@ -931,9 +932,9 @@ export default function MemoryManager({ onBack }: MemoryManagerProps) {
             {
               style: {
                 ...cancelButtonStyle,
-                background: "var(--orca-color-primary, #007bff)",
-                color: "#fff",
-                border: "none",
+                background: tagEditorLabel.trim() ? "var(--orca-color-bg-3)" : "var(--orca-color-bg-2)",
+                color: "var(--orca-color-text-1)",
+                border: "1px solid var(--orca-color-border)",
                 opacity: tagEditorLabel.trim() ? 1 : 0.5,
                 cursor: tagEditorLabel.trim() ? "pointer" : "not-allowed",
               },
