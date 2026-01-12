@@ -1,5 +1,5 @@
 import { proxy } from "valtio";
-import type { SkillDefinition } from "../services/skill-service";
+import type { SkillDefinition } from "../types/skill";
 
 interface SkillStore {
   skills: SkillDefinition[];

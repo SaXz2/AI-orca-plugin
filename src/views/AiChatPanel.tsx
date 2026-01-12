@@ -475,11 +475,8 @@ export default function AiChatPanel({ panelId }: PanelProps) {
 
     const maxSkills = 30;
     const skillLines = skills.slice(0, maxSkills).map((skill) => {
-      const desc = skill.description ? ` - ${skill.description}` : "";
-      const inputs = skill.inputs?.length
-        ? ` | inputs: ${skill.inputs.map((i) => i.name).join(", ")}`
-        : "";
-      return `- ${skill.id}: ${skill.name}${desc}${inputs}`;
+      const desc = skill.metadata.description ? ` - ${skill.metadata.description}` : "";
+      return `- ${skill.id}: ${skill.metadata.name}${desc}`;
     }).join("\n");
     const truncatedNote = skills.length > maxSkills
       ? `\n(Only showing first ${maxSkills} skills.)`
@@ -542,7 +539,7 @@ export default function AiChatPanel({ panelId }: PanelProps) {
         const reason = String(entry?.reason || "").trim() || "相关";
         return {
           skillId: skill.id,
-          skillName: skill.name,
+          skillName: skill.metadata.name,
           reason,
         } satisfies SkillPrecheckMatch;
       })
@@ -558,13 +555,13 @@ export default function AiChatPanel({ panelId }: PanelProps) {
     const proposedAction = typeof parsed.proposedAction === "string" && parsed.proposedAction.trim()
       ? parsed.proposedAction.trim()
       : suggestedSkill
-        ? `建议使用技能「${suggestedSkill.name}」执行。`
+        ? `建议使用技能「${suggestedSkill.metadata.name}」执行。`
         : undefined;
 
     return {
       matches,
       suggestedSkillId: suggestedSkill?.id,
-      suggestedSkillName: suggestedSkill?.name,
+      suggestedSkillName: suggestedSkill?.metadata.name,
       proposedAction,
     };
   }, [extractJsonPayload]);
@@ -615,7 +612,7 @@ export default function AiChatPanel({ panelId }: PanelProps) {
     return new Promise((resolve) => {
       const messageId = nowId();
       const createdAt = Date.now();
-      const stepSummary = skill.steps.map(formatSkillStep);
+      const stepSummary = [skill.metadata.description || skill.instruction.slice(0, 200)];
       skillConfirmResolversRef.current.set(messageId, resolve);
       setMessages((prev) => [
         ...prev,
@@ -627,14 +624,14 @@ export default function AiChatPanel({ panelId }: PanelProps) {
           localOnly: true,
           skillConfirm: {
             skillId: skill.id,
-            skillName: skill.name,
+            skillName: skill.metadata.name,
             steps: stepSummary,
             status: "pending",
           },
         },
       ]);
     });
-  }, [formatSkillStep]);
+  }, []);
 
   const handleSkillPrecheckAction = useCallback((messageId: string, approved: boolean) => {
     const resolver = skillPrecheckResolversRef.current.get(messageId);
@@ -1947,7 +1944,7 @@ graph TD
               if (matchedSkill) {
                 const toolName = getSkillToolName(matchedSkill);
                 preapprovedSkillToolNames.add(toolName);
-                systemPrompt += `\n\n【技能预检】用户已确认使用技能「${matchedSkill.name}」。请优先调用工具 ${toolName}。如缺少必要输入，先询问用户再继续。`;
+                systemPrompt += `\n\n【技能预检】用户已确认使用技能「${matchedSkill.metadata.name}」。请优先调用工具 ${toolName}。如缺少必要输入，先询问用户再继续。`;
               }
             }
           }
@@ -2357,10 +2354,57 @@ graph TD
           let args: any = {};
           let parseError: string | null = null;
 
+          // Helper function to attempt JSON repair for common AI model errors
+          const tryRepairJson = (jsonStr: string): string | null => {
+            // Fix 1: Remove duplicate keys (e.g., "key": "val1""key": "val2" -> "key": "val2")
+            // This handles cases where AI model outputs duplicate fields
+            let repaired = jsonStr.replace(/"([^"]+)":\s*"[^"]*"\s*"(\1)":\s*/g, '"$1": ');
+            
+            // Fix 2: Replace ) with } at the end if mismatched
+            if (repaired.includes(')') && !repaired.includes('(')) {
+              repaired = repaired.replace(/\)$/g, '}');
+            }
+            
+            // Fix 3: Ensure proper closing brace
+            const openBraces = (repaired.match(/{/g) || []).length;
+            const closeBraces = (repaired.match(/}/g) || []).length;
+            if (openBraces > closeBraces) {
+              repaired = repaired + '}'.repeat(openBraces - closeBraces);
+            }
+            
+            // Fix 4: Remove trailing content after last valid JSON structure
+            // Find the last } and truncate anything after it that's not whitespace
+            const lastBraceIndex = repaired.lastIndexOf('}');
+            if (lastBraceIndex !== -1 && lastBraceIndex < repaired.length - 1) {
+              const afterBrace = repaired.slice(lastBraceIndex + 1).trim();
+              if (afterBrace && !afterBrace.startsWith(',') && !afterBrace.startsWith(']')) {
+                repaired = repaired.slice(0, lastBraceIndex + 1);
+              }
+            }
+            
+            try {
+              JSON.parse(repaired);
+              return repaired;
+            } catch {
+              return null;
+            }
+          };
+
           try {
             args = JSON.parse(toolCall.function.arguments);
           } catch (error: any) {
-            parseError = `Invalid JSON in tool arguments: ${error.message}`;
+            // Try to repair the JSON before giving up
+            const repaired = tryRepairJson(toolCall.function.arguments);
+            if (repaired) {
+              console.warn('[Tool Call] Repaired malformed JSON:', toolCall.function.arguments, '->', repaired);
+              try {
+                args = JSON.parse(repaired);
+              } catch {
+                parseError = `Invalid JSON in tool arguments: ${error.message}`;
+              }
+            } else {
+              parseError = `Invalid JSON in tool arguments: ${error.message}`;
+            }
           }
 
           // Log tool call with parsed arguments for debugging

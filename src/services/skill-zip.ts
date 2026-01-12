@@ -1,24 +1,6 @@
 import { zipSync, unzipSync } from "fflate";
-import type { SkillDefinition } from "./skill-service";
-import { getSkillsRootPath, listDir, mkdirs, readBinaryFile, writeBinaryFile } from "./skill-fs";
-
-async function collectFiles(relativeDir: string): Promise<string[]> {
-  const entries = await listDir(relativeDir);
-  const files: string[] = [];
-
-  for (const entry of entries) {
-    const entryPath = `${relativeDir}/${entry.name}`.replace(/\\/g, "/");
-    if (entry.isDir) {
-      files.push(...await collectFiles(entryPath));
-    } else {
-      if (entryPath.toLowerCase().endsWith("/skills.md")) {
-        files.push(entryPath);
-      }
-    }
-  }
-
-  return files;
-}
+import type { SkillDefinition } from "../types/skill";
+import { serializeSkillMd, parseSkillMd, createSkill } from "./skill-service";
 
 function downloadZip(bytes: Uint8Array, filename: string): void {
   const buffer = bytes.buffer instanceof ArrayBuffer
@@ -35,20 +17,27 @@ function downloadZip(bytes: Uint8Array, filename: string): void {
   URL.revokeObjectURL(url);
 }
 
+/**
+ * Exports skills as a ZIP file containing SKILL.md files.
+ * Each skill is exported as a separate SKILL.md file.
+ * 
+ * @param skills - Array of skills to export
+ */
 export async function exportSkillsZip(skills: SkillDefinition[]): Promise<void> {
   if (skills.length === 0) return;
 
   const zipEntries: Record<string, Uint8Array> = {};
-  const root = getSkillsRootPath();
+  const encoder = new TextEncoder();
 
   for (const skill of skills) {
-    const skillPath = `${root}/${skill.folderName}`.replace(/\\/g, "/");
-    const files = await collectFiles(skillPath);
-    for (const filePath of files) {
-      const bytes = await readBinaryFile(filePath);
-      if (!bytes) continue;
-      zipEntries[filePath] = bytes;
-    }
+    // Serialize skill to SKILL.md format
+    const content = serializeSkillMd(skill.metadata, skill.instruction);
+    const bytes = encoder.encode(content);
+    
+    // Use skill name as filename (sanitized)
+    const safeName = skill.metadata.name.replace(/[\\/:*?"<>|]/g, "_").trim();
+    const filename = `${safeName}/SKILL.md`;
+    zipEntries[filename] = bytes;
   }
 
   const zipped = zipSync(zipEntries, { level: 6 });
@@ -56,27 +45,37 @@ export async function exportSkillsZip(skills: SkillDefinition[]): Promise<void> 
   downloadZip(zipped, filename);
 }
 
+/**
+ * Imports skills from a ZIP file containing SKILL.md files.
+ * 
+ * @param file - ZIP file to import
+ * @returns Number of skills imported
+ */
 export async function importSkillsZip(file: File): Promise<number> {
   const buffer = new Uint8Array(await file.arrayBuffer());
   const entries = unzipSync(buffer);
-  const root = `${getSkillsRootPath()}/`;
-  const seenSkills = new Set<string>();
+  const decoder = new TextDecoder();
+  let importedCount = 0;
 
   for (const [path, data] of Object.entries(entries)) {
-    const normalized = path.replace(/\\/g, "/");
-    if (!normalized.startsWith(root)) continue;
-    if (!normalized.toLowerCase().endsWith("/skills.md")) continue;
-
-    const dir = normalized.split("/").slice(0, -1).join("/");
-    if (dir) {
-      await mkdirs(dir);
+    const normalized = path.replace(/\\/g, "/").toLowerCase();
+    
+    // Look for SKILL.md files
+    if (!normalized.endsWith("/skill.md") && !normalized.endsWith("skill.md")) {
+      continue;
     }
 
-    await writeBinaryFile(normalized, data);
-
-    const skillName = normalized.slice(root.length).split("/")[0];
-    if (skillName) seenSkills.add(skillName);
+    try {
+      const content = decoder.decode(data);
+      const { metadata, instruction } = parseSkillMd(content);
+      
+      // Create skill in IndexedDB
+      await createSkill(metadata.name, metadata.description, instruction);
+      importedCount++;
+    } catch (err) {
+      console.error(`Failed to import skill from ${path}:`, err);
+    }
   }
 
-  return seenSkills.size;
+  return importedCount;
 }

@@ -1,6 +1,8 @@
 ﻿import type { OpenAITool } from "./openai-client";
-import { parse as parseYaml } from "yaml";
+import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { skillStore, setSkillError, setSkillLoading, setSkills } from "../store/skill-store";
+import type { SkillMetadata, SkillDefinition as NewSkillDefinition, SkillValidationResult } from "../types/skill";
+import { validateSkillMetadata, SKILL_NAME_MAX_LENGTH, SKILL_DESCRIPTION_MAX_LENGTH } from "../types/skill";
 import {
   buildSkillPath,
   clearDisabledSkillFolders,
@@ -16,6 +18,13 @@ import {
   writeTextFile,
 } from "./skill-fs";
 import { runPythonStep, type PythonFilePayload } from "./python-runtime";
+import {
+  saveSkill as saveSkillToDb,
+  getSkill as getSkillFromDb,
+  getAllSkills as getAllSkillsFromDb,
+  deleteSkill as deleteSkillFromDb,
+  skillExists,
+} from "./skill-storage";
 
 export type SkillInput = {
   name: string;
@@ -43,7 +52,11 @@ export type SkillPythonStep = {
 
 export type SkillStep = SkillToolStep | SkillPythonStep;
 
-export type SkillDefinition = {
+/**
+ * Legacy skill definition type - used for file-system based skills
+ * @deprecated Use SkillDefinition from types/skill.ts for new code
+ */
+export type LegacySkillDefinition = {
   id: string;
   name: string;
   description?: string;
@@ -53,9 +66,12 @@ export type SkillDefinition = {
   folderName: string;
 };
 
+// Re-export the new SkillDefinition type for convenience
+export type { SkillDefinition } from "../types/skill";
+
 export type SkillDraftSaveResult = {
   folderName: string;
-  definition: SkillDefinition;
+  definition: LegacySkillDefinition;
   content: string;
 };
 
@@ -67,7 +83,7 @@ export type SkillExecutionOverrides = {
     input?: any;
     files?: PythonFilePayload[];
   }) => Promise<{ output: string; runtime: "backend" | "pyodide" }>;
-  instructionProvider?: (skill: SkillDefinition) => Promise<string>;
+  instructionProvider?: (skill: LegacySkillDefinition) => Promise<string>;
 };
 
 const SKILL_TOOL_PREFIX = "skill_";
@@ -213,6 +229,169 @@ steps:
   },
 ];
 
+/**
+ * Built-in skill templates in the new SKILL.md format (Codex-style)
+ * These are initialized when no skills exist in IndexedDB
+ * 
+ * Description format follows Codex template:
+ * [功能描述]. Use when [触发场景] or when the user mentions [关键词].
+ */
+const BUILTIN_SKILL_TEMPLATES: Array<{
+  id: string;
+  name: string;
+  description: string;
+  instruction: string;
+}> = [
+  {
+    id: "daily-review",
+    name: "今日回顾",
+    description: "汇总近期日记内容，整理重点事件、完成事项和待办任务。Use when reviewing daily progress, summarizing journal entries, or when the user mentions 日记, 回顾, 总结, 今日, daily review.",
+    instruction: `# 今日回顾
+
+## 快速开始
+
+调用 getRecentJournals 工具获取最近日记，然后生成结构化回顾。
+
+## 功能特性
+
+- **重点事件**：提取 3-5 条关键事件
+- **完成事项**：列出已完成的任务
+- **未完成/待办**：整理未完成的事项
+- **明日关注**：建议明天需要关注的内容
+
+## 使用场景
+
+1. 每日工作结束时回顾当天进展
+2. 整理近期日记内容
+3. 生成日报或工作总结
+
+## 触发工具
+
+- \`getRecentJournals\`: 获取最近日记内容（默认 3 天）`,
+  },
+  {
+    id: "knowledge-cards",
+    name: "知识卡片",
+    description: "从近期日记中提炼知识点并生成闪卡用于复习。Use when creating flashcards, extracting knowledge points, or when the user mentions 卡片, 知识点, 复习, 闪卡, flashcard.",
+    instruction: `# 知识卡片
+
+## 快速开始
+
+从日记中提取关键知识点，生成 5-8 张闪卡。
+
+## 功能特性
+
+- **知识提取**：自动识别日记中的关键概念
+- **卡片生成**：创建问答式闪卡
+- **复习优化**：适合间隔重复学习
+
+## 使用场景
+
+1. 学习笔记整理后生成复习卡片
+2. 从阅读记录中提取要点
+3. 准备考试或知识回顾
+
+## 触发工具
+
+1. \`getRecentJournals\`: 获取日记内容
+2. \`generateFlashcards\`: 生成闪卡`,
+  },
+  {
+    id: "weekly-digest",
+    name: "周报聚合",
+    description: "汇总最近一周的日记与未完成任务，生成周报草稿。Use when creating weekly reports, summarizing weekly progress, or when the user mentions 周报, 本周, 汇总, 一周, weekly report.",
+    instruction: `# 周报聚合
+
+## 快速开始
+
+获取最近 7 天日记和未完成任务，生成结构化周报。
+
+## 功能特性
+
+- **本周亮点**：提取重要成就和进展
+- **重要进展**：详细列出关键工作内容
+- **未完成事项**：整理待处理任务
+- **下周关注**：规划下周重点
+
+## 使用场景
+
+1. 每周工作总结
+2. 团队周报准备
+3. 项目进度汇报
+
+## 触发工具
+
+1. \`getRecentJournals\`: 获取最近 7 天日记
+2. \`query_blocks\`: 查询未完成任务`,
+  },
+  {
+    id: "tag-review",
+    name: "标签筛选复盘",
+    description: "汇总指定标签的内容，根据属性筛选并进行复盘分析。Use when reviewing tagged content, filtering by status, or when the user mentions 标签, 复盘, 筛选, tag, filter.",
+    instruction: `# 标签筛选复盘
+
+## 快速开始
+
+指定标签名和状态值，获取相关内容并进行对比分析。
+
+## 功能特性
+
+- **标签汇总**：收集指定标签下的所有内容
+- **属性筛选**：按状态或其他属性过滤
+- **对比分析**：整体与筛选结果对比
+- **改进建议**：基于分析提供优化建议
+
+## 使用场景
+
+1. 项目标签复盘（如 #project/xxx）
+2. 按状态筛选任务（如 Done, In Progress）
+3. 主题内容整理和分析
+
+## 输入参数
+
+- \`tagName\`: 标签名（不带 #）
+- \`status\`: 需要过滤的状态值
+
+## 触发工具
+
+1. \`searchBlocksByTag\`: 搜索标签内容
+2. \`query_blocks_by_tag\`: 按属性筛选`,
+  },
+  {
+    id: "page-scan",
+    name: "页面检索概览",
+    description: "读取指定页面内容并检索关键词，生成结构化概览。Use when scanning page content, searching keywords, or when the user mentions 页面, 检索, 概览, 关键词, page, search.",
+    instruction: `# 页面检索概览
+
+## 快速开始
+
+指定页面名称和关键词，获取页面结构和相关内容。
+
+## 功能特性
+
+- **页面读取**：获取完整页面内容
+- **关键词检索**：在内容中搜索匹配项
+- **结构概述**：分析页面组织结构
+- **要点提取**：整理与关键词相关的要点
+
+## 使用场景
+
+1. 快速了解某个页面的内容结构
+2. 在长文档中定位特定信息
+3. 生成页面内容摘要
+
+## 输入参数
+
+- \`pageName\`: 页面名称
+- \`keyword\`: 需要检索的关键词
+
+## 触发工具
+
+1. \`getPage\`: 获取页面内容
+2. \`searchBlocksByText\`: 关键词检索`,
+  },
+];
+
 type ParsedSkillFile = {
   metadata: Record<string, any>;
   instruction: string;
@@ -246,6 +425,127 @@ export function parseSkillFile(content: string): ParsedSkillFile {
   const instruction = lines.slice(endIndex + 1).join("\n").trim();
 
   return { metadata, instruction };
+}
+
+/**
+ * Parse result for SKILL.md format
+ */
+export type ParseSkillMdResult = {
+  metadata: SkillMetadata;
+  instruction: string;
+};
+
+/**
+ * Parse SKILL.md content to extract metadata and instruction.
+ * 
+ * SKILL.md format:
+ * ```
+ * ---
+ * name: Skill Name
+ * description: Skill description text.
+ * ---
+ * 
+ * # Instruction content here
+ * ```
+ * 
+ * @param content - The raw SKILL.md file content
+ * @returns Parsed metadata and instruction
+ * @throws Error if frontmatter is missing or invalid
+ * 
+ * Requirements: 1.3
+ */
+export function parseSkillMd(content: string): ParseSkillMdResult {
+  const normalized = content.replace(/\r\n/g, "\n");
+  const lines = normalized.split("\n");
+  
+  // Check for frontmatter start
+  if (lines[0]?.trim() !== "---") {
+    throw new Error("Invalid SKILL.md format: missing frontmatter start delimiter");
+  }
+
+  // Find frontmatter end
+  let endIndex = -1;
+  for (let i = 1; i < lines.length; i++) {
+    if (lines[i].trim() === "---") {
+      endIndex = i;
+      break;
+    }
+  }
+
+  if (endIndex === -1) {
+    throw new Error("Invalid SKILL.md format: missing frontmatter end delimiter");
+  }
+
+  // Parse YAML frontmatter
+  const yamlBlock = lines.slice(1, endIndex).join("\n");
+  let parsed: Record<string, any>;
+  try {
+    parsed = (parseYaml(yamlBlock) as Record<string, any>) || {};
+  } catch (e) {
+    throw new Error(`Invalid SKILL.md format: YAML parse error - ${(e as Error).message}`);
+  }
+
+  // Extract and validate name
+  const name = typeof parsed.name === "string" ? parsed.name.trim() : "";
+  if (!name) {
+    throw new Error("Invalid SKILL.md format: name is required in frontmatter");
+  }
+
+  // Extract description (default to empty string)
+  const description = typeof parsed.description === "string" ? parsed.description : "";
+
+  // Extract instruction (markdown body after frontmatter)
+  const instruction = lines.slice(endIndex + 1).join("\n").trim();
+
+  return {
+    metadata: { name, description },
+    instruction,
+  };
+}
+
+/**
+ * Serialize skill metadata and instruction to SKILL.md format.
+ * 
+ * Output format:
+ * ```
+ * ---
+ * name: Skill Name
+ * description: Skill description text.
+ * ---
+ * 
+ * # Instruction content here
+ * ```
+ * 
+ * @param metadata - The skill metadata (name and description)
+ * @param instruction - The instruction markdown content
+ * @returns Serialized SKILL.md content string
+ * 
+ * Requirements: 1.4
+ */
+export function serializeSkillMd(metadata: SkillMetadata, instruction: string): string {
+  // Build frontmatter object with only name and description
+  const frontmatter: Record<string, string> = {
+    name: metadata.name,
+    description: metadata.description,
+  };
+
+  // Serialize to YAML (without document markers)
+  const yamlContent = stringifyYaml(frontmatter, { lineWidth: 0 }).trim();
+
+  // Combine frontmatter and instruction
+  const parts = [
+    "---",
+    yamlContent,
+    "---",
+  ];
+
+  // Add instruction with a blank line separator if present
+  if (instruction) {
+    parts.push("");
+    parts.push(instruction);
+  }
+
+  return parts.join("\n");
 }
 
 export function extractSkillMarkdown(raw: string): string {
@@ -339,11 +639,12 @@ function buildSkillDefinition(
   metadata: Record<string, any>,
   folderName: string,
   source: "built-in" | "user",
-): SkillDefinition | null {
+): LegacySkillDefinition | null {
   const name = String(metadata.name ?? "").trim();
   if (!name) return null;
 
   const steps = normalizeSteps(metadata.steps);
+  console.log(`[Skill] Building skill "${name}" with ${steps.length} steps from metadata:`, metadata.steps);
   if (steps.length === 0) return null;
 
   const inputs = normalizeInputs(metadata.inputs);
@@ -364,7 +665,7 @@ export function parseSkillDefinitionFromContent(
   content: string,
   folderName: string,
   source: "built-in" | "user",
-): SkillDefinition | null {
+): LegacySkillDefinition | null {
   const { metadata } = parseSkillFile(content);
   return buildSkillDefinition(metadata, folderName, source);
 }
@@ -452,7 +753,7 @@ async function skillFileExists(folderName: string): Promise<boolean> {
   return (await readSkillFile(folderName)) !== null;
 }
 
-export async function getSkillContent(skill: SkillDefinition): Promise<string> {
+export async function getSkillContent(skill: LegacySkillDefinition): Promise<string> {
   const content = await readSkillFile(skill.folderName);
   if (content === null) {
     throw new Error("技能内容不存在");
@@ -497,64 +798,275 @@ export function isSkillToolName(toolName: string): boolean {
   return toolName.startsWith(SKILL_TOOL_PREFIX);
 }
 
-export function getSkillToolName(skill: SkillDefinition): string {
+export function getSkillToolName(skill: NewSkillDefinition | LegacySkillDefinition): string {
   return `${SKILL_TOOL_PREFIX}${skill.id}`;
 }
 
 export function getSkillDisplayName(toolName: string): string {
   if (!isSkillToolName(toolName)) return toolName;
   const skill = getSkillByToolName(toolName);
-  return skill?.name ?? toolName;
+  if (!skill) return toolName;
+  return skill.metadata.name;
 }
 
-export function getSkillByToolName(toolName: string): SkillDefinition | undefined {
+export function getSkillByToolName(toolName: string): NewSkillDefinition | undefined {
   if (!isSkillToolName(toolName)) return undefined;
   const id = toolName.slice(SKILL_TOOL_PREFIX.length);
   return skillStore.skills.find((skill) => skill.id === id);
 }
 
+/**
+ * Gets OpenAI tool definitions for all skills in the store.
+ * For the new Codex-style skills, we create simple tools with no parameters
+ * since the skill instruction is loaded on demand.
+ */
 export function getSkillTools(): OpenAITool[] {
   return skillStore.skills.map((skill) => {
-    const properties: Record<string, any> = {};
-    const required: string[] = [];
-
-    for (const input of skill.inputs) {
-      if (!input.name) continue;
-      properties[input.name] = {
-        type: input.type ?? "string",
-        description: input.description ?? "",
-      };
-      if (Array.isArray(input.enum)) {
-        properties[input.name].enum = input.enum;
-      }
-      if (input.default !== undefined) {
-        properties[input.name].default = input.default;
-      }
-      if (input.required) {
-        required.push(input.name);
-      }
-    }
-
-    const parameters: any = {
-      type: "object",
-      properties,
-    };
-    if (required.length > 0) {
-      parameters.required = required;
-    }
-
     return {
       type: "function",
       function: {
         name: getSkillToolName(skill),
-        description: skill.description || `Skill: ${skill.name}`,
-        parameters,
+        description: skill.metadata.description || `Skill: ${skill.metadata.name}`,
+        parameters: {
+          type: "object",
+          properties: {},
+        },
       },
     } satisfies OpenAITool;
   });
 }
 
+/**
+ * Generates a unique ID for a new skill.
+ * Uses timestamp + random suffix for uniqueness.
+ */
+function generateSkillId(): string {
+  const timestamp = Date.now().toString(36);
+  const random = Math.random().toString(36).substring(2, 8);
+  return `skill-${timestamp}-${random}`;
+}
+
+/**
+ * Initializes built-in skills if they don't exist in IndexedDB.
+ * This is called during loadSkillRegistry to ensure default skills are available.
+ * 
+ * Requirements: 1.2
+ */
+async function ensureBuiltInSkills(): Promise<void> {
+  for (const template of BUILTIN_SKILL_TEMPLATES) {
+    const existing = await getSkillFromDb(template.id);
+    if (!existing) {
+      const now = Date.now();
+      const skill: NewSkillDefinition = {
+        id: template.id,
+        metadata: {
+          name: template.name,
+          description: template.description,
+        },
+        instruction: template.instruction,
+        source: "built-in",
+        createdAt: now,
+        updatedAt: now,
+      };
+      await saveSkillToDb(skill);
+    }
+  }
+}
+
+/**
+ * Loads all skills from IndexedDB into the skill store.
+ * Initializes built-in skills if they don't exist.
+ * 
+ * Requirements: 1.2
+ */
 export async function loadSkillRegistry(): Promise<void> {
+  setSkillLoading(true);
+  setSkillError(undefined);
+
+  try {
+    // Initialize built-in skills if needed
+    await ensureBuiltInSkills();
+    
+    // Load all skills from IndexedDB
+    const skills = await getAllSkillsFromDb();
+    
+    // Update the store with loaded skills
+    setSkills(skills);
+  } catch (err: any) {
+    setSkillError(err?.message ?? String(err));
+    setSkills([]);
+  } finally {
+    setSkillLoading(false);
+  }
+}
+
+/**
+ * Creates a new skill and saves it to IndexedDB.
+ * Validates metadata field lengths before saving.
+ * 
+ * @param name - Skill name (max 64 chars)
+ * @param description - Skill description (max 1024 chars)
+ * @param instruction - Skill instruction content
+ * @returns The created skill definition
+ * @throws Error if validation fails
+ * 
+ * Requirements: 1.1, 2.1
+ */
+export async function createSkill(
+  name: string,
+  description: string,
+  instruction: string,
+): Promise<NewSkillDefinition> {
+  // Validate metadata
+  const metadata: SkillMetadata = { name: name.trim(), description };
+  const validation = validateSkillMetadata(metadata);
+  if (!validation.valid) {
+    throw new Error(validation.error);
+  }
+
+  // Generate unique ID
+  const id = generateSkillId();
+  const now = Date.now();
+
+  // Create skill definition
+  const skill: NewSkillDefinition = {
+    id,
+    metadata,
+    instruction,
+    source: "user",
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  // Save to IndexedDB
+  await saveSkillToDb(skill);
+
+  // Reload skills to update store
+  await loadSkillRegistry();
+
+  return skill;
+}
+
+/**
+ * Updates an existing skill in IndexedDB.
+ * Validates metadata field lengths before saving.
+ * 
+ * @param id - The skill ID to update
+ * @param metadata - Updated metadata (name and description)
+ * @param instruction - Updated instruction content
+ * @returns The updated skill definition
+ * @throws Error if skill not found or validation fails
+ * 
+ * Requirements: 1.4
+ */
+export async function updateSkill(
+  id: string,
+  metadata: SkillMetadata,
+  instruction: string,
+): Promise<NewSkillDefinition> {
+  // Get existing skill
+  const existing = await getSkillFromDb(id);
+  if (!existing) {
+    throw new Error(`Skill not found: ${id}`);
+  }
+
+  // Validate metadata
+  const validation = validateSkillMetadata(metadata);
+  if (!validation.valid) {
+    throw new Error(validation.error);
+  }
+
+  // Update skill definition
+  const skill: NewSkillDefinition = {
+    ...existing,
+    metadata: {
+      name: metadata.name.trim(),
+      description: metadata.description,
+    },
+    instruction,
+    updatedAt: Date.now(),
+  };
+
+  // Save to IndexedDB
+  await saveSkillToDb(skill);
+
+  // Reload skills to update store
+  await loadSkillRegistry();
+
+  return skill;
+}
+
+/**
+ * Deletes a skill from IndexedDB by ID.
+ * 
+ * @param id - The skill ID to delete
+ * @throws Error if deletion fails
+ * 
+ * Requirements: 1.1
+ */
+export async function deleteSkillById(id: string): Promise<void> {
+  await deleteSkillFromDb(id);
+  
+  // Reload skills to update store
+  await loadSkillRegistry();
+}
+
+/**
+ * Searches skills by matching query against name and description.
+ * Case-insensitive substring matching.
+ * 
+ * @param query - Search query string
+ * @returns Array of matching skills
+ * 
+ * Requirements: 5.2
+ */
+export function searchSkills(query: string): NewSkillDefinition[] {
+  if (!query || !query.trim()) {
+    return skillStore.skills;
+  }
+
+  const lowerQuery = query.toLowerCase().trim();
+  return skillStore.skills.filter((skill) => {
+    const name = skill.metadata.name.toLowerCase();
+    const description = skill.metadata.description.toLowerCase();
+    return name.includes(lowerQuery) || description.includes(lowerQuery);
+  });
+}
+
+/**
+ * Exports a skill to SKILL.md format string.
+ * 
+ * @param skill - The skill to export
+ * @returns SKILL.md formatted string
+ * 
+ * Requirements: 1.4
+ */
+export function exportSkill(skill: NewSkillDefinition): string {
+  return serializeSkillMd(skill.metadata, skill.instruction);
+}
+
+/**
+ * Imports a skill from SKILL.md content and saves to IndexedDB.
+ * 
+ * @param content - SKILL.md formatted content
+ * @returns The imported skill definition
+ * @throws Error if parsing or validation fails
+ * 
+ * Requirements: 1.3
+ */
+export async function importSkill(content: string): Promise<NewSkillDefinition> {
+  // Parse SKILL.md content
+  const { metadata, instruction } = parseSkillMd(content);
+
+  // Create skill using createSkill (handles validation and ID generation)
+  return createSkill(metadata.name, metadata.description, instruction);
+}
+
+/**
+ * Legacy loadSkillRegistry that loads from file system.
+ * Kept for backward compatibility during migration.
+ */
+export async function loadSkillRegistryFromFileSystem(): Promise<void> {
   setSkillLoading(true);
   setSkillError(undefined);
 
@@ -564,7 +1076,7 @@ export async function loadSkillRegistry(): Promise<void> {
     const entries = await listDir(root);
     const folders = entries.filter((entry) => entry.isDir).map((entry) => entry.name);
 
-    const skills: SkillDefinition[] = [];
+    const skills: LegacySkillDefinition[] = [];
     const usedIds = new Set<string>();
 
     for (const folder of folders) {
@@ -586,7 +1098,7 @@ export async function loadSkillRegistry(): Promise<void> {
       skills.push({ ...skill, id: uniqueId });
     }
 
-    setSkills(skills);
+    setSkills([]); // Legacy function - does not populate new store
   } catch (err: any) {
     setSkillError(err?.message ?? String(err));
     setSkills([]);
@@ -595,19 +1107,28 @@ export async function loadSkillRegistry(): Promise<void> {
   }
 }
 
+/**
+ * Restores built-in skills to IndexedDB.
+ */
 export async function restoreBuiltInSkills(): Promise<void> {
-  await clearDisabledSkillFolders();
-  await restoreDefaultSkills();
+  // Delete all built-in skills from IndexedDB
+  const allSkills = await getAllSkillsFromDb();
+  for (const skill of allSkills) {
+    if (skill.source === "built-in") {
+      await deleteSkillFromDb(skill.id);
+    }
+  }
+  // Re-initialize built-in skills
   await loadSkillRegistry();
 }
 
-async function loadSkillInstruction(skill: SkillDefinition): Promise<string> {
+async function loadSkillInstruction(skill: LegacySkillDefinition): Promise<string> {
   const content = await readSkillFile(skill.folderName);
   if (!content) return "";
   return parseSkillFile(content).instruction;
 }
 
-async function resolvePythonFiles(skill: SkillDefinition, step: SkillPythonStep): Promise<PythonFilePayload[]> {
+async function resolvePythonFiles(skill: LegacySkillDefinition, step: SkillPythonStep): Promise<PythonFilePayload[]> {
   const files: PythonFilePayload[] = [];
   const fileList = step.files ?? [];
 
@@ -636,7 +1157,7 @@ async function resolvePythonFiles(skill: SkillDefinition, step: SkillPythonStep)
   return files;
 }
 
-async function resolvePythonCode(skill: SkillDefinition, step: SkillPythonStep): Promise<string> {
+async function resolvePythonCode(skill: LegacySkillDefinition, step: SkillPythonStep): Promise<string> {
   if (step.code) return step.code;
   const codePath = getPythonCodePath(step);
   if (!codePath) return "";
@@ -652,6 +1173,15 @@ function formatStepResult(index: number, label: string, content: string): string
   return `${header}\n${content}`;
 }
 
+/**
+ * Executes a skill by tool name.
+ * For new Codex-style skills, returns the instruction content.
+ * 
+ * @param toolName - The skill tool name (skill_xxx)
+ * @param args - Arguments passed to the skill (unused for new skills)
+ * @param overrides - Optional execution overrides
+ * @returns The skill execution result
+ */
 export async function executeSkill(
   toolName: string,
   args: any,
@@ -662,54 +1192,13 @@ export async function executeSkill(
     return `Error: Unknown skill ${toolName}`;
   }
 
-  const inputValues = applyInputDefaults(skill.inputs, args ?? {});
-  const results: string[] = [];
-
-  for (let i = 0; i < skill.steps.length; i++) {
-    const step = skill.steps[i];
-    try {
-      if (step.type === "tool") {
-        const resolvedArgs = resolveTemplateValue(step.args ?? {}, inputValues);
-        let output: string;
-        if (overrides?.toolExecutor) {
-          output = await overrides.toolExecutor(step.tool, resolvedArgs);
-        } else {
-          const { executeTool } = await import("./ai-tools");
-          const { isTodoistTool, executeTodoistTool } = await import("./todoist-tools");
-          output = isTodoistTool(step.tool)
-            ? await executeTodoistTool(step.tool, resolvedArgs)
-            : await executeTool(step.tool, resolvedArgs);
-        }
-        results.push(formatStepResult(i, `Tool ${step.tool}`, output));
-      } else if (step.type === "python") {
-        const code = await resolvePythonCode(skill, step);
-        if (!code) {
-          results.push(formatStepResult(i, "Python", "Error: Missing python code"));
-          continue;
-        }
-        const files = await resolvePythonFiles(skill, step);
-        const input = resolveTemplateValue(step.input ?? inputValues, inputValues);
-        const pythonRunner = overrides?.pythonExecutor ?? runPythonStep;
-        const { output, runtime } = await pythonRunner({
-          code,
-          packages: step.packages,
-          input,
-          files,
-        });
-        results.push(formatStepResult(i, `Python (${runtime})`, output));
-      }
-    } catch (err: any) {
-      results.push(formatStepResult(i, "Error", err?.message ?? String(err)));
-      break;
-    }
-  }
-
-  const instructionSource = overrides?.instructionProvider ?? loadSkillInstruction;
-  const instruction = await instructionSource(skill);
+  // New Codex-style skill - just return the instruction
+  console.log(`[Skill] Executing Codex-style skill: ${skill.metadata.name}`);
+  
   const parts = [
-    `Skill: ${skill.name}`,
-    ...results,
-    instruction ? `Instruction:\n${instruction}` : "",
+    `Skill: ${skill.metadata.name}`,
+    skill.metadata.description ? `Description: ${skill.metadata.description}` : "",
+    skill.instruction ? `Instruction:\n${skill.instruction}` : "",
   ].filter(Boolean);
 
   return parts.join("\n\n");
@@ -763,9 +1252,9 @@ export async function saveSkillDraft(rawContent: string): Promise<SkillDraftSave
 }
 
 export async function updateSkillContent(
-  skill: SkillDefinition,
+  skill: LegacySkillDefinition,
   rawContent: string,
-): Promise<SkillDefinition> {
+): Promise<LegacySkillDefinition> {
   const content = extractSkillMarkdown(rawContent);
   const { metadata } = parseSkillFile(content);
   const name = String(metadata.name ?? "").trim();
@@ -803,7 +1292,11 @@ export async function updateSkillContent(
   return { ...definition, folderName, source };
 }
 
-export async function deleteSkill(skill: SkillDefinition): Promise<void> {
+/**
+ * Legacy deleteSkill for file-system based skills
+ * @deprecated Use deleteSkillById for new IndexedDB-based skills
+ */
+export async function deleteLegacySkill(skill: LegacySkillDefinition): Promise<void> {
   if (isDefaultSkill(skill.folderName)) {
     await disableSkillFolder(skill.folderName);
   }

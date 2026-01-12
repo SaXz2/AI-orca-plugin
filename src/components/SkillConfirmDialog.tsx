@@ -1,20 +1,12 @@
 ﻿const React = window.React as typeof import("react");
 const { createElement } = React;
 
-import type { SkillDefinition, SkillStep } from "../services/skill-service";
+import type { SkillDefinition } from "../types/skill";
 
 interface SkillConfirmDialogProps {
   skill: SkillDefinition;
   onConfirm: () => void;
   onDeny: () => void;
-}
-
-function formatStep(step: SkillStep): string {
-  if (step.type === "tool") {
-    return `Tool: ${step.tool}`;
-  }
-  const label = step.file ? `Python (${step.file})` : "Python";
-  return label;
 }
 
 export default function SkillConfirmDialog({
@@ -47,7 +39,7 @@ export default function SkillConfirmDialog({
         },
       },
       createElement("i", { className: "ti ti-alert-triangle", style: { fontSize: 16 } }),
-      `AI 请求执行技能: ${skill.name}`
+      `AI 请求执行技能: ${skill.metadata.name}`
     ),
     createElement(
       "pre",
@@ -66,7 +58,7 @@ export default function SkillConfirmDialog({
           overflow: "auto",
         },
       },
-      skill.steps.map(formatStep).join("\n")
+      skill.metadata.description || skill.instruction.slice(0, 200)
     ),
     createElement(
       "div",
@@ -116,12 +108,10 @@ export default function SkillConfirmDialog({
 
 export function createSkillConfirmPromise(skill: SkillDefinition): Promise<boolean> {
   return new Promise((resolve) => {
-    const stepSummary = skill.steps
-      .map((step, idx) => `${idx + 1}. ${formatStep(step)}`)
-      .join("\n");
+    const description = skill.metadata.description || skill.instruction.slice(0, 200);
 
     const confirmed = window.confirm(
-      `AI 请求执行技能: ${skill.name}\n\n步骤:\n${stepSummary}\n\n是否允许？`
+      `AI 请求执行技能: ${skill.metadata.name}\n\n描述:\n${description}\n\n是否允许？`
     );
     resolve(confirmed);
   });

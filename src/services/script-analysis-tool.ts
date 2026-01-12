@@ -206,6 +206,60 @@ export const CODE_INTERPRETER_TOOL: OpenAITool = {
 };
 
 /**
+ * Python 代码执行工具
+ * 让 AI 可以写 Python 代码来解决计算、数据处理等问题
+ */
+export const PYTHON_INTERPRETER_TOOL: OpenAITool = {
+  type: "function",
+  function: {
+    name: "runPythonCode",
+    description: `执行 Python 代码来完成计算、数据分析等任务。
+
+【何时使用】
+- 数学计算：复杂公式、统计分析、科学计算
+- 数据处理：pandas 数据分析、numpy 数值计算
+- 字符串处理：正则表达式、文本分析
+- 日期时间：datetime 处理
+- 任何 Python 更擅长的场景（如数据科学、机器学习预处理）
+
+【可用功能】
+- 标准库：math, datetime, json, re, collections, itertools 等
+- 可安装包：numpy, pandas, scipy 等（通过 packages 参数指定）
+- print()：输出结果
+- result 变量：设置此变量的值会作为返回结果
+
+【参数】
+- code: Python 代码（必填）
+- packages: 需要安装的包列表（可选），如 ["numpy", "pandas"]
+- input: 传入代码的输入数据（可选），在代码中通过 input 或 input_data 变量访问
+
+【注意】
+- 代码在 Pyodide（浏览器端 Python）或后端 Python 中执行
+- 不能访问本地文件系统
+- 用 print() 输出结果，或设置 result 变量`,
+    parameters: {
+      type: "object",
+      properties: {
+        code: {
+          type: "string",
+          description: "要执行的 Python 代码",
+        },
+        packages: {
+          type: "array",
+          items: { type: "string" },
+          description: "需要安装的 Python 包列表，如 [\"numpy\", \"pandas\"]",
+        },
+        input: {
+          type: "object",
+          description: "传入代码的输入数据，在代码中通过 input 或 input_data 变量访问",
+        },
+      },
+      required: ["code"],
+    },
+  },
+};
+
+/**
  * 执行笔记统计分析
  */
 export async function executeNotesStatsTool(): Promise<string> {

@@ -21,18 +21,25 @@ import { skillStore } from "../store/skill-store";
 import { withTooltip } from "../utils/orca-tooltip";
 import {
   createSkillTemplate,
-  deleteSkill,
-  getSkillContent,
+  deleteSkillById,
   loadSkillRegistry,
   parseSkillFile,
   restoreBuiltInSkills,
-  updateSkillContent,
+  createSkill,
+  updateSkill,
+  exportSkill,
+  importSkill,
+  searchSkills,
+  serializeSkillMd,
+  parseSkillMd,
 } from "../services/skill-service";
+import type { SkillDefinition } from "../types/skill";
 import { getTools } from "../services/ai-tools";
 import { exportSkillsZip, importSkillsZip } from "../services/skill-zip";
 import MarkdownMessage from "../components/MarkdownMessage";
 import type { OpenAITool } from "../services/openai-client";
 import { stringify as stringifyYaml } from "yaml";
+import { SKILL_NAME_MAX_LENGTH, SKILL_DESCRIPTION_MAX_LENGTH } from "../types/skill";
 
 interface SkillManagerModalProps {
   isOpen: boolean;
@@ -419,6 +426,7 @@ export default function SkillManagerModal({ isOpen, onClose }: SkillManagerModal
   const snap = useSnapshot(skillStore);
   const [selectedSkills, setSelectedSkills] = useState<Set<string>>(new Set());
   const [newSkillName, setNewSkillName] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
   const [creating, setCreating] = useState(false);
   const [restoring, setRestoring] = useState(false);
   const [editingSkill, setEditingSkill] = useState<typeof snap.skills[number] | null>(null);
@@ -432,6 +440,14 @@ export default function SkillManagerModal({ isOpen, onClose }: SkillManagerModal
   const [formHint, setFormHint] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<typeof snap.skills[number] | null>(null);
   const [draggingStepId, setDraggingStepId] = useState<string | null>(null);
+
+  // Filter skills based on search query
+  const filteredSkills = useMemo(() => {
+    if (!searchQuery.trim()) {
+      return snap.skills;
+    }
+    return searchSkills(searchQuery);
+  }, [snap.skills, searchQuery]);
 
   useEffect(() => {
     if (isOpen && !snap.loading) {
@@ -512,29 +528,62 @@ export default function SkillManagerModal({ isOpen, onClose }: SkillManagerModal
   const handleExportSkills = useCallback(async () => {
     const selected = snap.skills.filter(skill => selectedSkills.has(skill.id));
     if (selected.length === 0) return;
+    
+    // If single skill selected, export as .md file
+    if (selected.length === 1) {
+      const skill = selected[0];
+      const content = exportSkill(skill);
+      const blob = new Blob([content], { type: "text/markdown" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${skill.metadata.name}.md`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      return;
+    }
+    
+    // Multiple skills - export as ZIP
     await exportSkillsZip(selected);
   }, [snap.skills, selectedSkills]);
 
   const handleImportSkills = useCallback(() => {
     const input = document.createElement("input");
     input.type = "file";
-    input.accept = ".zip";
+    input.accept = ".zip,.md";
     input.onchange = async () => {
       const file = input.files?.[0];
       if (!file) return;
-      await importSkillsZip(file);
-      await loadSkillRegistry();
+      
+      if (file.name.endsWith(".md")) {
+        // Import single .md file
+        try {
+          const content = await file.text();
+          await importSkill(content);
+          await loadSkillRegistry();
+          orca.notify("success", "技能导入成功");
+        } catch (err: any) {
+          orca.notify("error", err?.message ?? "导入失败");
+        }
+      } else {
+        // Import ZIP file
+        await importSkillsZip(file);
+        await loadSkillRegistry();
+      }
     };
     input.click();
   }, []);
 
-  const handleOpenEditor = useCallback(async (skill: typeof snap.skills[number]) => {
+  const handleOpenEditor = useCallback(async (skill: SkillDefinition) => {
     setEditingSkill(skill);
     setEditingError(null);
     setFormHint(null);
     setEditingLoading(true);
     try {
-      const content = await getSkillContent(skill);
+      // For new Codex-style skills, serialize to SKILL.md format for editing
+      const content = serializeSkillMd(skill.metadata, skill.instruction);
       setEditingContent(content);
       const parsed = buildFormStateFromContent(content, toolMap);
       if (parsed.state) {
@@ -588,19 +637,13 @@ export default function SkillManagerModal({ isOpen, onClose }: SkillManagerModal
     setEditingSaving(true);
     setEditingError(null);
     try {
-      if (editorMode === "simple") {
-        if (!formState) {
-          throw new Error("简化表单不可用");
-        }
-        const validationError = validateFormState(formState);
-        if (validationError) {
-          setEditingError(validationError);
-          return;
-        }
-        await updateSkillContent(editingSkill, generatedContent);
-      } else {
-        await updateSkillContent(editingSkill, editingContent);
-      }
+      // Parse the content to get metadata and instruction
+      const contentToSave = editorMode === "simple" ? generatedContent : editingContent;
+      const { metadata, instruction } = parseSkillMd(contentToSave);
+      
+      // Update skill in IndexedDB
+      await updateSkill(editingSkill.id, metadata, instruction);
+      
       await loadSkillRegistry();
       setEditingSkill(null);
       setEditingContent("");
@@ -609,9 +652,9 @@ export default function SkillManagerModal({ isOpen, onClose }: SkillManagerModal
     } finally {
       setEditingSaving(false);
     }
-  }, [editingSkill, editingContent, editorMode, formState, generatedContent]);
+  }, [editingSkill, editingContent, editorMode, generatedContent]);
 
-  const handleDeleteSkill = useCallback((skill: typeof snap.skills[number]) => {
+  const handleDeleteSkill = useCallback((skill: SkillDefinition) => {
     setDeleteTarget(skill);
   }, []);
 
@@ -622,7 +665,7 @@ export default function SkillManagerModal({ isOpen, onClose }: SkillManagerModal
   const handleConfirmDelete = useCallback(async () => {
     if (!deleteTarget) return;
     try {
-      await deleteSkill(deleteTarget);
+      await deleteSkillById(deleteTarget.id);
       await loadSkillRegistry();
     } catch (err: any) {
       orca.notify("error", err?.message ?? "删除失败");
@@ -1082,7 +1125,7 @@ export default function SkillManagerModal({ isOpen, onClose }: SkillManagerModal
         createElement(
           "div",
           { style: { display: "flex", justifyContent: "space-between", alignItems: "center" } },
-          createElement("div", { style: titleStyle }, `编辑技能：${editingSkill.name}`),
+          createElement("div", { style: titleStyle }, `编辑技能：${editingSkill.metadata.name}`),
           withTooltip(
             "关闭",
             createElement(
@@ -1141,21 +1184,67 @@ export default function SkillManagerModal({ isOpen, onClose }: SkillManagerModal
                       createElement(
                         "div",
                         { style: formFieldStyle },
-                        createElement("div", { style: fieldLabelStyle }, "技能名称"),
+                        createElement(
+                          "div",
+                          { style: { display: "flex", justifyContent: "space-between", alignItems: "center" } },
+                          createElement("div", { style: fieldLabelStyle }, "技能名称"),
+                          createElement(
+                            "div",
+                            { 
+                              style: { 
+                                fontSize: 10, 
+                                color: formState.name.length > SKILL_NAME_MAX_LENGTH 
+                                  ? "var(--orca-color-red)" 
+                                  : "var(--orca-color-text-3)" 
+                              } 
+                            },
+                            `${formState.name.length}/${SKILL_NAME_MAX_LENGTH}`
+                          )
+                        ),
                         createElement("input", {
                           value: formState.name,
                           onChange: (e: any) => handleFormFieldChange({ name: e.target.value }),
-                          style: fieldInputStyle,
+                          style: {
+                            ...fieldInputStyle,
+                            borderColor: formState.name.length > SKILL_NAME_MAX_LENGTH 
+                              ? "var(--orca-color-red)" 
+                              : "var(--orca-color-border)",
+                          },
+                          maxLength: SKILL_NAME_MAX_LENGTH + 10, // Allow slight overflow for feedback
                         })
                       ),
                       createElement(
                         "div",
                         { style: formFieldStyle },
-                        createElement("div", { style: fieldLabelStyle }, "技能描述"),
-                        createElement("input", {
+                        createElement(
+                          "div",
+                          { style: { display: "flex", justifyContent: "space-between", alignItems: "center" } },
+                          createElement("div", { style: fieldLabelStyle }, "技能描述"),
+                          createElement(
+                            "div",
+                            { 
+                              style: { 
+                                fontSize: 10, 
+                                color: formState.description.length > SKILL_DESCRIPTION_MAX_LENGTH 
+                                  ? "var(--orca-color-red)" 
+                                  : "var(--orca-color-text-3)" 
+                              } 
+                            },
+                            `${formState.description.length}/${SKILL_DESCRIPTION_MAX_LENGTH}`
+                          )
+                        ),
+                        createElement("textarea", {
                           value: formState.description,
                           onChange: (e: any) => handleFormFieldChange({ description: e.target.value }),
-                          style: fieldInputStyle,
+                          style: {
+                            ...fieldInputStyle,
+                            minHeight: 60,
+                            resize: "vertical",
+                            fontFamily: "inherit",
+                            borderColor: formState.description.length > SKILL_DESCRIPTION_MAX_LENGTH 
+                              ? "var(--orca-color-red)" 
+                              : "var(--orca-color-border)",
+                          },
                         })
                       ),
                       createElement(
@@ -1509,7 +1598,7 @@ export default function SkillManagerModal({ isOpen, onClose }: SkillManagerModal
         createElement(
           "div",
           { style: { marginTop: 8, fontSize: 12, color: "var(--orca-color-text-2)" } },
-          `确定删除「${deleteTarget.name}」吗？此操作无法撤销。`
+          `确定删除「${deleteTarget.metadata.name}」吗？此操作无法撤销。`
         ),
         createElement(
           "div",
@@ -1592,6 +1681,54 @@ export default function SkillManagerModal({ isOpen, onClose }: SkillManagerModal
           "导出"
         )
       ),
+      // Search input
+      createElement(
+        "div",
+        { style: { marginTop: 12, position: "relative" } },
+        createElement("i", {
+          className: "ti ti-search",
+          style: {
+            position: "absolute",
+            left: 10,
+            top: "50%",
+            transform: "translateY(-50%)",
+            color: "var(--orca-color-text-3)",
+            fontSize: 14,
+            pointerEvents: "none",
+          },
+        }),
+        createElement("input", {
+          value: searchQuery,
+          onChange: (e: any) => setSearchQuery(e.target.value),
+          placeholder: "搜索技能...",
+          style: {
+            ...inputStyle,
+            width: "100%",
+            paddingLeft: 32,
+          },
+        }),
+        searchQuery && createElement(
+          "button",
+          {
+            onClick: () => setSearchQuery(""),
+            style: {
+              position: "absolute",
+              right: 8,
+              top: "50%",
+              transform: "translateY(-50%)",
+              background: "none",
+              border: "none",
+              cursor: "pointer",
+              color: "var(--orca-color-text-3)",
+              padding: 2,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+            },
+          },
+          createElement("i", { className: "ti ti-x", style: { fontSize: 12 } })
+        )
+      ),
       snap.error &&
         createElement(
           "div",
@@ -1607,22 +1744,22 @@ export default function SkillManagerModal({ isOpen, onClose }: SkillManagerModal
         : createElement(
             "div",
             { style: listStyle },
-            ...(snap.skills.length === 0
+            ...(filteredSkills.length === 0
               ? [
                   createElement(
                     "div",
                     { style: { padding: 12, fontSize: 12, color: "var(--orca-color-text-3)" } },
-                    "暂无技能"
+                    searchQuery ? "未找到匹配的技能" : "暂无技能"
                   ),
                 ]
-              : snap.skills.map((skill, index) =>
+              : filteredSkills.map((skill, index) =>
                   createElement(
                     "div",
                     {
                       key: skill.id,
                       style: {
                         ...rowStyle,
-                        borderBottom: index === snap.skills.length - 1 ? "none" : rowStyle.borderBottom,
+                        borderBottom: index === filteredSkills.length - 1 ? "none" : rowStyle.borderBottom,
                       },
                     },
                     createElement("input", {
@@ -1636,9 +1773,9 @@ export default function SkillManagerModal({ isOpen, onClose }: SkillManagerModal
                       createElement(
                         "div",
                         { style: { fontSize: 12, color: "var(--orca-color-text-1)" } },
-                        skill.name
+                        skill.metadata.name
                       ),
-                      skill.description &&
+                      skill.metadata.description &&
                         createElement(
                           "div",
                           {
@@ -1651,7 +1788,7 @@ export default function SkillManagerModal({ isOpen, onClose }: SkillManagerModal
                               textOverflow: "ellipsis",
                             },
                           },
-                          skill.description
+                          skill.metadata.description
                         )
                     ),
                     createElement(
