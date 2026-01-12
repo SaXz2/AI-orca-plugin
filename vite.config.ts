@@ -1,6 +1,7 @@
 import react from "@vitejs/plugin-react-swc";
 import externalGlobals from "rollup-plugin-external-globals";
 import { defineConfig } from "vite";
+import { viteStaticCopy } from "vite-plugin-static-copy";
 
 // https://vitejs.dev/config/
 export default defineConfig(({ command }) => {
@@ -35,6 +36,16 @@ export default defineConfig(({ command }) => {
         react: "React",
         "react-dom": "ReactDOM",
         valtio: "Valtio",
+      }),
+      // 复制 Pyodide 静态文件到 dist/pyodide
+      // 包括 js, wasm, json 和 zip 文件
+      viteStaticCopy({
+        targets: [
+          {
+            src: "node_modules/pyodide/*.{js,wasm,json,zip}",
+            dest: "pyodide",
+          },
+        ],
       }),
     ],
   };

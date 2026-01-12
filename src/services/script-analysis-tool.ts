@@ -3,7 +3,7 @@
  * 
  * 为 AI 提供数据分析能力的工具定义和实现。
  * 让 AI 可以通过执行代码来分析数据、进行计算。
- * 支持 JavaScript 代码执行
+ * 支持 JavaScript 和 Python 代码执行
  */
 
 import type { OpenAITool } from "./openai-client";
@@ -17,6 +17,7 @@ import {
   analyzeWordFrequency,
   type ScriptExecutionResult,
 } from "./script-executor-service";
+import { runPythonStep } from "./python-runtime";
 
 /**
  * 笔记统计分析工具定义
@@ -445,11 +446,60 @@ ${result.output || "(无输出)"}
 }
 
 /**
+ * 执行 Python 代码 - Python Interpreter
+ */
+export async function executePythonInterpreterTool(args: {
+  code: string;
+  packages?: string[];
+  input?: any;
+}): Promise<string> {
+  const { code, packages, input } = args;
+
+  if (!code || code.trim() === "") {
+    return "❌ 请提供要执行的 Python 代码";
+  }
+
+  console.log("[PythonInterpreter] Executing Python code", { packages, hasInput: !!input });
+
+  try {
+    const startTime = Date.now();
+    const result = await runPythonStep({
+      code,
+      packages: packages || [],
+      input: input || null,
+    });
+    const executionTime = Date.now() - startTime;
+
+    const runtimeLabel = result.runtime === "backend" ? "后端 Python" : "Pyodide (浏览器)";
+
+    return `✅ Python 执行成功
+
+**运行环境：** ${runtimeLabel}
+**执行时间：** ${executionTime}ms
+${packages && packages.length > 0 ? `**已加载包：** ${packages.join(", ")}` : ""}
+
+**结果：**
+\`\`\`
+${result.output || "(无输出)"}
+\`\`\``;
+  } catch (e: any) {
+    console.error("[PythonInterpreter] Error:", e);
+    return `❌ Python 执行失败：${e.message}
+
+**提示：**
+- 检查代码语法是否正确
+- 确保使用 print() 输出结果
+- 如需使用第三方包，请在 packages 参数中指定`;
+  }
+}
+
+/**
  * 获取所有脚本分析相关工具
  */
 export function getScriptAnalysisTools(): OpenAITool[] {
   return [
     CODE_INTERPRETER_TOOL,    // JavaScript 执行
+    PYTHON_INTERPRETER_TOOL,  // Python 执行
     NOTES_STATS_TOOL,
     KEYWORD_SEARCH_TOOL,
     WORD_FREQUENCY_TOOL,
@@ -467,6 +517,9 @@ export async function handleScriptAnalysisTool(
   switch (toolName) {
     case "runCode":
       return executeCodeInterpreterTool(args);
+    
+    case "runPythonCode":
+      return executePythonInterpreterTool(args);
     
     case "analyzeNotesStats":
       return executeNotesStatsTool();

@@ -1,6 +1,8 @@
 ﻿/**
  * Skill Manager Modal
  * 管理技能列表与导入导出
+ * 
+ * Codex-style skills: 只有 name, description, instruction 三个字段
  */
 
 const React = window.React as unknown as {
@@ -20,25 +22,18 @@ const { useSnapshot } = (window as any).Valtio as {
 import { skillStore } from "../store/skill-store";
 import { withTooltip } from "../utils/orca-tooltip";
 import {
-  createSkillTemplate,
   deleteSkillById,
   loadSkillRegistry,
-  parseSkillFile,
   restoreBuiltInSkills,
   createSkill,
   updateSkill,
   exportSkill,
   importSkill,
   searchSkills,
-  serializeSkillMd,
-  parseSkillMd,
 } from "../services/skill-service";
 import type { SkillDefinition } from "../types/skill";
-import { getTools } from "../services/ai-tools";
 import { exportSkillsZip, importSkillsZip } from "../services/skill-zip";
 import MarkdownMessage from "../components/MarkdownMessage";
-import type { OpenAITool } from "../services/openai-client";
-import { stringify as stringifyYaml } from "yaml";
 import { SKILL_NAME_MAX_LENGTH, SKILL_DESCRIPTION_MAX_LENGTH } from "../types/skill";
 
 interface SkillManagerModalProps {
@@ -46,400 +41,35 @@ interface SkillManagerModalProps {
   onClose: () => void;
 }
 
-type FormMode = "simple" | "advanced";
-type ParamMode = "input" | "fixed";
-type InputType = "string" | "number" | "boolean" | "object" | "array";
-type ToolFunction = OpenAITool["function"];
-
-type ToolParamSpec = {
-  name: string;
-  type: InputType;
-  description?: string;
-  required: boolean;
-  enumValues?: string[];
-  defaultValue?: any;
-};
-
-type SkillFormParam = {
-  name: string;
-  type: InputType;
-  required: boolean;
-  description?: string;
-  enumValues?: string[];
-  defaultValue?: any;
-  mode: ParamMode;
-  value: string;
-};
-
-type SkillFormStep = {
-  id: string;
-  toolName: string;
-  params: SkillFormParam[];
-};
-
-type SkillFormState = {
-  id: string;
+/**
+ * Form state for editing a skill
+ */
+interface SkillFormState {
   name: string;
   description: string;
   instruction: string;
-  steps: SkillFormStep[];
-};
-
-function normalizeInputType(raw: any): InputType {
-  const value = String(raw ?? "").toLowerCase();
-  if (value === "number" || value === "integer") return "number";
-  if (value === "boolean") return "boolean";
-  if (value === "object") return "object";
-  if (value === "array") return "array";
-  return "string";
-}
-
-let stepIdCounter = 0;
-
-function createStepId(): string {
-  stepIdCounter += 1;
-  return `step-${Date.now().toString(36)}-${stepIdCounter}`;
-}
-
-function getFirstLine(text?: string): string {
-  if (!text) return "";
-  const line = text.split(/\r?\n/).find((entry) => entry.trim());
-  return line ? line.trim() : "";
-}
-
-function getToolLabel(toolFn: ToolFunction): string {
-  const override = (toolFn as any).displayName || (toolFn as any).label;
-  if (override) return String(override);
-  const label = getFirstLine(toolFn.description);
-  return label || toolFn.name;
-}
-
-function formatToolOptionLabel(toolFn: ToolFunction): string {
-  const label = getToolLabel(toolFn);
-  return label && label !== toolFn.name ? `${label} (${toolFn.name})` : toolFn.name;
-}
-
-function getParamLabel(param: SkillFormParam): string {
-  const override = (param as any).label;
-  if (override) return String(override);
-  const label = getFirstLine(param.description);
-  return label || param.name;
-}
-
-function formatValueForInput(value: any): string {
-  if (value === null || value === undefined) return "";
-  if (typeof value === "string") return value;
-  if (typeof value === "number" || typeof value === "boolean") return String(value);
-  try {
-    return JSON.stringify(value, null, 2);
-  } catch {
-    return String(value);
-  }
-}
-
-function coerceFixedValue(raw: string, type: InputType): { value?: any; error?: string } {
-  const trimmed = raw.trim();
-  if (!trimmed) return { value: "" };
-
-  if (type === "number") {
-    const num = Number(trimmed);
-    if (Number.isNaN(num)) return { error: "请输入有效数字" };
-    return { value: num };
-  }
-  if (type === "boolean") {
-    if (trimmed === "true") return { value: true };
-    if (trimmed === "false") return { value: false };
-    return { error: "请输入 true 或 false" };
-  }
-  if (type === "object" || type === "array") {
-    try {
-      const parsed = JSON.parse(trimmed);
-      return { value: parsed };
-    } catch {
-      return { error: "请输入合法的 JSON" };
-    }
-  }
-  return { value: raw };
-}
-
-function slugifySkillId(name: string): string {
-  const slug = name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-  return slug;
-}
-
-function buildToolParamSpecs(toolFn: ToolFunction): ToolParamSpec[] {
-  const requiredSet = new Set(toolFn?.parameters?.required ?? []);
-  const props = toolFn?.parameters?.properties ?? {};
-  return Object.entries(props).map(([name, schema]) => ({
-    name,
-    type: normalizeInputType(schema?.type),
-    description: schema?.description ? String(schema.description) : undefined,
-    required: requiredSet.has(name),
-    enumValues: Array.isArray(schema?.enum) ? schema.enum.map(String) : undefined,
-    defaultValue: schema?.default,
-  }));
-}
-
-function buildParamsFromTool(toolFn: ToolFunction): SkillFormParam[] {
-  return buildToolParamSpecs(toolFn).map((spec) => ({
-    name: spec.name,
-    type: spec.type,
-    required: spec.required,
-    description: spec.description,
-    enumValues: spec.enumValues,
-    defaultValue: spec.defaultValue,
-    mode: spec.required ? "input" : "fixed",
-    value: spec.defaultValue !== undefined ? formatValueForInput(spec.defaultValue) : "",
-  }));
-}
-
-function createStepFromTool(toolFn: ToolFunction): SkillFormStep {
-  return {
-    id: createStepId(),
-    toolName: toolFn.name,
-    params: buildParamsFromTool(toolFn),
-  };
-}
-
-function buildSkillContentFromForm(state: SkillFormState): string {
-  const trimmedName = state.name.trim();
-  const description = state.description.trim();
-  const instruction = state.instruction.trim();
-  const generatedId = state.id.trim() || slugifySkillId(trimmedName);
-
-  const inputsMap = new Map<string, any>();
-  const steps: any[] = [];
-
-  for (const stepState of state.steps) {
-    const args: Record<string, any> = {};
-    for (const param of stepState.params) {
-      if (param.mode === "input") {
-        args[param.name] = `{{${param.name}}}`;
-        if (!inputsMap.has(param.name)) {
-          const input: any = {
-            name: param.name,
-            type: param.type,
-          };
-          if (param.description) input.description = param.description;
-          if (param.required) input.required = true;
-          if (param.enumValues && param.enumValues.length > 0) {
-            input.enum = param.enumValues;
-          }
-          if (param.defaultValue !== undefined) {
-            input.default = param.defaultValue;
-          }
-          inputsMap.set(param.name, input);
-        }
-        continue;
-      }
-
-      if (param.mode === "fixed") {
-        const rawValue = param.value.trim();
-        if (!rawValue && param.defaultValue !== undefined) {
-          args[param.name] = param.defaultValue;
-          continue;
-        }
-        if (!rawValue) continue;
-        const { value } = coerceFixedValue(rawValue, param.type);
-        if (value !== undefined) {
-          args[param.name] = value;
-        }
-      }
-    }
-
-    const step: any = {
-      type: "tool",
-      tool: stepState.toolName,
-    };
-    if (Object.keys(args).length > 0) {
-      step.args = args;
-    }
-    steps.push(step);
-  }
-
-  const metadata: any = {
-    name: trimmedName || "未命名技能",
-    steps,
-  };
-  if (generatedId) metadata.id = generatedId;
-  if (description) metadata.description = description;
-  const inputs = Array.from(inputsMap.values());
-  if (inputs.length > 0) metadata.inputs = inputs;
-
-  const yamlBody = stringifyYaml(metadata).trim();
-  const content = `---\n${yamlBody}\n---\n${instruction}`.trimEnd();
-  return `${content}\n`;
-}
-
-function buildFormStateFromContent(
-  content: string,
-  toolMap: Map<string, ToolFunction>,
-): { state?: SkillFormState; reason?: string } {
-  const { metadata, instruction } = parseSkillFile(content);
-  const name = String(metadata.name ?? "").trim();
-  const description = String(metadata.description ?? "").trim();
-  const id = String(metadata.id ?? "").trim();
-
-  const steps = Array.isArray(metadata.steps) ? metadata.steps : [];
-  if (steps.length === 0) {
-    return { reason: "未找到可用的工具步骤" };
-  }
-
-  const inputs = Array.isArray(metadata.inputs) ? metadata.inputs : [];
-  const inputMap = new Map<string, any>();
-  for (const input of inputs) {
-    if (!input || typeof input !== "object") continue;
-    const inputName = String(input.name ?? "").trim();
-    if (!inputName) continue;
-    inputMap.set(inputName, input);
-  }
-
-  let unsupportedReason: string | null = null;
-  const allParamNames = new Set<string>();
-  const stepStates: SkillFormStep[] = [];
-
-  for (const rawStep of steps) {
-    const stepType = String(rawStep?.type ?? "").toLowerCase();
-    if (stepType !== "tool" || !rawStep?.tool) {
-      return { reason: "仅支持工具类型的技能" };
-    }
-
-    const toolName = String(rawStep.tool);
-    const toolFn = toolMap.get(toolName);
-    if (!toolFn) {
-      return { reason: "当前工具不在可用列表中" };
-    }
-
-    const paramSpecs = buildToolParamSpecs(toolFn);
-    const paramNames = new Set(paramSpecs.map((param) => param.name));
-    for (const name of paramNames) {
-      allParamNames.add(name);
-    }
-
-    const args = rawStep.args && typeof rawStep.args === "object" ? rawStep.args : {};
-    for (const key of Object.keys(args)) {
-      if (!paramNames.has(key)) {
-        return { reason: "参数不匹配，建议使用高级模式" };
-      }
-    }
-
-    const params: SkillFormParam[] = paramSpecs.map((spec) => {
-      const argValue = Object.prototype.hasOwnProperty.call(args, spec.name)
-        ? (args as any)[spec.name]
-        : undefined;
-      let mode: ParamMode = spec.required ? "input" : "fixed";
-      let value = spec.defaultValue !== undefined ? formatValueForInput(spec.defaultValue) : "";
-
-      if (typeof argValue === "string") {
-        const match = argValue.match(/^{{\s*([\w-]+)\s*}}$/);
-        if (match) {
-          if (match[1] !== spec.name) {
-            unsupportedReason = "参数占位符与字段不一致，建议使用高级模式";
-          }
-          mode = "input";
-        } else if (argValue.trim()) {
-          mode = "fixed";
-          value = formatValueForInput(argValue);
-        }
-      } else if (argValue !== undefined) {
-        mode = "fixed";
-        value = formatValueForInput(argValue);
-      }
-
-      if (inputMap.has(spec.name)) {
-        mode = "input";
-      }
-
-      const inputDef = inputMap.get(spec.name);
-      const resolvedType = normalizeInputType(inputDef?.type ?? spec.type);
-
-      return {
-        name: spec.name,
-        type: resolvedType,
-        required: Boolean(inputDef?.required ?? spec.required),
-        description: inputDef?.description ? String(inputDef.description) : spec.description,
-        enumValues: Array.isArray(inputDef?.enum) ? inputDef.enum.map(String) : spec.enumValues,
-        defaultValue: inputDef?.default ?? spec.defaultValue,
-        mode,
-        value,
-      };
-    });
-
-    stepStates.push({
-      id: createStepId(),
-      toolName,
-      params,
-    });
-  }
-
-  for (const inputName of inputMap.keys()) {
-    if (!allParamNames.has(inputName)) {
-      return { reason: "输入字段不匹配，建议使用高级模式" };
-    }
-  }
-
-  if (unsupportedReason) {
-    return { reason: unsupportedReason };
-  }
-
-  return {
-    state: {
-      id,
-      name,
-      description,
-      instruction: instruction ?? "",
-      steps: stepStates,
-    },
-  };
-}
-
-function validateFormState(state: SkillFormState): string | null {
-  if (!state.name.trim()) return "请输入技能名称";
-  if (state.steps.length === 0) return "请至少添加一个步骤";
-
-  for (let stepIndex = 0; stepIndex < state.steps.length; stepIndex += 1) {
-    const step = state.steps[stepIndex];
-    if (!step.toolName) {
-      return `步骤 ${stepIndex + 1} 请选择工具`;
-    }
-    for (const param of step.params) {
-      if (param.mode !== "fixed") continue;
-      const rawValue = param.value.trim();
-      if (!rawValue && param.required && param.defaultValue === undefined) {
-        return `步骤 ${stepIndex + 1} 参数 ${param.name} 需要填写值`;
-      }
-      if (!rawValue) continue;
-      const { error } = coerceFixedValue(rawValue, param.type);
-      if (error) {
-        return `步骤 ${stepIndex + 1} 参数 ${param.name}：${error}`;
-      }
-    }
-  }
-
-  return null;
 }
 
 export default function SkillManagerModal({ isOpen, onClose }: SkillManagerModalProps) {
   const snap = useSnapshot(skillStore);
   const [selectedSkills, setSelectedSkills] = useState<Set<string>>(new Set());
-  const [newSkillName, setNewSkillName] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
-  const [creating, setCreating] = useState(false);
   const [restoring, setRestoring] = useState(false);
+  
+  // Edit modal state
   const [editingSkill, setEditingSkill] = useState<typeof snap.skills[number] | null>(null);
-  const [editingContent, setEditingContent] = useState("");
-  const [editingLoading, setEditingLoading] = useState(false);
+  const [editForm, setEditForm] = useState<SkillFormState>({ name: "", description: "", instruction: "" });
   const [editingSaving, setEditingSaving] = useState(false);
   const [editingError, setEditingError] = useState<string | null>(null);
-  const [editorMode, setEditorMode] = useState<FormMode>("advanced");
-  const [simpleSupported, setSimpleSupported] = useState(false);
-  const [formState, setFormState] = useState<SkillFormState | null>(null);
-  const [formHint, setFormHint] = useState<string | null>(null);
+  
+  // Create modal state
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [createForm, setCreateForm] = useState<SkillFormState>({ name: "", description: "", instruction: "" });
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
+  
+  // Delete confirmation
   const [deleteTarget, setDeleteTarget] = useState<typeof snap.skills[number] | null>(null);
-  const [draggingStepId, setDraggingStepId] = useState<string | null>(null);
 
   // Filter skills based on search query
   const filteredSkills = useMemo(() => {
@@ -465,19 +95,6 @@ export default function SkillManagerModal({ isOpen, onClose }: SkillManagerModal
       return next;
     });
   }, [snap.skills]);
-
-  const toolOptions = useMemo(() => {
-    const tools = getTools();
-    return tools
-      .filter((tool) => tool.type === "function")
-      .map((tool) => tool.function)
-      .filter((toolFn) => !toolFn.name.startsWith("skill_"))
-      .sort((a, b) => a.name.localeCompare(b.name));
-  }, []);
-
-  const toolMap = useMemo(() => {
-    return new Map<string, ToolFunction>(toolOptions.map((tool) => [tool.name, tool]));
-  }, [toolOptions]);
 
   const toggleSkillSelection = useCallback((skillId: string) => {
     setSelectedSkills(prev => {
@@ -507,29 +124,53 @@ export default function SkillManagerModal({ isOpen, onClose }: SkillManagerModal
     }
   }, []);
 
+  // Create skill handlers
+  const handleOpenCreate = useCallback(() => {
+    setCreateForm({ name: "", description: "", instruction: "" });
+    setCreateError(null);
+    setShowCreateModal(true);
+  }, []);
+
+  const handleCloseCreate = useCallback(() => {
+    setShowCreateModal(false);
+    setCreateForm({ name: "", description: "", instruction: "" });
+    setCreateError(null);
+  }, []);
+
   const handleCreateSkill = useCallback(async () => {
-    const name = newSkillName.trim();
+    const name = createForm.name.trim();
     if (!name) {
-      orca.notify("warn", "请输入技能名称");
+      setCreateError("请输入技能名称");
       return;
     }
+    if (name.length > SKILL_NAME_MAX_LENGTH) {
+      setCreateError(`技能名称不能超过 ${SKILL_NAME_MAX_LENGTH} 字符`);
+      return;
+    }
+    if (createForm.description.length > SKILL_DESCRIPTION_MAX_LENGTH) {
+      setCreateError(`技能描述不能超过 ${SKILL_DESCRIPTION_MAX_LENGTH} 字符`);
+      return;
+    }
+    
     setCreating(true);
+    setCreateError(null);
     try {
-      await createSkillTemplate(name);
+      await createSkill(name, createForm.description, createForm.instruction);
       await loadSkillRegistry();
-      setNewSkillName("");
+      handleCloseCreate();
+      orca.notify("success", "技能创建成功");
     } catch (err: any) {
-      orca.notify("error", err?.message ?? "新建技能失败");
+      setCreateError(err?.message ?? "创建技能失败");
     } finally {
       setCreating(false);
     }
-  }, [newSkillName]);
+  }, [createForm, handleCloseCreate]);
 
+  // Export/Import handlers
   const handleExportSkills = useCallback(async () => {
     const selected = snap.skills.filter(skill => selectedSkills.has(skill.id));
     if (selected.length === 0) return;
     
-    // If single skill selected, export as .md file
     if (selected.length === 1) {
       const skill = selected[0];
       const content = exportSkill(skill);
@@ -545,7 +186,6 @@ export default function SkillManagerModal({ isOpen, onClose }: SkillManagerModal
       return;
     }
     
-    // Multiple skills - export as ZIP
     await exportSkillsZip(selected);
   }, [snap.skills, selectedSkills]);
 
@@ -558,7 +198,6 @@ export default function SkillManagerModal({ isOpen, onClose }: SkillManagerModal
       if (!file) return;
       
       if (file.name.endsWith(".md")) {
-        // Import single .md file
         try {
           const content = await file.text();
           await importSkill(content);
@@ -568,7 +207,6 @@ export default function SkillManagerModal({ isOpen, onClose }: SkillManagerModal
           orca.notify("error", err?.message ?? "导入失败");
         }
       } else {
-        // Import ZIP file
         await importSkillsZip(file);
         await loadSkillRegistry();
       }
@@ -576,84 +214,59 @@ export default function SkillManagerModal({ isOpen, onClose }: SkillManagerModal
     input.click();
   }, []);
 
-  const handleOpenEditor = useCallback(async (skill: SkillDefinition) => {
+  // Edit handlers
+  const handleOpenEditor = useCallback((skill: SkillDefinition) => {
     setEditingSkill(skill);
+    setEditForm({
+      name: skill.metadata.name,
+      description: skill.metadata.description,
+      instruction: skill.instruction,
+    });
     setEditingError(null);
-    setFormHint(null);
-    setEditingLoading(true);
-    try {
-      // For new Codex-style skills, serialize to SKILL.md format for editing
-      const content = serializeSkillMd(skill.metadata, skill.instruction);
-      setEditingContent(content);
-      const parsed = buildFormStateFromContent(content, toolMap);
-      if (parsed.state) {
-        setFormState(parsed.state);
-        setSimpleSupported(true);
-        setEditorMode("simple");
-        setFormHint(null);
-      } else {
-        setFormState(null);
-        setSimpleSupported(false);
-        setEditorMode("advanced");
-        setFormHint(parsed.reason ?? "该技能暂不支持简化编辑");
-      }
-    } catch (err: any) {
-      orca.notify("error", err?.message ?? "读取技能失败");
-      setEditingSkill(null);
-      setEditingContent("");
-    } finally {
-      setEditingLoading(false);
-    }
-  }, [toolMap]);
+  }, []);
 
   const handleCloseEditor = useCallback(() => {
     setEditingSkill(null);
-    setEditingContent("");
+    setEditForm({ name: "", description: "", instruction: "" });
     setEditingError(null);
-    setEditingLoading(false);
-    setFormState(null);
-    setSimpleSupported(false);
-    setEditorMode("advanced");
-    setFormHint(null);
-    setDraggingStepId(null);
   }, []);
-
-  const generatedContent = useMemo(() => {
-    if (!formState) return "";
-    return buildSkillContentFromForm(formState);
-  }, [formState]);
-
-  const effectiveContent =
-    editorMode === "simple" && formState ? generatedContent : editingContent;
-
-  const previewContent = useMemo(() => {
-    if (!effectiveContent) return "";
-    const { instruction } = parseSkillFile(effectiveContent);
-    return instruction || "";
-  }, [effectiveContent]);
 
   const handleSaveEditor = useCallback(async () => {
     if (!editingSkill) return;
+    
+    const name = editForm.name.trim();
+    if (!name) {
+      setEditingError("请输入技能名称");
+      return;
+    }
+    if (name.length > SKILL_NAME_MAX_LENGTH) {
+      setEditingError(`技能名称不能超过 ${SKILL_NAME_MAX_LENGTH} 字符`);
+      return;
+    }
+    if (editForm.description.length > SKILL_DESCRIPTION_MAX_LENGTH) {
+      setEditingError(`技能描述不能超过 ${SKILL_DESCRIPTION_MAX_LENGTH} 字符`);
+      return;
+    }
+    
     setEditingSaving(true);
     setEditingError(null);
     try {
-      // Parse the content to get metadata and instruction
-      const contentToSave = editorMode === "simple" ? generatedContent : editingContent;
-      const { metadata, instruction } = parseSkillMd(contentToSave);
-      
-      // Update skill in IndexedDB
-      await updateSkill(editingSkill.id, metadata, instruction);
-      
+      await updateSkill(
+        editingSkill.id,
+        { name, description: editForm.description },
+        editForm.instruction
+      );
       await loadSkillRegistry();
-      setEditingSkill(null);
-      setEditingContent("");
+      handleCloseEditor();
+      orca.notify("success", "技能已保存");
     } catch (err: any) {
       setEditingError(err?.message ?? "保存失败");
     } finally {
       setEditingSaving(false);
     }
-  }, [editingSkill, editingContent, editorMode, generatedContent]);
+  }, [editingSkill, editForm, handleCloseEditor]);
 
+  // Delete handlers
   const handleDeleteSkill = useCallback((skill: SkillDefinition) => {
     setDeleteTarget(skill);
   }, []);
@@ -667,6 +280,7 @@ export default function SkillManagerModal({ isOpen, onClose }: SkillManagerModal
     try {
       await deleteSkillById(deleteTarget.id);
       await loadSkillRegistry();
+      orca.notify("success", "技能已删除");
     } catch (err: any) {
       orca.notify("error", err?.message ?? "删除失败");
     } finally {
@@ -674,169 +288,9 @@ export default function SkillManagerModal({ isOpen, onClose }: SkillManagerModal
     }
   }, [deleteTarget]);
 
-  const handleSwitchMode = useCallback(
-    (mode: FormMode) => {
-      if (mode === editorMode) return;
-      if (mode === "simple") {
-        const parsed = buildFormStateFromContent(editingContent, toolMap);
-        if (!parsed.state) {
-          const hint = parsed.reason ?? "该技能暂不支持简化编辑";
-          setFormHint(hint);
-          setSimpleSupported(false);
-          orca.notify("warn", hint);
-          return;
-        }
-        setFormState(parsed.state);
-        setSimpleSupported(true);
-        setFormHint(null);
-      } else if (mode === "advanced" && formState) {
-        setEditingContent(buildSkillContentFromForm(formState));
-      }
-      setEditorMode(mode);
-    },
-    [editorMode, editingContent, toolMap, formState]
-  );
-
-  const handleFormFieldChange = useCallback(
-    (patch: Partial<SkillFormState>) => {
-      setFormState((prev) => (prev ? { ...prev, ...patch } : prev));
-    },
-    []
-  );
-
-  const handleToolChange = useCallback(
-    (stepId: string, toolName: string) => {
-      const toolFn = toolMap.get(toolName);
-      if (!toolFn) return;
-      setFormState((prev) => {
-        if (!prev) return prev;
-        const nextSteps = prev.steps.map((step) => {
-          if (step.id !== stepId) return step;
-          return {
-            ...step,
-            toolName,
-            params: buildParamsFromTool(toolFn),
-          };
-        });
-        return {
-          ...prev,
-          steps: nextSteps,
-        };
-      });
-    },
-    [toolMap]
-  );
-
-  const handleParamModeChange = useCallback((stepId: string, name: string, mode: ParamMode) => {
-    setFormState((prev) => {
-      if (!prev) return prev;
-      return {
-        ...prev,
-        steps: prev.steps.map((step) => {
-          if (step.id !== stepId) return step;
-          return {
-            ...step,
-            params: step.params.map((param) =>
-              param.name === name ? { ...param, mode } : param
-            ),
-          };
-        }),
-      };
-    });
-  }, []);
-
-  const handleParamValueChange = useCallback((stepId: string, name: string, value: string) => {
-    setFormState((prev) => {
-      if (!prev) return prev;
-      return {
-        ...prev,
-        steps: prev.steps.map((step) => {
-          if (step.id !== stepId) return step;
-          return {
-            ...step,
-            params: step.params.map((param) =>
-              param.name === name ? { ...param, value } : param
-            ),
-          };
-        }),
-      };
-    });
-  }, []);
-
-  const handleAddStep = useCallback(() => {
-    const firstTool = toolOptions[0];
-    if (!firstTool) {
-      orca.notify("warn", "暂无可用工具");
-      return;
-    }
-    setFormState((prev) => {
-      if (!prev) return prev;
-      return {
-        ...prev,
-        steps: [...prev.steps, createStepFromTool(firstTool)],
-      };
-    });
-  }, [toolOptions]);
-
-  const handleRemoveStep = useCallback((stepId: string) => {
-    setFormState((prev) => {
-      if (!prev) return prev;
-      const nextSteps = prev.steps.filter((step) => step.id !== stepId);
-      return {
-        ...prev,
-        steps: nextSteps,
-      };
-    });
-  }, []);
-
-  const handleReorderSteps = useCallback((sourceId: string, targetId: string) => {
-    if (sourceId === targetId) return;
-    setFormState((prev) => {
-      if (!prev) return prev;
-      const sourceIndex = prev.steps.findIndex((step) => step.id === sourceId);
-      const targetIndex = prev.steps.findIndex((step) => step.id === targetId);
-      if (sourceIndex < 0 || targetIndex < 0) return prev;
-      const nextSteps = [...prev.steps];
-      const [moved] = nextSteps.splice(sourceIndex, 1);
-      nextSteps.splice(targetIndex, 0, moved);
-      return { ...prev, steps: nextSteps };
-    });
-  }, []);
-
-  const handleDragStart = useCallback((stepId: string, event: any) => {
-    setDraggingStepId(stepId);
-    if (event.dataTransfer) {
-      event.dataTransfer.setData("text/plain", stepId);
-      event.dataTransfer.effectAllowed = "move";
-    }
-  }, []);
-
-  const handleDragOver = useCallback((event: any) => {
-    event.preventDefault();
-    if (event.dataTransfer) {
-      event.dataTransfer.dropEffect = "move";
-    }
-  }, []);
-
-  const handleDrop = useCallback(
-    (targetId: string, event: any) => {
-      event.preventDefault();
-      const sourceId =
-        event.dataTransfer?.getData("text/plain") || draggingStepId || "";
-      if (sourceId) {
-        handleReorderSteps(sourceId, targetId);
-      }
-      setDraggingStepId(null);
-    },
-    [draggingStepId, handleReorderSteps]
-  );
-
-  const handleDragEnd = useCallback(() => {
-    setDraggingStepId(null);
-  }, []);
-
   if (!isOpen) return null;
 
+  // Styles
   const overlayStyle: React.CSSProperties = {
     position: "fixed",
     top: 0,
@@ -889,212 +343,13 @@ export default function SkillManagerModal({ isOpen, onClose }: SkillManagerModal
     alignItems: "center",
   };
 
-  const editOverlayStyle: React.CSSProperties = {
-    ...overlayStyle,
-    zIndex: 1100,
-  };
-
-  const editModalStyle: React.CSSProperties = {
-    ...modalStyle,
-    width: "min(920px, 94vw)",
-    maxHeight: "90vh",
-    display: "flex",
-    flexDirection: "column",
-  };
-
-  const editBodyStyle: React.CSSProperties = {
-    marginTop: 12,
-    display: "grid",
-    gridTemplateColumns: "1fr 1fr",
-    gap: 12,
-    flex: 1,
-    minHeight: 320,
-    overflow: "hidden",
-  };
-
-  const editorStyle: React.CSSProperties = {
-    width: "100%",
-    minHeight: 320,
-    height: "100%",
-    resize: "none",
-    padding: "10px 12px",
-    borderRadius: 8,
-    border: "1px solid var(--orca-color-border)",
-    background: "var(--orca-color-bg-2)",
-    color: "var(--orca-color-text-1)",
-    fontSize: 12,
-    fontFamily: "monospace",
-    boxSizing: "border-box",
-  };
-
-  const previewStyle: React.CSSProperties = {
-    border: "1px solid var(--orca-color-border)",
-    borderRadius: 8,
-    padding: 12,
-    background: "var(--orca-color-bg-2)",
-    overflowY: "auto",
-    height: "100%",
-  };
-
-  const footerStyle: React.CSSProperties = {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginTop: 12,
-    gap: 8,
-  };
-
-  const modeToggleStyle: React.CSSProperties = {
-    display: "flex",
-    gap: 8,
-    marginTop: 8,
-  };
-
-  const formContainerStyle: React.CSSProperties = {
-    display: "flex",
-    flexDirection: "column",
-    gap: 12,
-    minWidth: 0,
-  };
-
-  const formScrollStyle: React.CSSProperties = {
-    display: "flex",
-    flexDirection: "column",
-    gap: 12,
-    minWidth: 0,
-    overflowY: "auto",
-    paddingRight: 4,
-    height: "100%",
-  };
-
-  const previewColumnStyle: React.CSSProperties = {
-    minWidth: 0,
-    overflowY: "auto",
-    height: "100%",
-  };
-
-  const formFieldStyle: React.CSSProperties = {
-    display: "flex",
-    flexDirection: "column",
-    gap: 6,
-  };
-
-  const fieldLabelStyle: React.CSSProperties = {
-    fontSize: 11,
-    color: "var(--orca-color-text-3)",
-  };
-
-  const fieldInputStyle: React.CSSProperties = {
-    width: "100%",
-    padding: "6px 10px",
-    borderRadius: 6,
-    border: "1px solid var(--orca-color-border)",
-    background: "var(--orca-color-bg-2)",
-    color: "var(--orca-color-text-1)",
-    fontSize: 12,
-    boxSizing: "border-box",
-  };
-
-  const fieldTextAreaStyle: React.CSSProperties = {
-    ...fieldInputStyle,
-    minHeight: 120,
-    resize: "vertical",
-    fontFamily: "inherit",
-  };
-
-  const paramListStyle: React.CSSProperties = {
-    display: "flex",
-    flexDirection: "column",
-    gap: 8,
-  };
-
-  const paramCardStyle: React.CSSProperties = {
-    border: "1px solid var(--orca-color-border)",
-    borderRadius: 8,
-    padding: 8,
-    background: "var(--orca-color-bg-2)",
-    display: "flex",
-    flexDirection: "column",
-    gap: 6,
-  };
-
-  const stepCardStyle: React.CSSProperties = {
-    border: "1px solid var(--orca-color-border)",
-    borderRadius: 10,
-    padding: 12,
-    background: "var(--orca-color-bg-1)",
-    display: "flex",
-    flexDirection: "column",
-    gap: 10,
-  };
-
-  const stepHeaderStyle: React.CSSProperties = {
-    display: "flex",
-    alignItems: "center",
-    gap: 8,
-  };
-
-  const stepTitleStyle: React.CSSProperties = {
-    fontSize: 12,
-    fontWeight: 600,
-    color: "var(--orca-color-text-1)",
-  };
-
-  const stepMetaStyle: React.CSSProperties = {
-    fontSize: 11,
-    color: "var(--orca-color-text-3)",
-  };
-
-  const dragHandleStyle: React.CSSProperties = {
-    display: "inline-flex",
-    alignItems: "center",
-    justifyContent: "center",
-    cursor: "grab",
-    padding: 4,
-    borderRadius: 6,
-    color: "var(--orca-color-text-3)",
-  };
-
-  const stepActionsStyle: React.CSSProperties = {
-    marginLeft: "auto",
-    display: "flex",
-    gap: 6,
-    alignItems: "center",
-  };
-
-  const paramHeaderStyle: React.CSSProperties = {
-    display: "flex",
-    alignItems: "center",
-    gap: 6,
-    fontSize: 12,
-    color: "var(--orca-color-text-1)",
-  };
-
-  const paramMetaStyle: React.CSSProperties = {
-    fontSize: 11,
-    color: "var(--orca-color-text-3)",
-  };
-
-  const paramControlRowStyle: React.CSSProperties = {
-    display: "flex",
-    alignItems: "center",
-    gap: 8,
-  };
-
-  const requiredBadgeStyle: React.CSSProperties = {
-    fontSize: 10,
-    padding: "1px 6px",
-    borderRadius: 10,
-    background: "var(--orca-color-red)",
-    color: "#fff",
-  };
-
   const listStyle: React.CSSProperties = {
-    marginTop: 16,
+    marginTop: 12,
     maxHeight: 320,
     overflowY: "auto",
     border: "1px solid var(--orca-color-border)",
     borderRadius: 8,
+    background: "var(--orca-color-bg-2)",
   };
 
   const rowStyle: React.CSSProperties = {
@@ -1107,6 +362,260 @@ export default function SkillManagerModal({ isOpen, onClose }: SkillManagerModal
     color: "var(--orca-color-text-2)",
   };
 
+  const editOverlayStyle: React.CSSProperties = {
+    ...overlayStyle,
+    zIndex: 1100,
+  };
+
+  const editModalStyle: React.CSSProperties = {
+    ...modalStyle,
+    width: "min(1000px, 94vw)",
+    maxHeight: "90vh",
+    display: "flex",
+    flexDirection: "column",
+  };
+
+  const editBodyStyle: React.CSSProperties = {
+    display: "grid",
+    gridTemplateColumns: "1fr 1fr",
+    gap: 16,
+    marginTop: 16,
+    flex: 1,
+    minHeight: 400,
+    overflow: "hidden",
+  };
+
+  const formColumnStyle: React.CSSProperties = {
+    display: "flex",
+    flexDirection: "column",
+    gap: 12,
+    overflowY: "auto",
+    paddingRight: 8,
+  };
+
+  const previewColumnStyle: React.CSSProperties = {
+    display: "flex",
+    flexDirection: "column",
+    minWidth: 0,
+    overflow: "hidden",
+  };
+
+  const previewStyle: React.CSSProperties = {
+    flex: 1,
+    border: "1px solid var(--orca-color-border)",
+    borderRadius: 8,
+    padding: 12,
+    background: "var(--orca-color-bg-2)",
+    overflowY: "auto",
+  };
+
+  const formFieldStyle: React.CSSProperties = {
+    display: "flex",
+    flexDirection: "column",
+    gap: 6,
+    marginBottom: 12,
+  };
+
+  const fieldLabelStyle: React.CSSProperties = {
+    fontSize: 12,
+    fontWeight: 500,
+    color: "var(--orca-color-text-2)",
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+  };
+
+  const fieldInputStyle: React.CSSProperties = {
+    width: "100%",
+    padding: "8px 12px",
+    borderRadius: 6,
+    border: "1px solid var(--orca-color-border)",
+    background: "var(--orca-color-bg-2)",
+    color: "var(--orca-color-text-1)",
+    fontSize: 13,
+    boxSizing: "border-box",
+  };
+
+  const fieldTextAreaStyle: React.CSSProperties = {
+    ...fieldInputStyle,
+    minHeight: 80,
+    resize: "vertical",
+    fontFamily: "inherit",
+  };
+
+  const instructionTextAreaStyle: React.CSSProperties = {
+    ...fieldInputStyle,
+    minHeight: 200,
+    resize: "vertical",
+    fontFamily: "monospace",
+    fontSize: 12,
+  };
+
+  const footerStyle: React.CSSProperties = {
+    display: "flex",
+    justifyContent: "flex-end",
+    alignItems: "center",
+    marginTop: 16,
+    gap: 8,
+  };
+
+  const charCountStyle = (current: number, max: number): React.CSSProperties => ({
+    fontSize: 10,
+    color: current > max ? "var(--orca-color-red)" : "var(--orca-color-text-3)",
+  });
+
+  // Render skill form fields (without wrapper)
+  const renderSkillFormFields = (
+    form: SkillFormState,
+    setForm: (f: SkillFormState) => void,
+    error: string | null,
+    showInstructionField: boolean = true
+  ) => {
+    const fields = [
+      // Name field
+      createElement(
+        "div",
+        { key: "name", style: formFieldStyle },
+        createElement(
+          "div",
+          { style: fieldLabelStyle },
+          createElement("span", null, "技能名称"),
+          createElement("span", { style: charCountStyle(form.name.length, SKILL_NAME_MAX_LENGTH) },
+            `${form.name.length}/${SKILL_NAME_MAX_LENGTH}`
+          )
+        ),
+        createElement("input", {
+          value: form.name,
+          onChange: (e: any) => setForm({ ...form, name: e.target.value }),
+          style: {
+            ...fieldInputStyle,
+            borderColor: form.name.length > SKILL_NAME_MAX_LENGTH ? "var(--orca-color-red)" : undefined,
+          },
+          placeholder: "输入技能名称",
+        })
+      ),
+      // Description field
+      createElement(
+        "div",
+        { key: "description", style: formFieldStyle },
+        createElement(
+          "div",
+          { style: fieldLabelStyle },
+          createElement("span", null, "技能描述"),
+          createElement("span", { style: charCountStyle(form.description.length, SKILL_DESCRIPTION_MAX_LENGTH) },
+            `${form.description.length}/${SKILL_DESCRIPTION_MAX_LENGTH}`
+          )
+        ),
+        createElement("textarea", {
+          value: form.description,
+          onChange: (e: any) => setForm({ ...form, description: e.target.value }),
+          style: {
+            ...fieldTextAreaStyle,
+            borderColor: form.description.length > SKILL_DESCRIPTION_MAX_LENGTH ? "var(--orca-color-red)" : undefined,
+          },
+          placeholder: "[功能描述]. Use when [触发场景] or when the user mentions [关键词].",
+        }),
+        createElement(
+          "div",
+          { style: { fontSize: 11, color: "var(--orca-color-text-3)", marginTop: 4 } },
+          "描述格式建议：[功能描述]. Use when [触发场景] or when the user mentions [关键词]."
+        )
+      ),
+    ];
+
+    // Instruction field (optional, for non-split layout)
+    if (showInstructionField) {
+      fields.push(
+        createElement(
+          "div",
+          { key: "instruction", style: formFieldStyle },
+          createElement(
+            "div",
+            { style: fieldLabelStyle },
+            createElement("span", null, "技能指令 (Markdown)")
+          ),
+          createElement("textarea", {
+            value: form.instruction,
+            onChange: (e: any) => setForm({ ...form, instruction: e.target.value }),
+            style: instructionTextAreaStyle,
+            placeholder: "# 技能名称\n\n## 快速开始\n\n描述如何使用这个技能...\n\n## 功能特性\n\n- 特性1\n- 特性2",
+          })
+        )
+      );
+    }
+
+    // Error message
+    if (error) {
+      fields.push(
+        createElement(
+          "div",
+          { key: "error", style: { fontSize: 12, color: "var(--orca-color-red)", marginTop: 8 } },
+          error
+        )
+      );
+    }
+
+    return fields;
+  };
+
+  // Render skill form (wrapped version for create modal)
+  const renderSkillForm = (
+    form: SkillFormState,
+    setForm: (f: SkillFormState) => void,
+    error: string | null
+  ) => {
+    return createElement(
+      "div",
+      { style: { marginTop: 16 } },
+      ...renderSkillFormFields(form, setForm, error, true)
+    );
+  };
+
+  // Render create modal
+  const renderCreateModal = () => {
+    if (!showCreateModal) return null;
+
+    return createElement(
+      "div",
+      {
+        style: editOverlayStyle,
+        onClick: (e: any) => {
+          e.stopPropagation();
+          handleCloseCreate();
+        },
+      },
+      createElement(
+        "div",
+        { style: editModalStyle, onClick: (e: any) => e.stopPropagation() },
+        createElement(
+          "div",
+          { style: { display: "flex", justifyContent: "space-between", alignItems: "center" } },
+          createElement("div", { style: titleStyle }, "新建技能"),
+          withTooltip(
+            "关闭",
+            createElement(
+              Button,
+              { variant: "plain", onClick: handleCloseCreate },
+              createElement("i", { className: "ti ti-x" })
+            )
+          )
+        ),
+        renderSkillForm(createForm, setCreateForm, createError),
+        createElement(
+          "div",
+          { style: footerStyle },
+          createElement(Button, { variant: "secondary", onClick: handleCloseCreate }, "取消"),
+          createElement(
+            Button,
+            { variant: "secondary", onClick: handleCreateSkill, disabled: creating },
+            creating ? "创建中..." : "创建"
+          )
+        )
+      )
+    );
+  };
+
+  // Render edit modal with split layout (form + preview)
   const renderEditModal = () => {
     if (!editingSkill) return null;
 
@@ -1122,6 +631,7 @@ export default function SkillManagerModal({ isOpen, onClose }: SkillManagerModal
       createElement(
         "div",
         { style: editModalStyle, onClick: (e: any) => e.stopPropagation() },
+        // Header
         createElement(
           "div",
           { style: { display: "flex", justifyContent: "space-between", alignItems: "center" } },
@@ -1135,450 +645,74 @@ export default function SkillManagerModal({ isOpen, onClose }: SkillManagerModal
             )
           )
         ),
+        // Body: split layout
         createElement(
           "div",
-          { style: modeToggleStyle },
-          withTooltip(
-            simpleSupported ? "使用简化编辑" : formHint ?? "尝试简化编辑",
+          { style: editBodyStyle },
+          // Left column: form
+          createElement(
+            "div",
+            { style: formColumnStyle },
+            ...renderSkillFormFields(editForm, setEditForm, editingError, false),
+            // Instruction textarea (larger, in left column)
             createElement(
-              Button,
-              {
-                variant: editorMode === "simple" ? "secondary" : "plain",
-                onClick: () => handleSwitchMode("simple"),
-              },
-              "简化模式"
+              "div",
+              { style: { ...formFieldStyle, flex: 1, display: "flex", flexDirection: "column" } },
+              createElement(
+                "div",
+                { style: fieldLabelStyle },
+                createElement("span", null, "技能指令 (Markdown)")
+              ),
+              createElement("textarea", {
+                value: editForm.instruction,
+                onChange: (e: any) => setEditForm({ ...editForm, instruction: e.target.value }),
+                style: {
+                  ...instructionTextAreaStyle,
+                  flex: 1,
+                  minHeight: 200,
+                },
+                placeholder: "# 技能名称\n\n## 快速开始\n\n描述如何使用这个技能...\n\n## 功能特性\n\n- 特性1\n- 特性2",
+              })
             )
           ),
-          withTooltip(
-            "使用高级编辑",
+          // Right column: preview
+          createElement(
+            "div",
+            { style: previewColumnStyle },
             createElement(
-              Button,
-              {
-                variant: editorMode === "advanced" ? "secondary" : "plain",
-                onClick: () => handleSwitchMode("advanced"),
-              },
-              "高级模式"
+              "div",
+              { style: { ...fieldLabelStyle, marginBottom: 6 } },
+              createElement("span", null, "预览")
+            ),
+            createElement(
+              "div",
+              { style: previewStyle },
+              editForm.instruction
+                ? createElement(MarkdownMessage, { content: editForm.instruction, role: "assistant" })
+                : createElement(
+                    "div",
+                    { style: { fontSize: 12, color: "var(--orca-color-text-3)" } },
+                    "在左侧输入指令内容，这里会显示 Markdown 预览"
+                  )
             )
           )
         ),
-        formHint &&
-          createElement(
-            "div",
-            { style: { marginTop: 6, fontSize: 11, color: "var(--orca-color-text-3)" } },
-            formHint
-          ),
-        editingLoading
-          ? createElement(
-              "div",
-              { style: { marginTop: 12, fontSize: 12, color: "var(--orca-color-text-3)" } },
-              "加载中..."
-            )
-          : editorMode === "simple"
-            ? createElement(
-                "div",
-                { style: editBodyStyle },
-                formState
-                  ? createElement(
-                      "div",
-                      { style: formScrollStyle },
-                      createElement(
-                        "div",
-                        { style: formFieldStyle },
-                        createElement(
-                          "div",
-                          { style: { display: "flex", justifyContent: "space-between", alignItems: "center" } },
-                          createElement("div", { style: fieldLabelStyle }, "技能名称"),
-                          createElement(
-                            "div",
-                            { 
-                              style: { 
-                                fontSize: 10, 
-                                color: formState.name.length > SKILL_NAME_MAX_LENGTH 
-                                  ? "var(--orca-color-red)" 
-                                  : "var(--orca-color-text-3)" 
-                              } 
-                            },
-                            `${formState.name.length}/${SKILL_NAME_MAX_LENGTH}`
-                          )
-                        ),
-                        createElement("input", {
-                          value: formState.name,
-                          onChange: (e: any) => handleFormFieldChange({ name: e.target.value }),
-                          style: {
-                            ...fieldInputStyle,
-                            borderColor: formState.name.length > SKILL_NAME_MAX_LENGTH 
-                              ? "var(--orca-color-red)" 
-                              : "var(--orca-color-border)",
-                          },
-                          maxLength: SKILL_NAME_MAX_LENGTH + 10, // Allow slight overflow for feedback
-                        })
-                      ),
-                      createElement(
-                        "div",
-                        { style: formFieldStyle },
-                        createElement(
-                          "div",
-                          { style: { display: "flex", justifyContent: "space-between", alignItems: "center" } },
-                          createElement("div", { style: fieldLabelStyle }, "技能描述"),
-                          createElement(
-                            "div",
-                            { 
-                              style: { 
-                                fontSize: 10, 
-                                color: formState.description.length > SKILL_DESCRIPTION_MAX_LENGTH 
-                                  ? "var(--orca-color-red)" 
-                                  : "var(--orca-color-text-3)" 
-                              } 
-                            },
-                            `${formState.description.length}/${SKILL_DESCRIPTION_MAX_LENGTH}`
-                          )
-                        ),
-                        createElement("textarea", {
-                          value: formState.description,
-                          onChange: (e: any) => handleFormFieldChange({ description: e.target.value }),
-                          style: {
-                            ...fieldInputStyle,
-                            minHeight: 60,
-                            resize: "vertical",
-                            fontFamily: "inherit",
-                            borderColor: formState.description.length > SKILL_DESCRIPTION_MAX_LENGTH 
-                              ? "var(--orca-color-red)" 
-                              : "var(--orca-color-border)",
-                          },
-                        })
-                      ),
-                      createElement(
-                        "div",
-                        { style: formFieldStyle },
-                        createElement("div", { style: fieldLabelStyle }, "指令说明"),
-                        createElement("textarea", {
-                          value: formState.instruction,
-                          onChange: (e: any) => handleFormFieldChange({ instruction: e.target.value }),
-                          style: fieldTextAreaStyle,
-                        })
-                      ),
-                      createElement(
-                        "div",
-                        { style: formFieldStyle },
-                        createElement("div", { style: fieldLabelStyle }, "步骤设置"),
-                        createElement(
-                          "div",
-                          { style: paramListStyle },
-                          formState.steps.length === 0
-                            ? createElement(
-                                "div",
-                                { style: paramMetaStyle },
-                                "暂无步骤，请添加工具步骤"
-                              )
-                            : formState.steps.map((step, stepIndex) => {
-                                const toolFn = toolMap.get(step.toolName);
-                                const optionLabel = toolFn ? formatToolOptionLabel(toolFn) : step.toolName;
-                                return createElement(
-                                  "div",
-                                  {
-                                    key: step.id,
-                                    style: {
-                                      ...stepCardStyle,
-                                      borderColor:
-                                        draggingStepId === step.id
-                                          ? "var(--orca-color-primary)"
-                                          : stepCardStyle.borderColor,
-                                    },
-                                    onDragOver: handleDragOver,
-                                    onDrop: (event: any) => handleDrop(step.id, event),
-                                  },
-                                  createElement(
-                                    "div",
-                                    { style: stepHeaderStyle },
-                                    withTooltip(
-                                      "拖拽排序",
-                                      createElement(
-                                        "div",
-                                        {
-                                          style: dragHandleStyle,
-                                          draggable: true,
-                                          onDragStart: (event: any) => handleDragStart(step.id, event),
-                                          onDragEnd: handleDragEnd,
-                                        },
-                                        createElement("i", { className: "ti ti-grip-vertical" })
-                                      )
-                                    ),
-                                    createElement(
-                                      "div",
-                                      { style: stepTitleStyle },
-                                      `步骤 ${stepIndex + 1}`
-                                    ),
-                                    toolFn &&
-                                      createElement(
-                                        "div",
-                                        { style: stepMetaStyle },
-                                        getToolLabel(toolFn)
-                                      ),
-                                    createElement(
-                                      "div",
-                                      { style: stepActionsStyle },
-                                      withTooltip(
-                                        "删除步骤",
-                                        createElement(
-                                          Button,
-                                          {
-                                            variant: "plain",
-                                            onClick: () => handleRemoveStep(step.id),
-                                          },
-                                          createElement("i", { className: "ti ti-trash" })
-                                        )
-                                      )
-                                    )
-                                  ),
-                                  createElement(
-                                    "div",
-                                    { style: formFieldStyle },
-                                    createElement("div", { style: fieldLabelStyle }, "选择工具"),
-                                    createElement(
-                                      "select",
-                                      {
-                                        value: step.toolName,
-                                        onChange: (e: any) =>
-                                          handleToolChange(step.id, e.target.value),
-                                        style: fieldInputStyle,
-                                      },
-                                      toolOptions.map((tool) =>
-                                        createElement(
-                                          "option",
-                                          { key: tool.name, value: tool.name },
-                                          formatToolOptionLabel(tool)
-                                        )
-                                      )
-                                    ),
-                                    toolFn?.description &&
-                                      createElement(
-                                        "div",
-                                        { style: stepMetaStyle },
-                                        getFirstLine(toolFn.description) || optionLabel
-                                      )
-                                  ),
-                                  createElement(
-                                    "div",
-                                    { style: formFieldStyle },
-                                    createElement("div", { style: fieldLabelStyle }, "参数设置"),
-                                    createElement(
-                                      "div",
-                                      { style: paramListStyle },
-                                      step.params.length === 0
-                                        ? createElement(
-                                            "div",
-                                            { style: paramMetaStyle },
-                                            "该工具没有参数"
-                                          )
-                                        : step.params.map((param) =>
-                                            createElement(
-                                              "div",
-                                              { key: param.name, style: paramCardStyle },
-                                              createElement(
-                                                "div",
-                                                { style: paramHeaderStyle },
-                                                getParamLabel(param),
-                                                getParamLabel(param) !== param.name &&
-                                                  createElement(
-                                                    "span",
-                                                    { style: paramMetaStyle },
-                                                    param.name
-                                                  ),
-                                                createElement(
-                                                  "span",
-                                                  { style: paramMetaStyle },
-                                                  `(${param.type})`
-                                                ),
-                                                param.required &&
-                                                  createElement("span", { style: requiredBadgeStyle }, "必填")
-                                              ),
-                                              param.description &&
-                                                createElement("div", { style: paramMetaStyle }, param.description),
-                                              createElement(
-                                                "div",
-                                                { style: paramControlRowStyle },
-                                                createElement(
-                                                  "select",
-                                                  {
-                                                    value: param.mode,
-                                                    onChange: (e: any) =>
-                                                      handleParamModeChange(
-                                                        step.id,
-                                                        param.name,
-                                                        e.target.value as ParamMode
-                                                      ),
-                                                    style: fieldInputStyle,
-                                                  },
-                                                  createElement("option", { value: "input" }, "作为输入"),
-                                                  createElement("option", { value: "fixed" }, "固定值")
-                                                ),
-                                                param.mode === "fixed"
-                                                  ? param.enumValues && param.enumValues.length > 0
-                                                    ? createElement(
-                                                        "select",
-                                                        {
-                                                          value: param.value,
-                                                          onChange: (e: any) =>
-                                                            handleParamValueChange(
-                                                              step.id,
-                                                              param.name,
-                                                              e.target.value
-                                                            ),
-                                                          style: fieldInputStyle,
-                                                        },
-                                                        !param.required &&
-                                                          createElement("option", { value: "" }, "（可选）"),
-                                                        param.enumValues.map((item) =>
-                                                          createElement(
-                                                            "option",
-                                                            { key: item, value: item },
-                                                            item
-                                                          )
-                                                        )
-                                                      )
-                                                    : param.type === "boolean"
-                                                      ? createElement(
-                                                          "select",
-                                                          {
-                                                            value: param.value,
-                                                            onChange: (e: any) =>
-                                                              handleParamValueChange(
-                                                                step.id,
-                                                                param.name,
-                                                                e.target.value
-                                                              ),
-                                                            style: fieldInputStyle,
-                                                          },
-                                                          !param.required &&
-                                                            createElement("option", { value: "" }, "（可选）"),
-                                                          createElement("option", { value: "true" }, "true"),
-                                                          createElement("option", { value: "false" }, "false")
-                                                        )
-                                                      : param.type === "object" || param.type === "array"
-                                                        ? createElement("textarea", {
-                                                            value: param.value,
-                                                            onChange: (e: any) =>
-                                                              handleParamValueChange(
-                                                                step.id,
-                                                                param.name,
-                                                                e.target.value
-                                                              ),
-                                                            style: fieldTextAreaStyle,
-                                                            placeholder: "请输入 JSON",
-                                                          })
-                                                        : createElement("input", {
-                                                            value: param.value,
-                                                            onChange: (e: any) =>
-                                                              handleParamValueChange(
-                                                                step.id,
-                                                                param.name,
-                                                                e.target.value
-                                                              ),
-                                                            style: fieldInputStyle,
-                                                            placeholder: param.required ? "必填" : "可选",
-                                                          })
-                                                  : createElement(
-                                                      "div",
-                                                      { style: paramMetaStyle },
-                                                      "执行时由 AI 填写"
-                                                    )
-                                              )
-                                            )
-                                          )
-                                    )
-                                  )
-                                );
-                              })
-                        ),
-                        createElement(
-                          Button,
-                          { variant: "secondary", onClick: handleAddStep },
-                          "添加步骤"
-                        )
-                      )
-                    )
-                  : createElement(
-                      "div",
-                      { style: { fontSize: 12, color: "var(--orca-color-text-3)" } },
-                      "当前技能无法简化编辑，请切换高级模式。"
-                    ),
-                createElement(
-                  "div",
-                  { style: previewColumnStyle },
-                  createElement(
-                    "div",
-                    { style: previewStyle },
-                    previewContent
-                      ? createElement(MarkdownMessage, { content: previewContent, role: "assistant" })
-                      : createElement(
-                          "div",
-                          { style: { fontSize: 12, color: "var(--orca-color-text-3)" } },
-                          "暂无预览内容"
-                        )
-                  )
-                )
-              )
-            : createElement(
-                "div",
-                { style: editBodyStyle },
-                createElement("textarea", {
-                  value: editingContent,
-                  onChange: (e: any) => setEditingContent(e.target.value),
-                  style: editorStyle,
-                }),
-                createElement(
-                  "div",
-                  { style: previewColumnStyle },
-                  createElement(
-                    "div",
-                    { style: previewStyle },
-                    previewContent
-                      ? createElement(MarkdownMessage, { content: previewContent, role: "assistant" })
-                      : createElement(
-                          "div",
-                          { style: { fontSize: 12, color: "var(--orca-color-text-3)" } },
-                          "暂无预览内容"
-                        )
-                  )
-                )
-              ),
-        editingError &&
-          createElement(
-            "div",
-            { style: { marginTop: 8, fontSize: 12, color: "var(--orca-color-red)" } },
-            editingError
-          ),
+        // Footer
         createElement(
           "div",
           { style: footerStyle },
+          createElement(Button, { variant: "secondary", onClick: handleCloseEditor }, "取消"),
           createElement(
-            "div",
-            { style: { fontSize: 11, color: "var(--orca-color-text-3)" } },
-            "预览仅显示指令部分，保存后将更新技能内容。"
-          ),
-          createElement(
-            "div",
-            { style: actionRowStyle },
-            createElement(
-              Button,
-              { variant: "secondary", onClick: handleCloseEditor },
-              "取消"
-            ),
-            createElement(
-              Button,
-              {
-                variant: "secondary",
-                onClick: handleSaveEditor,
-                disabled: editingSaving || editingLoading,
-              },
-              editingSaving ? "保存中..." : "保存"
-            )
+            Button,
+            { variant: "secondary", onClick: handleSaveEditor, disabled: editingSaving },
+            editingSaving ? "保存中..." : "保存"
           )
         )
       )
     );
   };
 
+  // Render delete confirmation
   const renderDeleteConfirm = () => {
     if (!deleteTarget) return null;
 
@@ -1598,16 +732,12 @@ export default function SkillManagerModal({ isOpen, onClose }: SkillManagerModal
         createElement(
           "div",
           { style: { marginTop: 8, fontSize: 12, color: "var(--orca-color-text-2)" } },
-          `确定删除「${deleteTarget.metadata.name}」吗？此操作无法撤销。`
+          `确定要删除技能「${deleteTarget.metadata.name}」吗？此操作不可撤销。`
         ),
         createElement(
           "div",
-          { style: { display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 } },
-          createElement(
-            Button,
-            { variant: "secondary", onClick: handleCancelDelete },
-            "取消"
-          ),
+          { style: { ...footerStyle, marginTop: 16 } },
+          createElement(Button, { variant: "secondary", onClick: handleCancelDelete }, "取消"),
           createElement(
             Button,
             { variant: "secondary", onClick: handleConfirmDelete },
@@ -1618,12 +748,14 @@ export default function SkillManagerModal({ isOpen, onClose }: SkillManagerModal
     );
   };
 
+  // Main modal content
   return createElement(
     "div",
     { style: overlayStyle, onClick: onClose },
     createElement(
       "div",
       { style: modalStyle, onClick: (e: any) => e.stopPropagation() },
+      // Header
       createElement(
         "div",
         { style: { display: "flex", justifyContent: "space-between", alignItems: "center" } },
@@ -1637,195 +769,168 @@ export default function SkillManagerModal({ isOpen, onClose }: SkillManagerModal
           )
         )
       ),
+      // Toolbar
       createElement(
         "div",
         { style: toolbarStyle },
         createElement("input", {
-          value: newSkillName,
-          onChange: (e: any) => setNewSkillName(e.target.value),
-          placeholder: "技能名称",
-          style: inputStyle,
-          onKeyDown: (e: any) => {
-            if (e.key === "Enter") {
-              handleCreateSkill();
-            }
-          },
-        }),
-        createElement(
-          Button,
-          { variant: "secondary", onClick: handleSkillRefresh },
-          "刷新"
-        ),
-        createElement(
-          Button,
-          { variant: "secondary", onClick: handleRestoreBuiltIns, disabled: restoring },
-          restoring ? "恢复中..." : "恢复内置技能"
-        ),
-        createElement(
-          Button,
-          {
-            variant: "secondary",
-            onClick: handleCreateSkill,
-            disabled: creating || newSkillName.trim().length === 0,
-          },
-          creating ? "创建中..." : "新建"
-        ),
-        createElement(
-          Button,
-          { variant: "secondary", onClick: handleImportSkills },
-          "导入"
-        ),
-        createElement(
-          Button,
-          { variant: "secondary", onClick: handleExportSkills, disabled: selectedSkills.size === 0 },
-          "导出"
-        )
-      ),
-      // Search input
-      createElement(
-        "div",
-        { style: { marginTop: 12, position: "relative" } },
-        createElement("i", {
-          className: "ti ti-search",
-          style: {
-            position: "absolute",
-            left: 10,
-            top: "50%",
-            transform: "translateY(-50%)",
-            color: "var(--orca-color-text-3)",
-            fontSize: 14,
-            pointerEvents: "none",
-          },
-        }),
-        createElement("input", {
           value: searchQuery,
           onChange: (e: any) => setSearchQuery(e.target.value),
+          style: inputStyle,
           placeholder: "搜索技能...",
-          style: {
-            ...inputStyle,
-            width: "100%",
-            paddingLeft: 32,
-          },
         }),
-        searchQuery && createElement(
-          "button",
-          {
-            onClick: () => setSearchQuery(""),
-            style: {
-              position: "absolute",
-              right: 8,
-              top: "50%",
-              transform: "translateY(-50%)",
-              background: "none",
-              border: "none",
-              cursor: "pointer",
-              color: "var(--orca-color-text-3)",
-              padding: 2,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-            },
-          },
-          createElement("i", { className: "ti ti-x", style: { fontSize: 12 } })
-        )
-      ),
-      snap.error &&
         createElement(
           "div",
-          { style: { marginTop: 8, fontSize: 12, color: "var(--orca-color-red)" } },
-          snap.error
-        ),
-      snap.loading
-        ? createElement(
-            "div",
-            { style: { marginTop: 12, fontSize: 12, color: "var(--orca-color-text-3)" } },
-            "技能加载中..."
+          { style: actionRowStyle },
+          withTooltip(
+            "新建技能",
+            createElement(
+              Button,
+              { variant: "secondary", onClick: handleOpenCreate },
+              createElement("i", { className: "ti ti-plus" })
+            )
+          ),
+          withTooltip(
+            "刷新列表",
+            createElement(
+              Button,
+              { variant: "plain", onClick: handleSkillRefresh },
+              createElement("i", { className: "ti ti-refresh" })
+            )
+          ),
+          withTooltip(
+            "恢复内置技能",
+            createElement(
+              Button,
+              { variant: "plain", onClick: handleRestoreBuiltIns, disabled: restoring },
+              createElement("i", { className: "ti ti-restore" })
+            )
           )
-        : createElement(
-            "div",
-            { style: listStyle },
-            ...(filteredSkills.length === 0
-              ? [
-                  createElement(
-                    "div",
-                    { style: { padding: 12, fontSize: 12, color: "var(--orca-color-text-3)" } },
-                    searchQuery ? "未找到匹配的技能" : "暂无技能"
-                  ),
-                ]
-              : filteredSkills.map((skill, index) =>
-                  createElement(
-                    "div",
-                    {
-                      key: skill.id,
-                      style: {
-                        ...rowStyle,
-                        borderBottom: index === filteredSkills.length - 1 ? "none" : rowStyle.borderBottom,
-                      },
+        )
+      ),
+      // Import/Export toolbar
+      createElement(
+        "div",
+        { style: { ...toolbarStyle, marginTop: 8 } },
+        withTooltip(
+          "导入技能 (.md 或 .zip)",
+          createElement(
+            Button,
+            { variant: "plain", onClick: handleImportSkills },
+            createElement("i", { className: "ti ti-upload" }),
+            " 导入"
+          )
+        ),
+        withTooltip(
+          selectedSkills.size > 0 ? `导出 ${selectedSkills.size} 个技能` : "请先选择技能",
+          createElement(
+            Button,
+            { variant: "plain", onClick: handleExportSkills, disabled: selectedSkills.size === 0 },
+            createElement("i", { className: "ti ti-download" }),
+            " 导出"
+          )
+        ),
+        selectedSkills.size > 0 && createElement(
+          "span",
+          { style: { fontSize: 11, color: "var(--orca-color-text-3)" } },
+          `已选择 ${selectedSkills.size} 个`
+        )
+      ),
+      // Skill list
+      createElement(
+        "div",
+        { style: listStyle },
+        snap.loading
+          ? createElement(
+              "div",
+              { style: { ...rowStyle, justifyContent: "center", borderBottom: "none" } },
+              "加载中..."
+            )
+          : filteredSkills.length === 0
+            ? createElement(
+                "div",
+                { style: { ...rowStyle, justifyContent: "center", borderBottom: "none" } },
+                searchQuery ? "未找到匹配的技能" : "暂无技能"
+              )
+            : filteredSkills.map((skill, index) =>
+                createElement(
+                  "div",
+                  {
+                    key: skill.id,
+                    style: {
+                      ...rowStyle,
+                      borderBottom: index === filteredSkills.length - 1 ? "none" : rowStyle.borderBottom,
                     },
-                    createElement("input", {
-                      type: "checkbox",
-                      checked: selectedSkills.has(skill.id),
-                      onChange: () => toggleSkillSelection(skill.id),
-                    }),
+                  },
+                  // Checkbox
+                  createElement("input", {
+                    type: "checkbox",
+                    checked: selectedSkills.has(skill.id),
+                    onChange: () => toggleSkillSelection(skill.id),
+                    style: { cursor: "pointer" },
+                  }),
+                  // Skill info
+                  createElement(
+                    "div",
+                    { style: { flex: 1, minWidth: 0 } },
                     createElement(
                       "div",
-                      { style: { flex: 1, minWidth: 0 } },
+                      { style: { fontWeight: 500, color: "var(--orca-color-text-1)" } },
+                      skill.metadata.name,
+                      skill.source === "built-in" && createElement(
+                        "span",
+                        { style: { marginLeft: 6, fontSize: 10, color: "var(--orca-color-text-3)" } },
+                        "(内置)"
+                      )
+                    ),
+                    skill.metadata.description && createElement(
+                      "div",
+                      {
+                        style: {
+                          fontSize: 11,
+                          color: "var(--orca-color-text-3)",
+                          marginTop: 2,
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                        },
+                      },
+                      skill.metadata.description
+                    )
+                  ),
+                  // Actions
+                  createElement(
+                    "div",
+                    { style: actionRowStyle },
+                    withTooltip(
+                      "编辑",
                       createElement(
-                        "div",
-                        { style: { fontSize: 12, color: "var(--orca-color-text-1)" } },
-                        skill.metadata.name
-                      ),
-                      skill.metadata.description &&
-                        createElement(
-                          "div",
-                          {
-                            style: {
-                              fontSize: 11,
-                              color: "var(--orca-color-text-3)",
-                              marginTop: 2,
-                              whiteSpace: "nowrap",
-                              overflow: "hidden",
-                              textOverflow: "ellipsis",
-                            },
-                          },
-                          skill.metadata.description
-                        )
+                        Button,
+                        { variant: "plain", onClick: () => handleOpenEditor(skill) },
+                        createElement("i", { className: "ti ti-edit" })
+                      )
                     ),
-                    createElement(
-                      "div",
-                      { style: { fontSize: 11, color: "var(--orca-color-text-3)" } },
-                      skill.source === "built-in" ? "内置" : "自定义"
-                    ),
-                    createElement(
-                      "div",
-                      { style: actionRowStyle },
-                      withTooltip(
-                        "编辑技能",
-                        createElement(
-                          Button,
-                          {
-                            variant: "plain",
-                            onClick: () => handleOpenEditor(skill),
-                          },
-                          createElement("i", { className: "ti ti-edit" })
-                        )
-                      ),
-                      withTooltip(
-                        "删除技能",
-                        createElement(
-                          Button,
-                          {
-                            variant: "plain",
-                            onClick: () => handleDeleteSkill(skill),
-                          },
-                          createElement("i", { className: "ti ti-trash" })
-                        )
+                    withTooltip(
+                      "删除",
+                      createElement(
+                        Button,
+                        { variant: "plain", onClick: () => handleDeleteSkill(skill) },
+                        createElement("i", { className: "ti ti-trash" })
                       )
                     )
                   )
-                ))
-          )
+                )
+              )
+      ),
+      // Error message
+      snap.error && createElement(
+        "div",
+        { style: { marginTop: 8, fontSize: 12, color: "var(--orca-color-red)" } },
+        snap.error
+      )
     ),
+    // Modals
+    renderCreateModal(),
     renderEditModal(),
     renderDeleteConfirm()
   );
