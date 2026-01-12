@@ -778,7 +778,9 @@ export default function ModelSelectorMenu({
   // 过滤平台和模型
   const filteredProviders = useMemo(() => {
     const q = filter.trim().toLowerCase();
-    if (!q) return settings.providers.filter(p => p.enabled);
+    if (!q) {
+      return settings.providers.filter(p => p.enabled);
+    }
     
     return settings.providers
       .filter(p => p.enabled)

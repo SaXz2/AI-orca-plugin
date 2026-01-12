@@ -692,7 +692,21 @@ export function addModelToProvider(provider: AiProvider, modelId: string, label?
 export function getModelApiConfig(
   settings: AiChatSettings,
   modelName: string,
+  providerId?: string,
 ): { apiUrl: string; apiKey: string; protocol: "openai" | "anthropic"; anthropicApiPath?: string } {
+  // 如果指定了 providerId，直接查找该 provider
+  if (providerId) {
+    const provider = settings.providers.find(p => p.id === providerId);
+    if (provider && provider.apiUrl?.trim() && provider.apiKey?.trim()) {
+      return {
+        apiUrl: provider.apiUrl,
+        apiKey: provider.apiKey,
+        protocol: provider.protocol || "openai",
+        anthropicApiPath: typeof provider.anthropicApiPath === "string" ? provider.anthropicApiPath : undefined,
+      };
+    }
+  }
+
   // 优先选择已配置 API 的提供商，避免重名模型命中未配置的内置项
   const matchedProviders = settings.providers.filter((provider) =>
     provider.models.some((m) => m.id === modelName)

@@ -31,7 +31,7 @@ const containerStyle: React.CSSProperties = {
   bottom: "16px",
   left: "50%",
   transform: "translateX(-50%)",
-  zIndex: 100,
+  zIndex: 10,
   transition: "opacity 0.2s ease, transform 0.2s ease",
 };
 

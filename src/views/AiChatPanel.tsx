@@ -1897,7 +1897,7 @@ graph TD
         
         // 并行流式请求所有模型
         for await (const update of streamMultiModelChat({
-          modelIds: selectedModels,
+          modelKeys: selectedModels,
           messages: apiMessages,
           fallbackMessages: apiMessagesFallback,
           temperature: settings.temperature,

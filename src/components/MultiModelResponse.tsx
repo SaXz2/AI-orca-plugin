@@ -22,6 +22,8 @@ const { createElement, useState, useCallback, useMemo, useEffect } = React;
 
 /** 单个模型的响应状态 */
 export interface ModelResponse {
+  /** 模型唯一键 (格式: "providerId:modelId") */
+  modelKey: string;
   modelId: string;
   modelLabel: string;
   providerId: string;
@@ -385,10 +387,10 @@ export default function MultiModelResponse({
     { style: containerStyle },
     ...responses.map((response) =>
       createElement(ModelResponseCard, {
-        key: response.modelId,
+        key: response.modelKey,
         response,
-        onCopy: onCopy ? (content: string) => onCopy(response.modelId, content) : undefined,
-        onAdopt: onAdopt ? (content: string) => onAdopt(response.modelId, content) : undefined,
+        onCopy: onCopy ? (content: string) => onCopy(response.modelKey, content) : undefined,
+        onAdopt: onAdopt ? (content: string) => onAdopt(response.modelKey, content) : undefined,
       })
     )
   );
