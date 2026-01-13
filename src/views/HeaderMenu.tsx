@@ -20,6 +20,9 @@ interface HeaderMenuProps {
   onStartPythonServer?: () => void;
   onStopPythonServer?: () => void;
   pythonServerStatus?: "running" | "stopped" | "starting";
+  browserAIMode?: boolean;
+  onToggleBrowserAI?: () => void;
+  browserAIStatus?: "connected" | "disconnected" | "checking";
   onExportMarkdown?: () => void;
   onSaveToJournal?: () => void;
   onToggleSelectionMode?: () => void;
@@ -38,6 +41,9 @@ export default function HeaderMenu({
   onStartPythonServer,
   onStopPythonServer,
   pythonServerStatus,
+  browserAIMode,
+  onToggleBrowserAI,
+  browserAIStatus,
   onExportMarkdown,
   onSaveToJournal,
   onToggleSelectionMode,
@@ -242,6 +248,27 @@ export default function HeaderMenu({
             : pythonServerStatus === "starting"
               ? "正在启动..."
               : "启动 Python 服务"
+        ),
+        // Browser AI Mode Toggle
+        onToggleBrowserAI && createElement(
+          "div",
+          {
+            style: {
+              ...menuItemStyle,
+              color: browserAIMode 
+                ? "var(--orca-color-primary)" 
+                : undefined,
+            },
+            onClick: () => handleItemClick(onToggleBrowserAI),
+            onMouseEnter: (e: any) => (e.currentTarget.style.background = "var(--orca-color-bg-2)"),
+            onMouseLeave: (e: any) => (e.currentTarget.style.background = "transparent"),
+          },
+          createElement("i", { 
+            className: browserAIMode ? "ti ti-toggle-right" : "ti ti-browser" 
+          }),
+          browserAIMode 
+            ? `浏览器 AI ✓ ${browserAIStatus === "connected" ? "(已连接)" : browserAIStatus === "checking" ? "(检查中)" : "(未连接)"}`
+            : "浏览器 AI 模式"
         ),
         // Divider
         createElement("div", {

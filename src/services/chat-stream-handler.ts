@@ -70,9 +70,38 @@ export function mergeToolCalls(
     }
     
     if (found) {
-      // Append arguments incrementally
+      // Append arguments incrementally, but detect if we're getting a new complete JSON object
       if (tc.function?.arguments) {
-        found.function.arguments = (found.function.arguments || "") + tc.function.arguments;
+        const newArgs = tc.function.arguments;
+        const existingArgs = found.function.arguments || "";
+        
+        // Check if the new arguments start with '{' and existing args end with '}'
+        // This indicates a new complete JSON object, not a continuation
+        const existingEndsComplete = existingArgs.trim().endsWith('}');
+        const newStartsComplete = newArgs.trim().startsWith('{');
+        
+        if (existingEndsComplete && newStartsComplete && existingArgs.trim()) {
+          // This is a new tool call with the same ID - don't merge, create new entry
+          const newId = `${tc.id || found.id}_${result.length}`;
+          const newToolCall: any = {
+            id: newId,
+            type: tc.type || "function",
+            function: {
+              name: tc.function?.name || found.function.name || "",
+              arguments: newArgs,
+            },
+          };
+          
+          if (typeof tc.index === "number") {
+            newToolCall.index = tc.index;
+          }
+          
+          result.push(newToolCall);
+          continue;
+        }
+        
+        // Normal case: append arguments incrementally
+        found.function.arguments = existingArgs + newArgs;
       }
       
       // Update name if it was empty before

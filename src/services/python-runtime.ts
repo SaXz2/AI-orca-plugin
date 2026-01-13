@@ -665,3 +665,102 @@ export async function deleteLocalFile(
   
   return { type: result.type };
 }
+
+// ============ 浏览器 AI 控制 (ChatGPT 等) ============
+
+export type BrowserAIStatus = {
+  ok: boolean;
+  connected?: boolean;
+  tab?: string;
+  url?: string;
+  error?: string;
+};
+
+export type BrowserAIMessages = {
+  ok: boolean;
+  messages?: {
+    user: string[];
+    assistant: string[];
+  };
+  error?: string;
+};
+
+export type BrowserAIChatResult = {
+  ok: boolean;
+  response?: string;
+  error?: string;
+  partial?: string;
+};
+
+/**
+ * 检查浏览器 AI 连接状态
+ */
+export async function browserAIStatus(): Promise<BrowserAIStatus> {
+  const serverAvailable = await checkLocalServer();
+  if (!serverAvailable) {
+    return { ok: false, error: "本地 Python 服务器未运行" };
+  }
+  
+  try {
+    const response = await fetch(`${LOCAL_PYTHON_SERVER_URL}/browser-ai`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "status" }),
+    });
+    
+    return await response.json();
+  } catch (err: any) {
+    return { ok: false, error: err.message };
+  }
+}
+
+/**
+ * 获取浏览器 AI 的对话消息
+ */
+export async function browserAIGetMessages(): Promise<BrowserAIMessages> {
+  const serverAvailable = await checkLocalServer();
+  if (!serverAvailable) {
+    return { ok: false, error: "本地 Python 服务器未运行" };
+  }
+  
+  try {
+    const response = await fetch(`${LOCAL_PYTHON_SERVER_URL}/browser-ai`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "get_messages" }),
+    });
+    
+    return await response.json();
+  } catch (err: any) {
+    return { ok: false, error: err.message };
+  }
+}
+
+/**
+ * 通过浏览器 AI 发送消息并获取回复
+ */
+export async function browserAIChat(
+  message: string, 
+  timeout = 60
+): Promise<BrowserAIChatResult> {
+  const serverAvailable = await checkLocalServer();
+  if (!serverAvailable) {
+    return { ok: false, error: "本地 Python 服务器未运行" };
+  }
+  
+  try {
+    const response = await fetch(`${LOCAL_PYTHON_SERVER_URL}/browser-ai`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ 
+        action: "chat", 
+        message,
+        timeout 
+      }),
+    });
+    
+    return await response.json();
+  } catch (err: any) {
+    return { ok: false, error: err.message };
+  }
+}
