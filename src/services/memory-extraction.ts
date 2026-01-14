@@ -8,7 +8,7 @@
  */
 
 import { getAiChatPluginName } from "../ui/ai-chat-ui";
-import { getAiChatSettings, resolveAiModel } from "../settings/ai-chat-settings";
+import { getAiChatSettings, getCurrentApiConfig } from "../settings/ai-chat-settings";
 
 // ============================================================================
 // Types
@@ -123,8 +123,10 @@ export async function extractMemories(conversationContext: string, customPrompt?
   const pluginName = getAiChatPluginName();
   const settings = getAiChatSettings(pluginName);
   
+  const apiConfig = getCurrentApiConfig(settings);
+
   // Validate settings
-  if (!settings.apiUrl || !settings.apiKey) {
+  if (!apiConfig.apiUrl || !apiConfig.apiKey) {
     return {
       memories: [],
       success: false,
@@ -132,8 +134,8 @@ export async function extractMemories(conversationContext: string, customPrompt?
     };
   }
 
-  const model = resolveAiModel(settings);
-  if (!model) {
+  const model = apiConfig.model;
+  if (!model || !model.trim()) {
     return {
       memories: [],
       success: false,
@@ -152,8 +154,8 @@ export async function extractMemories(conversationContext: string, customPrompt?
   try {
     // Make API call
     const response = await callExtractionAPI({
-      apiUrl: settings.apiUrl,
-      apiKey: settings.apiKey,
+      apiUrl: apiConfig.apiUrl,
+      apiKey: apiConfig.apiKey,
       model,
       prompt,
       temperature: 0.3, // Lower temperature for more consistent extraction

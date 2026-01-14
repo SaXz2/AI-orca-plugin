@@ -8,7 +8,7 @@
  */
 
 import { getAiChatPluginName } from "../ui/ai-chat-ui";
-import { getAiChatSettings, resolveAiModel } from "../settings/ai-chat-settings";
+import { getAiChatSettings, getCurrentApiConfig } from "../settings/ai-chat-settings";
 import type { MemoryItem, PortraitTag, PortraitCategory } from "../store/memory-store";
 import { generateId } from "../store/memory-store";
 
@@ -121,8 +121,10 @@ export async function generatePortrait(memories: MemoryItem[], signal?: AbortSig
   const pluginName = getAiChatPluginName();
   const settings = getAiChatSettings(pluginName);
   
+  const apiConfig = getCurrentApiConfig(settings);
+
   // Validate settings
-  if (!settings.apiUrl || !settings.apiKey) {
+  if (!apiConfig.apiUrl || !apiConfig.apiKey) {
     return {
       portrait: null,
       success: false,
@@ -130,8 +132,8 @@ export async function generatePortrait(memories: MemoryItem[], signal?: AbortSig
     };
   }
 
-  const model = resolveAiModel(settings);
-  if (!model) {
+  const model = apiConfig.model;
+  if (!model || !model.trim()) {
     return {
       portrait: null,
       success: false,
@@ -159,8 +161,8 @@ export async function generatePortrait(memories: MemoryItem[], signal?: AbortSig
   try {
     // Make API call
     const response = await callPortraitAPI({
-      apiUrl: settings.apiUrl,
-      apiKey: settings.apiKey,
+      apiUrl: apiConfig.apiUrl,
+      apiKey: apiConfig.apiKey,
       model,
       prompt,
       temperature: 0.5, // Moderate temperature for creative but consistent output
@@ -536,7 +538,9 @@ export async function refreshPortraitFromCategories(
   const pluginName = getAiChatPluginName();
   const settings = getAiChatSettings(pluginName);
   
-  if (!settings.apiUrl || !settings.apiKey) {
+  const apiConfig = getCurrentApiConfig(settings);
+
+  if (!apiConfig.apiUrl || !apiConfig.apiKey) {
     return {
       portrait: null,
       success: false,
@@ -544,8 +548,8 @@ export async function refreshPortraitFromCategories(
     };
   }
 
-  const model = resolveAiModel(settings);
-  if (!model) {
+  const model = apiConfig.model;
+  if (!model || !model.trim()) {
     return {
       portrait: null,
       success: false,
@@ -574,8 +578,8 @@ export async function refreshPortraitFromCategories(
 
   try {
     const response = await callPortraitAPI({
-      apiUrl: settings.apiUrl,
-      apiKey: settings.apiKey,
+      apiUrl: apiConfig.apiUrl,
+      apiKey: apiConfig.apiKey,
       model,
       prompt,
       temperature: 0.7,
