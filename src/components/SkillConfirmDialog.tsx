@@ -1,10 +1,10 @@
 ﻿const React = window.React as typeof import("react");
 const { createElement } = React;
 
-import type { SkillDefinition } from "../types/skill";
+import type { Skill } from "../types/skills";
 
 interface SkillConfirmDialogProps {
-  skill: SkillDefinition;
+  skill: Skill;
   onConfirm: () => void;
   onDeny: () => void;
 }
@@ -106,7 +106,7 @@ export default function SkillConfirmDialog({
   );
 }
 
-export function createSkillConfirmPromise(skill: SkillDefinition): Promise<boolean> {
+export function createSkillConfirmPromise(skill: Skill): Promise<boolean> {
   return new Promise((resolve) => {
     const description = skill.metadata.description || skill.instruction.slice(0, 200);
 

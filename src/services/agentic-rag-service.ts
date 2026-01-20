@@ -22,7 +22,18 @@
 
 import { executeTool } from "./ai-tools";
 import { isWebSearchEnabled } from "../store/tool-store";
-import { getSkillDisplayName, isSkillToolName } from "./skill-service";
+
+// 检查是否是 Skill 工具
+function isSkillToolName(toolName: string): boolean {
+  return toolName.startsWith("skill_");
+}
+
+// 获取 Skill 显示名称
+function getSkillDisplayName(toolName: string): string {
+  if (!isSkillToolName(toolName)) return toolName;
+  const skillId = toolName.slice("skill_".length);
+  return skillId;
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 类型定义

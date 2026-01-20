@@ -19,22 +19,24 @@ const { useSnapshot } = (window as any).Valtio as {
   useSnapshot: <T extends object>(obj: T) => T;
 };
 
-import { skillStore } from "../store/skill-store";
 import { withTooltip } from "../utils/orca-tooltip";
 import {
-  deleteSkillById,
-  loadSkillRegistry,
-  restoreBuiltInSkills,
+  listSkills,
+  getSkill,
   createSkill,
   updateSkill,
+  deleteSkill,
   exportSkill,
   importSkill,
-  searchSkills,
-} from "../services/skill-service";
-import type { SkillDefinition } from "../types/skill";
-import { exportSkillsZip, importSkillsZip } from "../services/skill-zip";
+  isSkillEnabled,
+  setSkillEnabled,
+  type Skill,
+} from "../services/skills-manager";
 import MarkdownMessage from "../components/MarkdownMessage";
-import { SKILL_NAME_MAX_LENGTH, SKILL_DESCRIPTION_MAX_LENGTH } from "../types/skill";
+
+// Constants for form validation
+const SKILL_NAME_MAX_LENGTH = 100;
+const SKILL_DESCRIPTION_MAX_LENGTH = 500;
 
 interface SkillManagerModalProps {
   isOpen: boolean;
@@ -51,13 +53,14 @@ interface SkillFormState {
 }
 
 export default function SkillManagerModal({ isOpen, onClose }: SkillManagerModalProps) {
-  const snap = useSnapshot(skillStore);
+  const [skills, setSkills] = useState<Skill[]>([]);
+  const [loading, setLoading] = useState(false);
   const [selectedSkills, setSelectedSkills] = useState<Set<string>>(new Set());
   const [searchQuery, setSearchQuery] = useState("");
   const [restoring, setRestoring] = useState(false);
   
   // Edit modal state
-  const [editingSkill, setEditingSkill] = useState<typeof snap.skills[number] | null>(null);
+  const [editingSkill, setEditingSkill] = useState<Skill | null>(null);
   const [editForm, setEditForm] = useState<SkillFormState>({ name: "", description: "", instruction: "" });
   const [editingSaving, setEditingSaving] = useState(false);
   const [editingError, setEditingError] = useState<string | null>(null);
@@ -69,32 +72,37 @@ export default function SkillManagerModal({ isOpen, onClose }: SkillManagerModal
   const [createError, setCreateError] = useState<string | null>(null);
   
   // Delete confirmation
-  const [deleteTarget, setDeleteTarget] = useState<typeof snap.skills[number] | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Skill | null>(null);
 
-  // Filter skills based on search query
-  const filteredSkills = useMemo(() => {
-    if (!searchQuery.trim()) {
-      return snap.skills;
-    }
-    return searchSkills(searchQuery);
-  }, [snap.skills, searchQuery]);
-
+  // Load skills on mount or when modal opens
   useEffect(() => {
-    if (isOpen && !snap.loading) {
-      loadSkillRegistry();
+    if (isOpen) {
+      loadSkillsData();
     }
   }, [isOpen]);
 
-  useEffect(() => {
-    setSelectedSkills(prev => {
-      const available = new Set(snap.skills.map(skill => skill.id));
-      const next = new Set<string>();
-      for (const id of prev) {
-        if (available.has(id)) next.add(id);
+  const loadSkillsData = useCallback(async () => {
+    setLoading(true);
+    try {
+      // Add a small delay to ensure file system has flushed
+      await new Promise(resolve => setTimeout(resolve, 100));
+      
+      const skillIds = await listSkills();
+      const skillsData: Skill[] = [];
+      for (const skillId of skillIds) {
+        const skill = await getSkill(skillId);
+        if (skill) {
+          skillsData.push(skill);
+        }
       }
-      return next;
-    });
-  }, [snap.skills]);
+      setSkills(skillsData);
+    } catch (err) {
+      console.error("Failed to load skills:", err);
+      orca.notify("error", "加载技能列表失败");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   const toggleSkillSelection = useCallback((skillId: string) => {
     setSelectedSkills(prev => {
@@ -109,20 +117,20 @@ export default function SkillManagerModal({ isOpen, onClose }: SkillManagerModal
   }, []);
 
   const handleSkillRefresh = useCallback(async () => {
-    await loadSkillRegistry();
-  }, []);
+    await loadSkillsData();
+  }, [loadSkillsData]);
 
   const handleRestoreBuiltIns = useCallback(async () => {
-    setRestoring(true);
+    // 恢复内置技能
+    const { ensureBuiltInSkills } = await import("../services/skills-manager");
     try {
-      await restoreBuiltInSkills();
+      await ensureBuiltInSkills();
+      await loadSkillsData();
       orca.notify("success", "内置技能已恢复");
     } catch (err: any) {
-      orca.notify("error", err?.message ?? "恢复内置技能失败");
-    } finally {
-      setRestoring(false);
+      orca.notify("error", `恢复失败: ${err?.message || err}`);
     }
-  }, []);
+  }, [loadSkillsData]);
 
   // Create skill handlers
   const handleOpenCreate = useCallback(() => {
@@ -155,8 +163,10 @@ export default function SkillManagerModal({ isOpen, onClose }: SkillManagerModal
     setCreating(true);
     setCreateError(null);
     try {
-      await createSkill(name, createForm.description, createForm.instruction);
-      await loadSkillRegistry();
+      // 使用技能名称作为 ID（支持中文）
+      const skillId = name;
+      await createSkill(skillId, { name, description: createForm.description }, createForm.instruction);
+      await loadSkillsData();
       handleCloseCreate();
       orca.notify("success", "技能创建成功");
     } catch (err: any) {
@@ -164,21 +174,25 @@ export default function SkillManagerModal({ isOpen, onClose }: SkillManagerModal
     } finally {
       setCreating(false);
     }
-  }, [createForm, handleCloseCreate]);
+  }, [createForm, handleCloseCreate, loadSkillsData]);
 
   // Export/Import handlers
   const handleExportSkills = useCallback(async () => {
-    const selected = snap.skills.filter(skill => selectedSkills.has(skill.id));
+    const selected = skills.filter(skill => selectedSkills.has(skill.id));
     if (selected.length === 0) return;
     
     if (selected.length === 1) {
       const skill = selected[0];
-      const content = exportSkill(skill);
-      const blob = new Blob([content], { type: "text/markdown" });
+      const content = await exportSkill(skill.id);
+      if (!content) {
+        orca.notify("error", "导出失败");
+        return;
+      }
+      const blob = new Blob([content], { type: "application/json" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `${skill.metadata.name}.md`;
+      a.download = `${skill.metadata.name}.json`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -186,40 +200,62 @@ export default function SkillManagerModal({ isOpen, onClose }: SkillManagerModal
       return;
     }
     
-    await exportSkillsZip(selected);
-  }, [snap.skills, selectedSkills]);
+    // For multiple skills, export as JSON array
+    const exported = [];
+    for (const skill of selected) {
+      const content = await exportSkill(skill.id);
+      if (content) {
+        exported.push(JSON.parse(content));
+      }
+    }
+    const blob = new Blob([JSON.stringify(exported, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `skills-${Date.now()}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }, [skills, selectedSkills]);
 
   const handleImportSkills = useCallback(() => {
     const input = document.createElement("input");
     input.type = "file";
-    input.accept = ".zip,.md";
+    input.accept = ".json";
     input.onchange = async () => {
       const file = input.files?.[0];
       if (!file) return;
       
-      if (file.name.endsWith(".md")) {
-        try {
-          const content = await file.text();
-          await importSkill(content);
-          await loadSkillRegistry();
-          orca.notify("success", "技能导入成功");
-        } catch (err: any) {
-          orca.notify("error", err?.message ?? "导入失败");
+      try {
+        const content = await file.text();
+        const data = JSON.parse(content);
+        
+        // Handle both single skill and array of skills
+        const skillsToImport = Array.isArray(data) ? data : [data];
+        
+        for (const skillData of skillsToImport) {
+          const skillId = skillData.id || skillData.metadata?.name?.toLowerCase().replace(/\s+/g, "-");
+          if (!skillId) continue;
+          
+          await importSkill(skillId, JSON.stringify(skillData));
         }
-      } else {
-        await importSkillsZip(file);
-        await loadSkillRegistry();
+        
+        await loadSkillsData();
+        orca.notify("success", "技能导入成功");
+      } catch (err: any) {
+        orca.notify("error", err?.message ?? "导入失败");
       }
     };
     input.click();
-  }, []);
+  }, [loadSkillsData]);
 
   // Edit handlers
-  const handleOpenEditor = useCallback((skill: SkillDefinition) => {
+  const handleOpenEditor = useCallback((skill: Skill) => {
     setEditingSkill(skill);
     setEditForm({
       name: skill.metadata.name,
-      description: skill.metadata.description,
+      description: skill.metadata.description || "",
       instruction: skill.instruction,
     });
     setEditingError(null);
@@ -256,7 +292,7 @@ export default function SkillManagerModal({ isOpen, onClose }: SkillManagerModal
         { name, description: editForm.description },
         editForm.instruction
       );
-      await loadSkillRegistry();
+      await loadSkillsData();
       handleCloseEditor();
       orca.notify("success", "技能已保存");
     } catch (err: any) {
@@ -264,10 +300,10 @@ export default function SkillManagerModal({ isOpen, onClose }: SkillManagerModal
     } finally {
       setEditingSaving(false);
     }
-  }, [editingSkill, editForm, handleCloseEditor]);
+  }, [editingSkill, editForm, handleCloseEditor, loadSkillsData]);
 
   // Delete handlers
-  const handleDeleteSkill = useCallback((skill: SkillDefinition) => {
+  const handleDeleteSkill = useCallback((skill: Skill) => {
     setDeleteTarget(skill);
   }, []);
 
@@ -278,15 +314,15 @@ export default function SkillManagerModal({ isOpen, onClose }: SkillManagerModal
   const handleConfirmDelete = useCallback(async () => {
     if (!deleteTarget) return;
     try {
-      await deleteSkillById(deleteTarget.id);
-      await loadSkillRegistry();
+      await deleteSkill(deleteTarget.id);
+      await loadSkillsData();
       orca.notify("success", "技能已删除");
     } catch (err: any) {
       orca.notify("error", err?.message ?? "删除失败");
     } finally {
       setDeleteTarget(null);
     }
-  }, [deleteTarget]);
+  }, [deleteTarget, loadSkillsData]);
 
   if (!isOpen) return null;
 
@@ -575,6 +611,20 @@ export default function SkillManagerModal({ isOpen, onClose }: SkillManagerModal
   const renderCreateModal = () => {
     if (!showCreateModal) return null;
 
+    const createModalStyle: React.CSSProperties = {
+      ...modalStyle,
+      width: "min(600px, 94vw)",
+      maxHeight: "90vh",
+      display: "flex",
+      flexDirection: "column",
+    };
+
+    const createBodyStyle: React.CSSProperties = {
+      flex: 1,
+      overflowY: "auto",
+      paddingRight: 8,
+    };
+
     return createElement(
       "div",
       {
@@ -586,10 +636,10 @@ export default function SkillManagerModal({ isOpen, onClose }: SkillManagerModal
       },
       createElement(
         "div",
-        { style: editModalStyle, onClick: (e: any) => e.stopPropagation() },
+        { style: createModalStyle, onClick: (e: any) => e.stopPropagation() },
         createElement(
           "div",
-          { style: { display: "flex", justifyContent: "space-between", alignItems: "center" } },
+          { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 } },
           createElement("div", { style: titleStyle }, "新建技能"),
           withTooltip(
             "关闭",
@@ -600,7 +650,11 @@ export default function SkillManagerModal({ isOpen, onClose }: SkillManagerModal
             )
           )
         ),
-        renderSkillForm(createForm, setCreateForm, createError),
+        createElement(
+          "div",
+          { style: createBodyStyle },
+          ...renderSkillFormFields(createForm, setCreateForm, createError, true)
+        ),
         createElement(
           "div",
           { style: footerStyle },
@@ -840,26 +894,35 @@ export default function SkillManagerModal({ isOpen, onClose }: SkillManagerModal
       createElement(
         "div",
         { style: listStyle },
-        snap.loading
+        loading
           ? createElement(
               "div",
               { style: { ...rowStyle, justifyContent: "center", borderBottom: "none" } },
               "加载中..."
             )
-          : filteredSkills.length === 0
+          : skills.length === 0
             ? createElement(
                 "div",
                 { style: { ...rowStyle, justifyContent: "center", borderBottom: "none" } },
                 searchQuery ? "未找到匹配的技能" : "暂无技能"
               )
-            : filteredSkills.map((skill, index) =>
+            : skills
+                .filter(skill => {
+                  if (!searchQuery.trim()) return true;
+                  const query = searchQuery.toLowerCase();
+                  return (
+                    skill.metadata.name.toLowerCase().includes(query) ||
+                    (skill.metadata.description?.toLowerCase().includes(query) ?? false)
+                  );
+                })
+                .map((skill, index, filtered) =>
                 createElement(
                   "div",
                   {
                     key: skill.id,
                     style: {
                       ...rowStyle,
-                      borderBottom: index === filteredSkills.length - 1 ? "none" : rowStyle.borderBottom,
+                      borderBottom: index === filtered.length - 1 ? "none" : rowStyle.borderBottom,
                     },
                   },
                   // Checkbox
@@ -876,12 +939,7 @@ export default function SkillManagerModal({ isOpen, onClose }: SkillManagerModal
                     createElement(
                       "div",
                       { style: { fontWeight: 500, color: "var(--orca-color-text-1)" } },
-                      skill.metadata.name,
-                      skill.source === "built-in" && createElement(
-                        "span",
-                        { style: { marginLeft: 6, fontSize: 10, color: "var(--orca-color-text-3)" } },
-                        "(内置)"
-                      )
+                      skill.metadata.name
                     ),
                     skill.metadata.description && createElement(
                       "div",
@@ -923,11 +981,7 @@ export default function SkillManagerModal({ isOpen, onClose }: SkillManagerModal
               )
       ),
       // Error message
-      snap.error && createElement(
-        "div",
-        { style: { marginTop: 8, fontSize: 12, color: "var(--orca-color-red)" } },
-        snap.error
-      )
+      // (No error state in new system, but can be added if needed)
     ),
     // Modals
     renderCreateModal(),

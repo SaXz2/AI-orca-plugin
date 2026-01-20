@@ -1534,7 +1534,8 @@ Provides block selection functionality
 
 > **BlockShell**: (`props`) => `Element`
 
-Core component for block rendering with common UI elements
+Core component for block rendering with common UI elements.
+It provides the standard block structure including the handle, folding caret, tags, and back-references.
 
 ###### Parameters
 
@@ -1544,69 +1545,121 @@ Core component for block rendering with common UI elements
 
 `number`
 
+The unique database ID of the block
+
 ###### blockLevel
 
 `number`
+
+The depth level of the block in the tree (0 for root)
 
 ###### childrenJsx
 
 `ReactNode`
 
+The rendered children blocks
+
 ###### contentAttrs?
 
 `Record`\<`string`, `any`\>
+
+Additional HTML attributes for the content container
 
 ###### contentClassName?
 
 `string`
 
+CSS class name for the content container
+
 ###### contentJsx
 
 `ReactNode`
+
+The main content to render inside the block
 
 ###### contentStyle?
 
 `CSSProperties`
 
+Inline styles for the content container
+
 ###### contentTag?
 
 `any`
+
+The HTML tag to use for the content container (defaults to "div")
 
 ###### droppable?
 
 `boolean`
 
+Whether other blocks can be dropped onto this block (defaults to true)
+
+###### editable?
+
+`boolean`
+
+Whether the block content is editable (defaults to true)
+
 ###### indentLevel
 
 `number`
+
+The visual indentation level
 
 ###### initiallyCollapsed?
 
 `boolean`
 
+Whether the block should be collapsed by default
+
 ###### mirrorId?
 
 `number`
+
+Optional ID if this block is a mirror of another block
 
 ###### panelId
 
 `string`
 
+The ID of the panel containing this block
+
 ###### renderingMode?
 
 [`BlockRenderingMode`](#blockrenderingmode)
+
+The mode to use for rendering ("normal", "simple", etc.)
 
 ###### reprAttrs?
 
 `Record`\<`string`, `any`\>
 
-###### reprClassName
+Additional HTML attributes for the representation container
+
+###### reprClassName?
 
 `string`
+
+CSS class name for the representation container
+
+###### reprStyle?
+
+`CSSProperties`
+
+Inline styles for the representation container
 
 ###### rndId
 
 `string`
+
+A unique identifier for this specific rendering instance
+
+###### selfFoldable?
+
+`boolean`
+
+Whether the block can be folded even if it has no children (defaults to false)
 
 ###### Returns
 
@@ -3317,6 +3370,53 @@ function MyPluginUI() {
 }
 ```
 
+##### contexts
+
+> **contexts**: `object`
+
+React contexts exposed for use in plugins.
+
+###### ImageViewerContext
+
+> **ImageViewerContext**: `object`
+
+Image viewer context for displaying images in a modal viewer.
+
+###### Example
+
+```tsx
+const ImageViewerContext = orca.contexts.ImageViewerContext
+const { viewImages } = React.useContext(ImageViewerContext)
+
+const onImageClick = (e) => {
+  viewImages(["https://example.com/image.png"], e.currentTarget)
+}
+```
+
+###### ImageViewerContext.viewImages()
+
+> **viewImages**(`images`, `thumbnail`): `void`
+
+Opens the image viewer to display a list of images.
+
+###### Parameters
+
+###### images
+
+`string`[]
+
+An array of image URLs to display in the viewer.
+
+###### thumbnail
+
+`HTMLImageElement`
+
+The source image element used for transition animation.
+
+###### Returns
+
+`void`
+
 ##### converters
 
 > **converters**: `object`
@@ -4456,6 +4556,38 @@ A Promise that resolves when the plugin is enabled
 await orca.plugins.enable("my-plugin")
 ```
 
+###### existsFile()
+
+> **existsFile**(`name`, `filePath`): `Promise`\<`boolean`\>
+
+Checks if a file exists in the plugin's data directory.
+
+###### Parameters
+
+###### name
+
+`string`
+
+The name of the plugin
+
+###### filePath
+
+`string`
+
+The path to the file relative to the plugin's data directory
+
+###### Returns
+
+`Promise`\<`boolean`\>
+
+A Promise that resolves to true if the file exists, false otherwise
+
+###### Example
+
+```ts
+const exists = await orca.plugins.existsFile("my-plugin", "data.json")
+```
+
 ###### getData()
 
 > **getData**(`name`, `key`): `Promise`\<`any`\>
@@ -4516,6 +4648,33 @@ const keys = await orca.plugins.getDataKeys("my-plugin")
 console.log("Stored data keys:", keys)
 ```
 
+###### listFiles()
+
+> **listFiles**(`name`): `Promise`\<`string`[]\>
+
+Lists all files in the plugin's data directory recursively.
+
+###### Parameters
+
+###### name
+
+`string`
+
+The name of the plugin
+
+###### Returns
+
+`Promise`\<`string`[]\>
+
+A Promise that resolves to an array of relative file paths
+
+###### Example
+
+```ts
+const files = await orca.plugins.listFiles("my-plugin")
+console.log("Plugin files:", files)
+```
+
 ###### load()
 
 > **load**(`name`, `schema`, `settings`): `Promise`\<`void`\>
@@ -4548,6 +4707,48 @@ The current settings for the plugin
 `Promise`\<`void`\>
 
 A Promise that resolves when the plugin is loaded
+
+###### readFile()
+
+> **readFile**(`name`, `filePath`, `type?`): `Promise`\<`string` \| `ArrayBuffer`\>
+
+Reads a file from the plugin's data directory in the current repository.
+
+###### Parameters
+
+###### name
+
+`string`
+
+The name of the plugin
+
+###### filePath
+
+`string`
+
+The path to the file relative to the plugin's data directory
+
+###### type?
+
+The expected return type, either "string" or "buffer" (defaults to "string")
+
+`"string"` | `"buffer"`
+
+###### Returns
+
+`Promise`\<`string` \| `ArrayBuffer`\>
+
+A Promise that resolves to the file content as a string or ArrayBuffer, or null if not found
+
+###### Example
+
+```ts
+// Read as string
+const config = await orca.plugins.readFile("my-plugin", "config.json")
+
+// Read as binary
+const imgData = await orca.plugins.readFile("my-plugin", "icon.png", "buffer")
+```
 
 ###### register()
 
@@ -4606,6 +4807,38 @@ A Promise that resolves when the data is removed
 
 ```ts
 await orca.plugins.removeData("my-plugin", "cached-results")
+```
+
+###### removeFile()
+
+> **removeFile**(`name`, `filePath`): `Promise`\<`void`\>
+
+Removes a file from the plugin's data directory.
+
+###### Parameters
+
+###### name
+
+`string`
+
+The name of the plugin
+
+###### filePath
+
+`string`
+
+The path to the file relative to the plugin's data directory
+
+###### Returns
+
+`Promise`\<`void`\>
+
+A Promise that resolves when the file is removed
+
+###### Example
+
+```ts
+await orca.plugins.removeFile("my-plugin", "temp-log.txt")
 ```
 
 ###### setData()
@@ -4788,6 +5021,45 @@ A Promise that resolves when the plugin is unregistered
 
 ```ts
 await orca.plugins.unregister("my-plugin")
+```
+
+###### writeFile()
+
+> **writeFile**(`name`, `filePath`, `data`): `Promise`\<`void`\>
+
+Writes a file to the plugin's data directory in the current repository.
+Automatically creates parent directories if they don't exist.
+
+###### Parameters
+
+###### name
+
+`string`
+
+The name of the plugin
+
+###### filePath
+
+`string`
+
+The path to the file relative to the plugin's data directory
+
+###### data
+
+The data to write, either a string or an ArrayBuffer
+
+`string` | `ArrayBuffer`
+
+###### Returns
+
+`Promise`\<`void`\>
+
+A Promise that resolves when the file is written
+
+###### Example
+
+```ts
+await orca.plugins.writeFile("my-plugin", "notes.txt", "Hello Orca!")
 ```
 
 ###### Example
@@ -5304,6 +5576,21 @@ These tools provide additional functionality in the editor sidebar.
 const hasTocTool = !!orca.state.editorSidetools["myplugin.toc"]
 ```
 
+###### filterInPages?
+
+> `optional` **filterInPages**: `string`
+
+Optional filter for pages shown in the pages panel.
+When set, only pages that match this filter will be displayed.
+
+###### Example
+
+```ts
+if (orca.state.filterInPages === "my-page") {
+  console.log("Pages panel is filtering to show only matching pages")
+}
+```
+
 ###### filterInTags?
 
 > `optional` **filterInTags**: `string`
@@ -5738,6 +6025,30 @@ orca.tagMenuCommands.registerTagMenuCommand("myplugin.tagStats", {
 
 Theme management API, used to register, unregister, and manage visual themes.
 
+###### injectCSS()
+
+> **injectCSS**(`css`, `role`): `void`
+
+将 CSS 字符串注入到文档头部，并指定一个角色标识。
+
+###### Parameters
+
+###### css
+
+`string`
+
+要注入的 CSS 字符串。
+
+###### role
+
+`string`
+
+样式元素的角色标识，用于后续删除。
+
+###### Returns
+
+`void`
+
 ###### injectCSSResource()
 
 > **injectCSSResource**(`url`, `role`): `void`
@@ -5804,6 +6115,24 @@ The file path to the theme CSS file (relative to plugin directory)
 ```ts
 orca.themes.register("my-plugin", "Dark Ocean", "themes/dark-ocean.css")
 ```
+
+###### removeCSS()
+
+> **removeCSS**(`role`): `void`
+
+从文档中删除所有具有指定角色标识的样式元素。
+
+###### Parameters
+
+###### role
+
+`string`
+
+要删除的样式元素的角色标识。
+
+###### Returns
+
+`void`
 
 ###### removeCSSResources()
 
@@ -6615,6 +6944,18 @@ For paginated results, the number of items per page
 
 The main query group with conditions
 
+##### randomSeed?
+
+> `optional` **randomSeed**: `number`
+
+Random seed for stable random sorting across pagination
+
+##### referenceDate?
+
+> `optional` **referenceDate**: `number`
+
+The reference date for relative dates (Unix timestamp)
+
 ##### sort?
 
 > `optional` **sort**: [`QuerySort`](#querysort)[]
@@ -6632,6 +6973,38 @@ Statistical calculations to perform on results
 > `optional` **tagName**: `string`
 
 Filters results to blocks with a specific tag
+
+##### useReferenceDate?
+
+> `optional` **useReferenceDate**: `boolean`
+
+Whether to use the current page's date as the reference for relative dates
+
+***
+
+### QueryFormat2
+
+Query condition that matches content fragments with specific format.
+
+#### Properties
+
+##### f
+
+> **f**: `string`
+
+The format identifier (e.g., 'b', 'i', 'c')
+
+##### fa?
+
+> `optional` **fa**: `Record`\<`string`, `any`\>
+
+The format attributes for precise matching
+
+##### kind
+
+> **kind**: `13`
+
+Kind identifier for format queries (13)
 
 ***
 
@@ -7695,7 +8068,7 @@ Each item represents a different type of condition that can be used in queries.
 
 ### QueryItem2
 
-> **QueryItem2** = [`QueryGroup2`](#querygroup2) \| [`QueryText2`](#querytext2) \| [`QueryTag2`](#querytag2) \| [`QueryRef2`](#queryref2) \| [`QueryJournal2`](#queryjournal2) \| [`QueryBlock2`](#queryblock2) \| [`QueryBlockMatch2`](#queryblockmatch2) \| [`QueryTask`](#querytask)
+> **QueryItem2** = [`QueryGroup2`](#querygroup2) \| [`QueryText2`](#querytext2) \| [`QueryTag2`](#querytag2) \| [`QueryRef2`](#queryref2) \| [`QueryJournal2`](#queryjournal2) \| [`QueryBlock2`](#queryblock2) \| [`QueryBlockMatch2`](#queryblockmatch2) \| [`QueryTask`](#querytask) \| [`QueryFormat2`](#queryformat2)
 
 Union type representing all possible query condition items.
 Each item represents a different type of condition that can be used in queries.
@@ -7784,6 +8157,15 @@ Constant for the descendant AND group type.
 > **QueryKindDescendantOr** = `105`
 
 Constant for the descendant OR group type.
+
+***
+
+### QueryKindFormat
+
+> **QueryKindFormat** = `13`
+
+Constant for the content format query type.
+Matches blocks containing specific formatting in content.
 
 ***
 

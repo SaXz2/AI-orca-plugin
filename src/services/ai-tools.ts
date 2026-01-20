@@ -43,7 +43,102 @@ import {
   getExchangeRates,
   formatExchangeRates,
 } from "./utility-tools";
-import { getSkillTools } from "./skill-service";
+
+// 获取 Skill 工具列表（新的 SkillsManager 实现）
+function getSkillTools(): OpenAITool[] {
+  // 动态生成 Skill 工具列表
+  // 注意：这是同步函数，Skills 列表需要在初始化时加载
+  // 实际的 Skills 列表由 AiChatPanel 在发送消息时动态获取
+  return [];
+}
+
+/**
+ * 三层渐进加载架构
+ * Level 1: 元数据（启动时加载）- 名称、描述、标签
+ * Level 2: 指令（请求匹配时加载）- 详细使用指南
+ * Level 3: 资源（执行时加载）- 脚本、模板、文档
+ */
+
+/**
+ * Level 1: 获取 Skill 元数据列表（轻量级）
+ * 用于 AI 发现可用的 Skills，成本极低
+ */
+export async function getSkillMetadataAsync(): Promise<OpenAITool[]> {
+  try {
+    const { listSkills, getSkill } = await import("./skills-manager");
+    const skillIds = await listSkills();
+    const tools: OpenAITool[] = [];
+    
+    for (const skillId of skillIds) {
+      try {
+        const skill = await getSkill(skillId);
+        if (!skill) continue;
+        
+        // Level 1: 只返回元数据，不包含详细指令
+        tools.push({
+          type: "function",
+          function: {
+            name: `skill_${skillId}`,
+            description: skill.metadata.description || skill.metadata.name || skillId,
+            parameters: {
+              type: "object",
+              properties: {
+                input: {
+                  type: "string",
+                  description: "Skill 的输入内容或参数",
+                }
+              },
+              required: ["input"]
+            }
+          }
+        });
+      } catch (err) {
+        console.warn(`[SkillTools] Failed to load skill metadata ${skillId}:`, err);
+      }
+    }
+    
+    return tools;
+  } catch (err) {
+    console.error("[SkillTools] Failed to get skill metadata:", err);
+    return [];
+  }
+}
+
+/**
+ * Level 2: 获取特定 Skill 的详细指令
+ * 当 AI 判断需要使用某个 Skill 时调用
+ */
+export async function getSkillInstructionsAsync(skillId: string): Promise<string | null> {
+  try {
+    const { getSkill } = await import("./skills-manager");
+    const skill = await getSkill(skillId);
+    if (!skill) return null;
+    
+    // Level 2: 返回详细指令
+    return `
+# 技能：${skill.metadata.name}
+
+## 技能说明
+${skill.metadata.description || ""}
+
+## 执行指令
+${skill.instruction}
+
+---
+
+请根据上述指令处理用户输入，并提供结果。`;
+  } catch (err) {
+    console.error(`[SkillTools] Failed to get skill instructions for ${skillId}:`, err);
+    return null;
+  }
+}
+
+/**
+ * 向后兼容：getSkillToolsAsync 现在只返回 Level 1 元数据
+ */
+export async function getSkillToolsAsync(): Promise<OpenAITool[]> {
+  return getSkillMetadataAsync();
+}
 
 // 辅助函数：从URL提取域名
 function extractDomain(url: string): string {

@@ -58,23 +58,11 @@ import {
 } from "../services/session-service";
 import { exportSessionAsFile, saveSessionToJournal, saveMessagesToJournal } from "../services/export-service";
 import { sessionStore, updateSessionStore, clearSessionStore } from "../store/session-store";
-import { TOOLS, FLASHCARD_TOOL, executeTool, getToolsForDraggedContext, getTools, extractSearchResultsFromToolResults } from "../services/ai-tools";
-import {
-  executeSkill,
-  extractSkillMarkdown,
-  getSkillToolName,
-  getSkillByToolName,
-  isSkillToolName,
-  loadSkillRegistry,
-  parseSkillDefinitionFromContent,
-  saveSkillDraft,
-  type SkillDefinition,
-  type SkillStep,
-} from "../services/skill-service";
+import { TOOLS, FLASHCARD_TOOL, executeTool, getToolsForDraggedContext, getTools, extractSearchResultsFromToolResults, getSkillToolsAsync, getSkillInstructionsAsync } from "../services/ai-tools";
 import { TODOIST_TOOLS, executeTodoistTool, isTodoistTool } from "../services/todoist-tools";
 import { startPythonServer, stopPythonServer, getPythonServerStatus, browserAIChat, browserAIStatus as checkBrowserAIStatus } from "../services/python-runtime";
 import { getToolStatus, isToolDisabled, shouldAskForTool, isAgenticRAGEnabled, getAgenticRAGConfig, isSkillPrecheckEnabled } from "../store/tool-store";
-import { skillStore } from "../store/skill-store";
+import { listSkills, getSkill, type Skill } from "../services/skills-manager";
 import { nowId, safeText } from "../utils/text-utils";
 import { buildConversationMessages } from "../services/message-builder";
 import { streamChatWithRetry, type ToolCallInfo } from "../services/chat-stream-handler";
@@ -438,14 +426,6 @@ export default function AiChatPanel({ panelId }: PanelProps) {
     scrollToBottomIfNeeded();
   }, [scrollToBottomIfNeeded]);
 
-  const formatSkillStep = useCallback((step: SkillStep): string => {
-    if (step.type === "tool") {
-      return `Tool: ${step.tool}`;
-    }
-    const label = step.file ? `Python (${step.file})` : "Python";
-    return label;
-  }, []);
-
   const extractJsonPayload = useCallback((raw: string): any | null => {
     if (!raw) return null;
     const cleaned = raw
@@ -475,7 +455,7 @@ export default function AiChatPanel({ panelId }: PanelProps) {
     signal,
   }: {
     text: string;
-    skills: SkillDefinition[];
+    skills: Skill[];
     model: string;
     apiConfig: { apiUrl: string; apiKey: string; protocol?: "openai" | "anthropic"; anthropicApiPath?: string };
     maxTokens: number;
@@ -618,7 +598,7 @@ export default function AiChatPanel({ panelId }: PanelProps) {
     });
   }, []);
 
-  const requestSkillConfirm = useCallback((skill: SkillDefinition): Promise<boolean> => {
+  const requestSkillConfirm = useCallback((skill: Skill): Promise<boolean> => {
     return new Promise((resolve) => {
       const messageId = nowId();
       const createdAt = Date.now();
@@ -685,195 +665,11 @@ export default function AiChatPanel({ panelId }: PanelProps) {
     );
   }, []);
 
-  const handleSkillDraftAction = useCallback(async (messageId: string, action: "save" | "discard") => {
-    const draftMessage = messages.find((m) => m.id === messageId);
-    if (!draftMessage || !draftMessage.skillDraft) return;
-
-    if (action === "discard") {
-      updateMessage(messageId, {
-        skillDraft: {
-          ...draftMessage.skillDraft,
-          status: "discarded",
-        },
-      });
-      return;
-    }
-
-    updateMessage(messageId, {
-      skillDraft: {
-        ...draftMessage.skillDraft,
-        status: "saving",
-        error: undefined,
-      },
-    });
-
-    try {
-      const result = await saveSkillDraft(draftMessage.content);
-      await loadSkillRegistry();
-      updateMessage(messageId, {
-        skillDraft: {
-          status: "saved",
-          folderName: result.folderName,
-        },
-      });
-      orca.notify("success", `技能已保存：${result.folderName}`);
-    } catch (err: any) {
-      updateMessage(messageId, {
-        skillDraft: {
-          status: "error",
-          error: err?.message ?? "技能保存失败",
-        },
-      });
-      orca.notify("error", err?.message ?? "技能保存失败");
-    }
-  }, [messages, updateMessage]);
-
   const handleSkillSlashCommand = useCallback(async (rawContent: string, requestText: string) => {
-    const userMsg: Message = {
-      id: nowId(),
-      role: "user",
-      content: rawContent,
-      createdAt: Date.now(),
-      localOnly: true,
-    };
-    setMessages((prev) => [...prev, userMsg]);
-
-    const draftMessageId = nowId();
-    setMessages((prev) => [
-      ...prev,
-      {
-        id: draftMessageId,
-        role: "assistant",
-        content: "正在生成技能草稿...",
-        createdAt: Date.now(),
-        localOnly: true,
-        skillDraft: { status: "generating" },
-      },
-    ]);
-    isNearBottomRef.current = true;
-    queueMicrotask(scrollToBottom);
-
-    setSending(true);
-    setStreamingMessageId(draftMessageId);
-
-    const pluginName = getAiChatPluginName();
-    const settings = getAiChatSettings(pluginName);
-    const model = (currentSession.model || "").trim() || settings.selectedModelId;
-    const memoryText = memoryStore.getFullMemoryText();
-
-    let contextText = "";
-    try {
-      const contexts = contextStore.selected;
-      if (contexts.length) {
-        const result = await buildContextForSend(contexts, { maxChars: settings.maxContextChars });
-        contextText = result.text;
-      }
-    } catch {}
-
-    const availableTools = [...getTools(), ...TODOIST_TOOLS]
-      .filter((tool) => tool.type === "function")
-      .map((tool) => tool.function)
-      .filter((fn) => !fn.name.startsWith("skill_"));
-
-    const toolSummary = availableTools
-      .map((fn) => `- ${fn.name}${fn.description ? `: ${fn.description}` : ""}`)
-      .join("\n");
-
-    const skillSystemPrompt = `你是 Orca Note 的技能编写助手，需要输出一个可用的 skills.md 草稿。
-输出要求：
-1. 只输出 skills.md 的完整内容，不要添加解释，也不要用 Markdown 代码块包裹。
-2. 必须包含 YAML 前言（--- 开始，--- 结束），且包含字段：id、name、description、inputs、steps。
-3. steps 仅允许 type=tool 或 type=python。tool 步骤使用已有工具名。
-4. 如果信息不足以编写技能，请先提出 1-3 个澄清问题，不要输出 YAML。
-
-可用工具：
-${toolSummary || "- （未提供工具列表）"}`;
-
-    const requestLine = requestText
-      ? `用户需求：${requestText}`
-      : "请根据最近对话内容生成一个技能草稿。";
-    const requestMessage: Message = {
-      id: nowId(),
-      role: "user",
-      content: requestLine,
-      createdAt: Date.now(),
-    };
-
-    const historyMessages = messages.filter((m) => !m.localOnly && m.role !== "tool");
-    const conversationForSkill = [...historyMessages, requestMessage];
-
-    const modelApiConfig = getModelApiConfig(settings, model);
-    const { standard: apiMessages, fallback: apiMessagesFallback } = await buildConversationMessages({
-      messages: conversationForSkill,
-      systemPrompt: skillSystemPrompt,
-      contextText,
-      customMemory: memoryText,
-      maxHistoryMessages: settings.maxHistoryMessages,
-      enableCompression: settings.enableCompression,
-      compressAfterMessages: settings.compressAfterMessages,
-      sessionId: currentSession.id,
-      apiConfig: { ...modelApiConfig, model },
-    });
-
-    const aborter = new AbortController();
-    abortRef.current = aborter;
-
-    let draftContent = "";
-
-    try {
-      for await (const chunk of streamChatWithRetry(
-        {
-          apiUrl: modelApiConfig.apiUrl,
-          apiKey: modelApiConfig.apiKey,
-          model,
-          protocol: modelApiConfig.protocol,
-          temperature: settings.temperature,
-          maxTokens: settings.maxTokens,
-          signal: aborter.signal,
-        },
-        apiMessages,
-        apiMessagesFallback || apiMessages
-      )) {
-        if (chunk.type === "content") {
-          draftContent += chunk.content;
-          updateMessage(draftMessageId, { content: draftContent });
-        } else if (chunk.type === "done" && !draftContent && chunk.result.content) {
-          draftContent = chunk.result.content;
-          updateMessage(draftMessageId, { content: draftContent });
-        }
-      }
-
-      if (!draftContent.trim()) {
-        updateMessage(draftMessageId, {
-          content: "技能草稿生成失败，请稍后重试或补充需求。",
-          skillDraft: { status: "error", error: "输出为空" },
-        });
-        return;
-      }
-
-      const cleaned = extractSkillMarkdown(draftContent);
-      const parsed = parseSkillDefinitionFromContent(cleaned, "draft", "user");
-      if (parsed) {
-        updateMessage(draftMessageId, {
-          content: cleaned,
-          skillDraft: { status: "draft" },
-        });
-      } else {
-        updateMessage(draftMessageId, { skillDraft: undefined });
-      }
-    } catch (err: any) {
-      const msg = String(err?.message ?? err ?? "技能草稿生成失败");
-      updateMessage(draftMessageId, {
-        content: `技能草稿生成失败: ${msg}`,
-        skillDraft: { status: "error", error: msg },
-      });
-      orca.notify("error", msg);
-    } finally {
-      setSending(false);
-      setStreamingMessageId(null);
-      if (abortRef.current === aborter) abortRef.current = null;
-    }
-  }, [currentSession.id, currentSession.model, messages, updateMessage]);
+    // Skill slash command is no longer supported in the new system
+    // This function is kept for compatibility but does nothing
+    orca.notify("info", "技能编写功能暂不可用，请使用技能管理器创建新技能");
+  }, []);
 
   const displaySessionTitle = useMemo(() => {
     const title = (currentSession.title || "").trim();
@@ -2001,37 +1797,51 @@ graph TD
     const preapprovedSkillToolNames = new Set<string>();
     const skillPrecheckEnabled = isSkillPrecheckEnabled() || settings.skillPrecheckEnabled;
     if (includeTools && skillPrecheckEnabled) {
-      const availableSkills = skillStore.skills;
-      if (availableSkills.length > 0) {
-        const precheckAborter = new AbortController();
-        abortRef.current = precheckAborter;
-        try {
-          const precheckApiConfig = getModelApiConfig(settings, model);
-          const summary = await runSkillPrecheck({
-            text: processedContent,
-            skills: availableSkills,
-            model,
-            apiConfig: precheckApiConfig,
-            maxTokens: settings.maxTokens,
-            signal: precheckAborter.signal,
-          });
+      try {
+        // Load available skills asynchronously
+        const skillIds = await listSkills();
+        const availableSkills: Skill[] = [];
+        for (const skillId of skillIds) {
+          const skill = await getSkill(skillId);
+          if (skill) {
+            availableSkills.push(skill);
+          }
+        }
 
-          if (summary) {
-            const approved = await requestSkillPrecheckConfirm(summary);
-            if (approved && summary.suggestedSkillId) {
-              const matchedSkill = availableSkills.find((skill) => skill.id === summary.suggestedSkillId);
-              if (matchedSkill) {
-                const toolName = getSkillToolName(matchedSkill);
-                preapprovedSkillToolNames.add(toolName);
-                systemPrompt += `\n\n【技能预检】用户已确认使用技能「${matchedSkill.metadata.name}」。请优先调用工具 ${toolName}。如缺少必要输入，先询问用户再继续。`;
+        if (availableSkills.length > 0) {
+          const precheckAborter = new AbortController();
+          abortRef.current = precheckAborter;
+          try {
+            const precheckApiConfig = getModelApiConfig(settings, model);
+            const summary = await runSkillPrecheck({
+              text: processedContent,
+              skills: availableSkills,
+              model,
+              apiConfig: precheckApiConfig,
+              maxTokens: settings.maxTokens,
+              signal: precheckAborter.signal,
+            });
+
+            if (summary) {
+              const approved = await requestSkillPrecheckConfirm(summary);
+              if (approved && summary.suggestedSkillId) {
+                const matchedSkill = availableSkills.find((skill) => skill.id === summary.suggestedSkillId);
+                if (matchedSkill) {
+                  // Generate tool name from skill ID
+                  const toolName = `skill_${matchedSkill.id}`;
+                  preapprovedSkillToolNames.add(toolName);
+                  systemPrompt += `\n\n【技能预检】用户已确认使用技能「${matchedSkill.metadata.name}」。请优先调用工具 ${toolName}。如缺少必要输入，先询问用户再继续。`;
+                }
               }
             }
+          } catch (err: any) {
+            console.warn("[SkillPrecheck] Failed:", err?.message ?? err);
+          } finally {
+            if (abortRef.current === precheckAborter) abortRef.current = null;
           }
-        } catch (err: any) {
-          console.warn("[SkillPrecheck] Failed:", err?.message ?? err);
-        } finally {
-          if (abortRef.current === precheckAborter) abortRef.current = null;
         }
+      } catch (err: any) {
+        console.warn("[SkillPrecheck] Failed to load skills:", err?.message ?? err);
       }
     }
 
@@ -2137,6 +1947,16 @@ graph TD
       // 根据用户工具设置过滤工具列表（排除禁用的工具）
       // 使用 getTools() 动态获取工具列表（包含联网搜索工具，如果已启用）
       let baseTools = hasHighPriorityContext ? getToolsForDraggedContext() : getTools();
+      
+      // 动态加载 Skill 工具
+      try {
+        const skillTools = await getSkillToolsAsync();
+        if (skillTools.length > 0) {
+          baseTools = [...baseTools, ...skillTools];
+        }
+      } catch (err) {
+        console.warn("[AiChatPanel] Failed to load skill tools:", err);
+      }
       
       // 如果启用了 Todoist AI 模式，注入 Todoist 工具
       if (enableTodoistTools) {
@@ -2592,35 +2412,25 @@ graph TD
              result = `Error: ${parseError}\n\nRaw arguments received:\n${toolCall.function.arguments}\n\nPlease provide valid JSON arguments.`;
           } else {
              const TOOL_TIMEOUT_MS = 60000; // 60s timeout for tool execution
-             const isSkillCall = isSkillToolName(toolName);
+             const isSkillCall = toolName.startsWith("skill_");
 
              if (isSkillCall) {
-               const skill = getSkillByToolName(toolName);
-               if (!skill) {
-                 result = `Error: Unknown skill ${toolName}`;
-               } else if (executedSkillToolNames.has(toolName)) {
-                 result = "Error: Skill already executed in this request. Use the previous result to respond.";
-               } else {
-                 executedSkillToolNames.add(toolName);
-                 const skipConfirm = preapprovedSkillToolNames.has(toolName);
-                 const userApproved = skipConfirm ? true : await requestSkillConfirm(skill);
-
-                 if (!userApproved) {
-                   result = "用户拒绝执行此技能。请尝试其他方式或直接回答用户的问题。";
+               // Skill 工具执行 - Level 2: 按需加载详细指令
+               const skillId = toolName.replace("skill_", "");
+               try {
+                 const instructions = await getSkillInstructionsAsync(skillId);
+                 if (!instructions) {
+                   result = `Error: Skill not found: ${skillId}`;
                  } else {
-                   try {
-                     const timeoutPromise = new Promise<string>((_, reject) => {
-                       setTimeout(() => reject(new Error(`Tool execution timed out after ${TOOL_TIMEOUT_MS / 1000}s`)), TOOL_TIMEOUT_MS);
-                     });
+                   // 返回 Skill 的详细指令供 AI 使用
+                   const userInput = args.input || "";
+                   result = `${instructions}
 
-                     result = await Promise.race([
-                       executeSkill(toolName, args),
-                       timeoutPromise,
-                     ]);
-                   } catch (err: any) {
-                     result = `Error: ${err.message || "Skill execution failed"}`;
-                   }
+## 用户输入
+${userInput}`;
                  }
+               } catch (err: any) {
+                 result = `Error: Failed to execute skill ${skillId}: ${err?.message || "Unknown error"}`;
                }
              } else {
                // 检查工具是否需要询问用户
@@ -3397,7 +3207,7 @@ graph TD
           tokenStats: tokenStatsMap.get(m.id),
           onSkillConfirmAction: m.skillConfirm ? handleSkillConfirmAction : undefined,
           onSkillPrecheckAction: m.skillPrecheck ? handleSkillPrecheckAction : undefined,
-          onSkillDraftAction: m.skillDraft ? handleSkillDraftAction : undefined,
+          // onSkillDraftAction is no longer supported in the new system
         })
       );
     });

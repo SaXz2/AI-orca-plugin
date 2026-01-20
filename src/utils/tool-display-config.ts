@@ -5,7 +5,19 @@
  * Maps tool names to user-friendly icons, animations, and text.
  */
 
-import { getSkillDisplayName, isSkillToolName } from "../services/skill-service";
+// 检查是否是 Skill 工具
+function isSkillToolName(toolName: string): boolean {
+  return toolName.startsWith("skill_");
+}
+
+// 获取 Skill 显示名称
+function getSkillDisplayName(toolName: string): string {
+  if (!isSkillToolName(toolName)) return toolName;
+  // 从工具名称中提取 skill ID
+  const skillId = toolName.slice("skill_".length);
+  // 返回 skill ID 作为显示名称（可以后续从 store 中获取实际名称）
+  return skillId;
+}
 
 export type ToolCategory = "create" | "search" | "query";
 export type AnimationType = "sparkle" | "pulse" | "flip";

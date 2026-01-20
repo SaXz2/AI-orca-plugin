@@ -2,4 +2,5 @@
  * Type exports for the application
  */
 
-export * from './skill';
+export * from './skills';
+

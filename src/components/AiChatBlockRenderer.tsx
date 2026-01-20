@@ -114,6 +114,19 @@ export default function AiChatBlockRenderer({
   const createdAt = propCreatedAt || repr.createdAt;
   const targetBlockId = mirrorId ?? blockId;
 
+  // Debug: 检查消息中的 contextRefs
+  useEffect(() => {
+    if (messages.length > 0) {
+      const msgsWithRefs = messages.filter(m => m.contextRefs && m.contextRefs.length > 0);
+      if (msgsWithRefs.length > 0) {
+        console.log("[AiChatBlockRenderer] Messages with contextRefs:", msgsWithRefs.map(m => ({
+          role: m.role,
+          contextRefs: m.contextRefs,
+        })));
+      }
+    }
+  }, [messages]);
+
   // 备注标题状态
   const [note, setNote] = useState("");
   const [isEditingNote, setIsEditingNote] = useState(false);
@@ -198,6 +211,9 @@ export default function AiChatBlockRenderer({
   }, [messages, filteredMessages, expanded, showSearch]);
 
   const hasMore = messages && messages.length > 3 && !showSearch;
+  
+  // 消息数量 <= 4 时不限制高度
+  const shouldLimitHeight = messages && messages.length > 4;
 
 
   // 继续对话
@@ -585,9 +601,9 @@ export default function AiChatBlockRenderer({
         {
           ref: listRef as any,
           style: {
-            maxHeight: isFullscreen ? "100%" : (expanded || showSearch ? "800px" : "400px"),
+            maxHeight: isFullscreen ? "100%" : (shouldLimitHeight ? (expanded || showSearch ? "800px" : "400px") : "none"),
             height: isFullscreen ? "100%" : undefined,
-            overflow: "auto",
+            overflow: shouldLimitHeight ? "auto" : "visible",
           },
         },
         // 搜索无结果提示

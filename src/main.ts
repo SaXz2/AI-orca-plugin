@@ -2,29 +2,29 @@ import { registerAiChatSettingsSchema, initAiChatSettings } from "./settings/ai-
 import { registerAiChatUI, unregisterAiChatUI } from "./ui/ai-chat-ui";
 import { registerAiChatRenderer, unregisterAiChatRenderer } from "./ui/ai-chat-renderer";
 import { loadMemoryStore } from "./store/memory-store";
-import { loadSkillRegistry } from "./services/skill-service";
-import { setSkillPluginName } from "./services/skill-fs";
 import * as compressionService from "./services/compression-service";
 import { AiChatPluginAPI } from "./services/plugin-api";
+import { ensureBuiltInSkills } from "./services/skills-manager";
 
 let pluginName: string;
 
 export async function load(_name: string) {
   pluginName = _name;
-  setSkillPluginName(pluginName);
 
   // PR review note: Localization init removed to keep PR focused on style fixes.
   await registerAiChatSettingsSchema(pluginName);
   // 加载存储的 provider 配置
   await initAiChatSettings(pluginName);
+  
+  // 先注册 UI，这样 window.getAiChatPluginName 才能被设置
   registerAiChatUI(pluginName);
   registerAiChatRenderer();
 
   // Load persisted memory data
   await loadMemoryStore();
 
-  // Load skill registry after UI registration (requires plugin name)
-  await loadSkillRegistry();
+  // 初始化内置 Skills（必须在 registerAiChatUI 之后）
+  await ensureBuiltInSkills();
 
   // 挂载调试接口到 window（开发用）
   (window as any).compressionService = compressionService;
