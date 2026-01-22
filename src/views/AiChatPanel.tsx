@@ -103,8 +103,29 @@ const { Button } = orca.components;
 // Helper Functions
 // ─────────────────────────────────────────────────────────────────────────────
 
-function smoothScrollToBottom(el: HTMLDivElement | null, duration = 300) {
+type ScrollAnimationState = {
+  rafId: number | null;
+  cancelToken: number;
+};
+
+function cancelSmoothScroll(state?: ScrollAnimationState) {
+  if (!state) return;
+  state.cancelToken += 1;
+  if (state.rafId !== null) {
+    cancelAnimationFrame(state.rafId);
+    state.rafId = null;
+  }
+}
+
+function smoothScrollToBottom(
+  el: HTMLDivElement | null,
+  state?: ScrollAnimationState,
+  duration = 300,
+) {
   if (!el) return;
+  if (state) {
+    cancelSmoothScroll(state);
+  }
   if (el.scrollHeight - el.scrollTop - el.clientHeight < 50) {
     el.scrollTop = el.scrollHeight;
     return;
@@ -117,16 +138,27 @@ function smoothScrollToBottom(el: HTMLDivElement | null, duration = 300) {
   }
   const distance = target - start;
   let startTime: number | null = null;
+  const cancelToken = state ? state.cancelToken : 0;
 
   function animation(currentTime: number) {
+    if (state && state.cancelToken !== cancelToken) return;
     if (startTime === null) startTime = currentTime;
     const progress = Math.min((currentTime - startTime) / duration, 1);
     const ease = 1 - Math.pow(1 - progress, 3);
     el!.scrollTop = start + distance * ease;
-    if (progress < 1) requestAnimationFrame(animation);
+    if (progress < 1) {
+      const rafId = requestAnimationFrame(animation);
+      if (state) state.rafId = rafId;
+    } else if (state) {
+      state.rafId = null;
+    }
   }
-  requestAnimationFrame(animation);
+  const rafId = requestAnimationFrame(animation);
+  if (state) state.rafId = rafId;
 }
+
+const AUTO_SCROLL_INTERVAL_MS = 150;
+const AUTO_SCROLL_DURATION_MS = 150;
 
 function restoreScrollPosition(el: HTMLDivElement | null, savedPosition?: number) {
   if (!el) return;
@@ -308,21 +340,56 @@ export default function AiChatPanel({ panelId }: PanelProps) {
   const abortRef = useRef<AbortController | null>(null);
   // 追踪用户是否在底部附近，用于决定流式输出时是否自动滚动
   const isNearBottomRef = useRef(true);
+  const scrollAnimationStateRef = useRef<ScrollAnimationState>({ rafId: null, cancelToken: 0 });
+  const autoScrollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastAutoScrollAtRef = useRef(0);
+
+  const clearPendingAutoScroll = useCallback(() => {
+    if (autoScrollTimeoutRef.current) {
+      clearTimeout(autoScrollTimeoutRef.current);
+      autoScrollTimeoutRef.current = null;
+    }
+  }, []);
+
+  const cancelAutoScroll = useCallback(() => {
+    clearPendingAutoScroll();
+    cancelSmoothScroll(scrollAnimationStateRef.current);
+  }, [clearPendingAutoScroll]);
 
   const scrollToBottom = useCallback(() => {
-    smoothScrollToBottom(listRef.current);
+    clearPendingAutoScroll();
+    smoothScrollToBottom(listRef.current, scrollAnimationStateRef.current);
+  }, [clearPendingAutoScroll]);
+
+  const scheduleAutoScroll = useCallback(() => {
+    if (!isNearBottomRef.current) return;
+    const now = Date.now();
+    const elapsed = now - lastAutoScrollAtRef.current;
+    const delay = Math.max(AUTO_SCROLL_INTERVAL_MS - elapsed, 0);
+
+    if (autoScrollTimeoutRef.current) return;
+    autoScrollTimeoutRef.current = setTimeout(() => {
+      autoScrollTimeoutRef.current = null;
+      if (!isNearBottomRef.current) return;
+      lastAutoScrollAtRef.current = Date.now();
+      smoothScrollToBottom(
+        listRef.current,
+        scrollAnimationStateRef.current,
+        AUTO_SCROLL_DURATION_MS,
+      );
+    }, delay);
   }, []);
 
   // 智能滚动：只有当用户在底部附近时才自动滚动
   const scrollToBottomIfNeeded = useCallback(() => {
     if (isNearBottomRef.current) {
-      smoothScrollToBottom(listRef.current);
+      scheduleAutoScroll();
     }
-  }, []);
+  }, [scheduleAutoScroll]);
 
   const updateMessage = useCallback((id: string, updates: Partial<Message>) => {
     setMessages((prev) => prev.map((m) => (m.id === id ? { ...m, ...updates } : m)));
-    queueMicrotask(scrollToBottomIfNeeded);
+    scrollToBottomIfNeeded();
   }, [scrollToBottomIfNeeded]);
 
   const displaySessionTitle = useMemo(() => {
@@ -612,6 +679,7 @@ export default function AiChatPanel({ panelId }: PanelProps) {
   }, []);
   useEffect(() => () => { clearSessionStore(); }, []);
   useEffect(() => () => { if (abortRef.current) abortRef.current.abort(); }, []);
+  useEffect(() => () => { cancelAutoScroll(); }, [cancelAutoScroll]);
 
   // ─────────────────────────────────────────────────────────────────────────
   // Scroll to Bottom Button Detection
@@ -632,16 +700,30 @@ export default function AiChatPanel({ panelId }: PanelProps) {
       isNearBottomRef.current = distanceFromBottom < 100;
     };
 
+    const handleUserScrollIntent = () => {
+      cancelAutoScroll();
+    };
+
     listEl.addEventListener("scroll", handleScroll, { passive: true });
-    return () => listEl.removeEventListener("scroll", handleScroll);
-  }, []);
+    listEl.addEventListener("wheel", handleUserScrollIntent, { passive: true });
+    listEl.addEventListener("touchstart", handleUserScrollIntent, { passive: true });
+    listEl.addEventListener("touchmove", handleUserScrollIntent, { passive: true });
+    listEl.addEventListener("pointerdown", handleUserScrollIntent);
+    return () => {
+      listEl.removeEventListener("scroll", handleScroll);
+      listEl.removeEventListener("wheel", handleUserScrollIntent);
+      listEl.removeEventListener("touchstart", handleUserScrollIntent);
+      listEl.removeEventListener("touchmove", handleUserScrollIntent);
+      listEl.removeEventListener("pointerdown", handleUserScrollIntent);
+    };
+  }, [cancelAutoScroll]);
 
   const handleScrollToBottom = useCallback(() => {
-    smoothScrollToBottom(listRef.current);
+    scrollToBottom();
     setShowScrollToBottom(false);
     // 点击滚动到底部按钮后，恢复自动滚动
     isNearBottomRef.current = true;
-  }, []);
+  }, [scrollToBottom]);
 
   // ─────────────────────────────────────────────────────────────────────────
   // Memory Manager View Switching

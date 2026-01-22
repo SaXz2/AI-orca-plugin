@@ -36,6 +36,7 @@ src/views/
 - 模型列表过滤搜索
 - 按分组显示模型 (Built-in, Custom, Other)
 - 添加自定义模型功能
+- 支持从 API 获取模型并自动合并到列表
 
 ### chat-input-styles
 

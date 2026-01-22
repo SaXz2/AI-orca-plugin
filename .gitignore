@@ -31,3 +31,4 @@ CLAUDE.md
 
 # Local build configuration (not to be committed)
 build.config.local.json
+.ace-tool/

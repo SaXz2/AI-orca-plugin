@@ -14,6 +14,7 @@ import {
   createProvider,
   addModelToProvider,
 } from "../../settings/ai-chat-settings";
+import { fetchModelsFromApi } from "../../services/model-fetcher";
 import {
   menuContainerStyle,
   modelListPanelStyle,
@@ -473,6 +474,8 @@ function ProviderConfigPanel({
   const [newModelId, setNewModelId] = useState("");
   const [newModelLabel, setNewModelLabel] = useState("");
   const [editingModel, setEditingModel] = useState<ProviderModel | null>(null);
+  const [isFetchingModels, setIsFetchingModels] = useState(false);
+  const [fetchError, setFetchError] = useState<string | null>(null);
 
   const inputStyle: React.CSSProperties = {
     width: "100%",
@@ -493,6 +496,8 @@ function ProviderConfigPanel({
     display: "block",
   };
 
+  const canFetchModels = apiUrl.trim().length > 0 && apiKey.trim().length > 0;
+
   const handleSave = () => {
     onUpdate({
       ...provider,
@@ -510,6 +515,35 @@ function ProviderConfigPanel({
     apiUrl: apiUrl.trim(),
     apiKey: apiKey.trim(),
   });
+
+  const handleFetchModels = async () => {
+    if (!canFetchModels || isFetchingModels) return;
+    setIsFetchingModels(true);
+    setFetchError(null);
+
+    try {
+      const fetchedModels = await fetchModelsFromApi(apiUrl.trim(), apiKey.trim());
+      const currentProvider = getCurrentProvider();
+      const existingIds = new Set(currentProvider.models.map(m => m.id));
+      const mergedModels = [...currentProvider.models];
+
+      // 保留已有模型配置，新增模型去重合并
+      for (const model of fetchedModels) {
+        if (!existingIds.has(model.id)) {
+          mergedModels.push(model);
+          existingIds.add(model.id);
+        }
+      }
+
+      const updatedProvider = { ...currentProvider, models: mergedModels };
+      onUpdate(updatedProvider);
+    } catch (error: any) {
+      const message = error?.message || "获取模型失败";
+      setFetchError(message);
+    } finally {
+      setIsFetchingModels(false);
+    }
+  };
 
   const handleAddModel = () => {
     if (!newModelId.trim()) return;
@@ -628,6 +662,34 @@ function ProviderConfigPanel({
               )
             )
           )
+    ),
+
+    // 获取模型
+    createElement(
+      "div",
+      { style: { marginBottom: "12px" } },
+      createElement(
+        Button,
+        {
+          variant: "outline",
+          disabled: !canFetchModels || isFetchingModels,
+          onClick: handleFetchModels,
+          style: { width: "100%", justifyContent: "center", gap: "6px" },
+        },
+        createElement("i", {
+          className: isFetchingModels ? "ti ti-loader" : "ti ti-refresh",
+          style: {
+            fontSize: "12px",
+            animation: isFetchingModels ? "spin 1s linear infinite" : undefined,
+          },
+        }),
+        isFetchingModels ? "获取中" : "获取模型"
+      ),
+      fetchError && createElement(
+        "div",
+        { style: { marginTop: "6px", fontSize: "12px", color: "var(--orca-color-danger)" } },
+        fetchError
+      )
     ),
 
     // 添加模型
