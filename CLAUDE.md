@@ -227,6 +227,32 @@ insertTag({
 - Simple: `insertTag({ blockId: 100, tagName: "task" })`
 - With properties: `insertTag({ blockId: 100, tagName: "task", properties: [{ name: "priority", value: 8 }] })`
 
+### 7. updateTagProperties
+
+更新块上已有标签的属性，支持 replace/merge/append 三种模式。
+
+```typescript
+updateTagProperties({
+  blockId: number,
+  tagName: string,
+  mode?: "replace" | "merge" | "append",
+  properties: Array<{ name: string; value: any }>,
+});
+```
+
+**模式说明**：
+
+- `replace`：完全替换所有属性，未提及的属性会被清除
+- `merge`：更新提及的属性，保留未提及的属性（默认）
+- `append`：仅对 `block-refs` 类型追加并去重，其它属性按 `merge` 处理
+
+**示例**：
+
+- 追加 block-refs：`updateTagProperties({ blockId: 100, tagName: "日语语法", mode: "append", properties: [{ name: "语法点", value: [123, 456] }] })`
+- 合并属性：`updateTagProperties({ blockId: 100, tagName: "task", properties: [{ name: "priority", value: 9 }] })`
+
+迁移说明：无迁移，直接替换
+
 ## Skill System
 
 User-defined Skills via `#skill` tag - reusable AI behaviors invoked with `/` trigger.

@@ -18,6 +18,7 @@ import {
   getJournalByDate,
   getJournalsByDateRange,
   getTodayJournal,
+  getCachedTagSchema,
 } from "./search-service";
 import {
   formatBlockResult,
@@ -796,6 +797,70 @@ export const TOOLS: OpenAITool[] = [
   {
     type: "function",
     function: {
+      name: "updateTagProperties",
+      description: `更新块上已有标签的属性（支持 replace/merge/append）。
+
+【何时使用】需要修改标签属性或追加 block-refs 引用
+【参数】
+- blockId: 目标块ID
+- tagName: 标签名，不带#号
+- properties: 要更新的属性数组
+- mode: 更新模式（replace/merge/append），默认 merge
+【更新模式】
+- replace: 完全替换所有属性，未提及的属性会被清除
+- merge: 更新提及的属性，保留未提及的属性（默认）
+- append: 仅对 block-refs 追加并去重，其它属性按 merge 处理`,
+      parameters: {
+        type: "object",
+        properties: {
+          blockId: {
+            type: "number",
+            description: "目标块ID",
+          },
+          tagName: {
+            type: "string",
+            description: "标签名，不带#号",
+          },
+          mode: {
+            type: "string",
+            enum: ["replace", "merge", "append"],
+            description: "更新模式：replace/merge/append，默认 merge",
+          },
+          properties: {
+            type: "array",
+            description: "要更新的标签属性数组",
+            items: {
+              type: "object",
+              properties: {
+                name: { type: "string", description: "属性名" },
+                value: {
+                  description: "属性值，block-refs 可为 blockId 数组或 blockid 字符串",
+                  oneOf: [
+                    { type: "string" },
+                    { type: "number" },
+                    {
+                      type: "array",
+                      items: {
+                        oneOf: [
+                          { type: "string" },
+                          { type: "number" },
+                        ],
+                      },
+                    },
+                  ],
+                },
+              },
+              required: ["name", "value"],
+            },
+          },
+        },
+        required: ["blockId", "tagName", "properties"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "getBlockLinks",
       description: `获取块的出链和入链（反链）列表。
 
@@ -1159,6 +1224,231 @@ function toFiniteNumber(val: any): number | undefined {
   if (val === null || val === undefined) return undefined;
   const num = Number(val);
   return Number.isFinite(num) ? num : undefined;
+}
+
+/**
+ * 规范化标签名（去除前导 #）。
+ */
+function normalizeTagNameForTool(tagName: string): string {
+  const trimmed = String(tagName ?? "").trim();
+  if (trimmed.startsWith("#")) return trimmed.slice(1);
+  return trimmed;
+}
+
+type TagPropertyInput = {
+  name: string;
+  value: any;
+  type?: number;
+};
+
+type TagPropertyMergeMode = "replace" | "merge" | "append";
+
+/**
+ * 解析 block-refs 类型的值，统一为可去重的数组。
+ */
+function normalizeBlockRefList(value: any): Array<number | string> {
+  const rawList = Array.isArray(value) ? value : [value];
+  const normalized: Array<number | string> = [];
+
+  const toRefValue = (item: any): number | string | null => {
+    if (item === null || item === undefined) return null;
+    if (typeof item === "number" && Number.isFinite(item)) return Math.trunc(item);
+    if (typeof item === "string") {
+      const trimmed = item.trim();
+      if (!trimmed) return null;
+      const match = trimmed.match(/^(?:orca-block:|blockid:)?(\d+)$/i);
+      if (match) return Number(match[1]);
+      return trimmed;
+    }
+    return null;
+  };
+
+  for (const item of rawList) {
+    if (Array.isArray(item)) {
+      for (const nested of item) {
+        const normalizedValue = toRefValue(nested);
+        if (normalizedValue !== null) normalized.push(normalizedValue);
+      }
+      continue;
+    }
+    const normalizedValue = toRefValue(item);
+    if (normalizedValue !== null) normalized.push(normalizedValue);
+  }
+
+  return normalized;
+}
+
+/**
+ * 生成标签属性类型映射（name -> type）。
+ */
+function buildTagPropertyTypeMap(schema: { properties?: Array<{ name: string; type: number }> }): Map<string, number> {
+  const typeMap = new Map<string, number>();
+  if (!schema?.properties || !Array.isArray(schema.properties)) return typeMap;
+  for (const prop of schema.properties) {
+    if (!prop || typeof prop.name !== "string") continue;
+    typeMap.set(prop.name.toLowerCase(), prop.type);
+  }
+  return typeMap;
+}
+
+/**
+ * 规范化标签属性输入，补齐类型并处理 block-refs 值。
+ */
+function normalizeTagPropertyList(
+  raw: any,
+  typeMap: Map<string, number>
+): TagPropertyInput[] {
+  if (!Array.isArray(raw)) return [];
+  const normalized: TagPropertyInput[] = [];
+
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const name = String(item.name ?? "").trim();
+    if (!name) continue;
+    const key = name.toLowerCase();
+    const inputType = Number.isFinite(Number(item.type)) ? Number(item.type) : undefined;
+    const schemaType = typeMap.get(key);
+    const type = inputType ?? schemaType;
+    let value = item.value;
+
+    if (type === 2) {
+      value = normalizeBlockRefList(value);
+    }
+
+    normalized.push({
+      name,
+      value,
+      ...(type !== undefined ? { type } : {}),
+    });
+  }
+
+  return normalized;
+}
+
+/**
+ * 合并标签属性（replace/merge/append）。
+ */
+function mergeTagProperties(
+  existing: TagPropertyInput[],
+  updates: TagPropertyInput[],
+  mode: TagPropertyMergeMode,
+  typeMap: Map<string, number>
+): TagPropertyInput[] {
+  if (mode === "replace") return updates;
+
+  const merged = new Map<string, TagPropertyInput>();
+  const order: string[] = [];
+
+  const addProp = (prop: TagPropertyInput) => {
+    const key = prop.name.toLowerCase();
+    if (!key) return;
+    if (!merged.has(key)) order.push(key);
+    merged.set(key, prop);
+  };
+
+  for (const prop of existing) {
+    const key = prop.name.toLowerCase();
+    const schemaType = typeMap.get(key);
+    const normalized: TagPropertyInput = {
+      ...prop,
+      ...(prop.type === undefined && schemaType !== undefined ? { type: schemaType } : {}),
+    };
+    addProp(normalized);
+  }
+
+  const mergeBlockRefs = (baseValue: any, updateValue: any): Array<number | string> => {
+    const baseList = normalizeBlockRefList(baseValue);
+    const updateList = normalizeBlockRefList(updateValue);
+    const seen = new Set<string>();
+    const combined: Array<number | string> = [];
+
+    const pushUnique = (val: number | string) => {
+      const key = typeof val === "number" ? `n:${val}` : `s:${val}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      combined.push(val);
+    };
+
+    baseList.forEach(pushUnique);
+    updateList.forEach(pushUnique);
+    return combined;
+  };
+
+  for (const update of updates) {
+    const key = update.name.toLowerCase();
+    const existingProp = merged.get(key);
+    const schemaType = typeMap.get(key);
+    const resolvedType = update.type ?? existingProp?.type ?? schemaType;
+
+    if (mode === "append" && resolvedType === 2) {
+      const combinedValue = mergeBlockRefs(existingProp?.value, update.value);
+      addProp({
+        name: update.name,
+        value: combinedValue,
+        ...(resolvedType !== undefined ? { type: resolvedType } : {}),
+      });
+      continue;
+    }
+
+    addProp({
+      name: update.name,
+      value: update.value,
+      ...(resolvedType !== undefined ? { type: resolvedType } : {}),
+    });
+  }
+
+  return order.map((key) => merged.get(key)!).filter(Boolean);
+}
+
+type ExtractTagPropertiesResult = {
+  block: any;
+  tagBlockId: number;
+  tagRef?: any;
+  properties: TagPropertyInput[];
+  tagExists: boolean;
+  readError?: string;
+};
+
+/**
+ * 提取块上指定标签的属性。
+ */
+async function extractBlockTagProperties(
+  blockId: number,
+  tagName: string
+): Promise<ExtractTagPropertiesResult> {
+  const block = orca.state.blocks[blockId] || await orca.invokeBackend("get-block", blockId);
+  if (!block) {
+    throw new Error(`未找到块 ${blockId}`);
+  }
+
+  const tagBlock = await orca.invokeBackend("get-block-by-alias", tagName);
+  if (!tagBlock) {
+    throw new Error(`找不到标签 "${tagName}"`);
+  }
+
+  const refs = Array.isArray(block.refs) ? block.refs : [];
+  const tagRef = refs.find((ref: any) => ref && ref.to === tagBlock.id);
+  let properties: TagPropertyInput[] = [];
+  let readError: string | undefined;
+
+  if (tagRef && Array.isArray(tagRef.data)) {
+    properties = tagRef.data.map((prop: any) => ({
+      name: prop?.name,
+      value: prop?.value,
+      ...(prop?.type !== undefined ? { type: prop.type } : {}),
+    })).filter((prop: TagPropertyInput) => typeof prop.name === "string" && prop.name.trim());
+  } else if (tagRef && tagRef.data !== undefined) {
+    readError = "标签属性读取失败，将按替换模式处理";
+  }
+
+  return {
+    block,
+    tagBlockId: tagBlock.id,
+    tagRef,
+    properties,
+    tagExists: !!tagRef,
+    readError,
+  };
 }
 
 /**
@@ -2143,6 +2433,117 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
         return `Created page [[${pageName}]] for block ${blockId}`;
       } catch (err: any) {
         return `Error creating page: ${err.message}`;
+      }
+    } else if (toolName === "updateTagProperties") {
+      try {
+        const blockId = toFiniteNumber(args.blockId || args.block_id || args.id);
+        const tagNameRaw = args.tagName || args.tag_name || args.tag;
+        const modeRaw = args.mode || args.updateMode || args.update_mode;
+        let propertiesRaw = args.properties || args.props || args.data;
+
+        if (!blockId || !tagNameRaw) return "Error: 缺少 blockId 或 tagName。";
+
+        const tagName = normalizeTagNameForTool(tagNameRaw);
+        if (!tagName) return "Error: tagName 不能为空。";
+
+        const mode = (modeRaw ? String(modeRaw) : "merge").toLowerCase() as TagPropertyMergeMode;
+        if (!["replace", "merge", "append"].includes(mode)) {
+          return "Error: mode 参数无效，必须是 replace/merge/append。";
+        }
+
+        if (typeof propertiesRaw === "string") {
+          try {
+            propertiesRaw = JSON.parse(propertiesRaw);
+          } catch (parseError) {
+            return "Error: properties 参数必须是数组或可解析的 JSON 数组。";
+          }
+        }
+
+        if (!Array.isArray(propertiesRaw)) {
+          return "Error: properties 参数必须是数组。";
+        }
+
+        let schema: any;
+        try {
+          schema = await getCachedTagSchema(tagName);
+        } catch (schemaErr: any) {
+          return `Error: 找不到标签 "${tagName}"。`;
+        }
+
+        const typeMap = buildTagPropertyTypeMap(schema);
+        const updates = normalizeTagPropertyList(propertiesRaw, typeMap);
+
+        let extracted: ExtractTagPropertiesResult;
+        try {
+          extracted = await extractBlockTagProperties(blockId, tagName);
+        } catch (extractErr: any) {
+          return `Error: ${extractErr.message}`;
+        }
+
+        // Navigation check
+        const targetRootBlockId = await getRootBlockId(blockId);
+        let currentRootBlockId: number | undefined = undefined;
+        let targetPanelId: string | undefined = undefined;
+
+        try {
+          if (orca.state.activePanel !== uiStore.aiChatPanelId) {
+            targetPanelId = orca.state.activePanel;
+            const activePanel = orca.nav.findViewPanel(targetPanelId, orca.state.panels);
+            if (activePanel?.view === "block" && activePanel.viewArgs?.blockId) {
+              currentRootBlockId = await getRootBlockId(activePanel.viewArgs.blockId);
+            }
+          }
+        } catch (error) {}
+
+        if (!targetRootBlockId || !currentRootBlockId || (targetRootBlockId !== currentRootBlockId)) {
+          if (targetPanelId) orca.nav.replace("block", { blockId }, targetPanelId);
+          else orca.nav.openInLastPanel("block", { blockId });
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
+
+        let effectiveMode: TagPropertyMergeMode = mode;
+        let warning = "";
+        if (extracted.readError && mode !== "replace") {
+          effectiveMode = "replace";
+          warning = `\n⚠️ ${extracted.readError}`;
+        }
+
+        const existing = normalizeTagPropertyList(extracted.properties, typeMap);
+        const finalProps = extracted.tagExists
+          ? mergeTagProperties(existing, updates, effectiveMode, typeMap)
+          : updates;
+
+        const existingNames = existing
+          .map((prop) => prop.name)
+          .filter((name) => typeof name === "string" && name.trim());
+
+        const tagProperties = finalProps.map((prop) => ({
+          name: prop.name,
+          value: prop.value,
+          ...(prop.type !== undefined ? { type: prop.type } : {}),
+        }));
+
+        await orca.commands.invokeGroup(async () => {
+          if (
+            extracted.tagExists &&
+            effectiveMode === "replace" &&
+            extracted.tagRef?.id &&
+            existingNames.length > 0
+          ) {
+            await orca.commands.invokeEditorCommand(
+              "core.editor.deleteRefData",
+              null,
+              extracted.tagRef.id,
+              existingNames,
+            );
+          }
+          await orca.commands.invokeEditorCommand("core.editor.insertTag", null, blockId, tagName, tagProperties);
+        }, { topGroup: true, undoable: true });
+
+        const action = extracted.tagExists ? "已更新" : "已添加";
+        return `✅ ${action} #${tagName} 标签属性（${effectiveMode}）: blockId=${blockId}${warning}`;
+      } catch (err: any) {
+        return `Error: 更新标签属性失败：${err.message}`;
       }
     } else if (toolName === "insertTag") {
       try {
