@@ -32,6 +32,8 @@ import {
   extractAllProperties,
   buildPropertyValues,
   pickBlockForPropertyExtraction,
+  expandBlockRefProperties,
+  batchFetchBlocks,
 } from "../utils/property-utils";
 
 export interface SearchResult {
@@ -49,18 +51,20 @@ export interface SearchResult {
 interface TransformOptions {
   includeProperties?: boolean;
   propNames?: string[];
+  // 是否展开 block-ref 属性（默认 true）
+  expandBlockRefs?: boolean;
 }
 
 /**
  * Transform block/tree pairs to SearchResult array
  */
-function transformToSearchResults(
+async function transformToSearchResults(
   trees: { block: any; tree: any }[],
   options: TransformOptions = {}
-): SearchResult[] {
-  const { includeProperties = true, propNames = [] } = options;
+): Promise<SearchResult[]> {
+  const { includeProperties = true, propNames = [], expandBlockRefs = true } = options;
 
-  return trees.map(({ block, tree }) => {
+  const prepared = trees.map(({ block, tree }) => {
     let fullContent: string | undefined;
     if (tree) {
       const lines: string[] = [];
@@ -77,8 +81,9 @@ function transformToSearchResults(
     }
 
     let propertyValues: Record<string, any> | undefined;
+    let blockForProps: any = block;
     if (includeProperties) {
-      const blockForProps = pickBlockForPropertyExtraction(block, tree);
+      blockForProps = pickBlockForPropertyExtraction(block, tree);
       const allProps = extractAllProperties(blockForProps);
 
       if (propNames.length) {
@@ -97,17 +102,68 @@ function transformToSearchResults(
     }
 
     return {
-      id: block.id,
-      title: extractTitle(block),
-      content: extractContent(block),
+      block,
+      tree,
+      blockForProps,
       fullContent,
       propertyValues,
-      created: block.created ? new Date(block.created) : undefined,
-      modified: block.modified ? new Date(block.modified) : undefined,
-      tags: block.aliases || [],
-      rawTree: tree,  // 保留原始树数据
     };
   });
+
+  const shouldExpandBlockRefs = includeProperties && expandBlockRefs;
+  if (shouldExpandBlockRefs) {
+    const collectedIds = new Set<number>();
+    for (const item of prepared) {
+      if (!item.propertyValues) continue;
+      await expandBlockRefProperties(item.propertyValues, item.blockForProps, {
+        collectIds: collectedIds,
+      });
+    }
+
+    if (collectedIds.size > 0) {
+      const allIds = Array.from(collectedIds);
+      const limitedIds = allIds.slice(0, 200);
+      const allowedIds = new Set(limitedIds);
+
+      console.log(
+        `[expandBlockRefProperties] Expanding ${limitedIds.length} unique block-refs...`
+      );
+
+      try {
+        const blockMap = await batchFetchBlocks(limitedIds);
+        await Promise.all(
+          prepared.map(async (item) => {
+            if (!item.propertyValues) return;
+            item.propertyValues = await expandBlockRefProperties(
+              item.propertyValues,
+              item.blockForProps,
+              {
+                blockMap,
+                allowedIds,
+              }
+            );
+          })
+        );
+      } catch (error) {
+        console.warn(
+          "[expandBlockRefProperties] 获取 block-refs 失败，回退为原始 ID：",
+          error
+        );
+      }
+    }
+  }
+
+  return prepared.map((item) => ({
+    id: item.block.id,
+    title: extractTitle(item.block),
+    content: extractContent(item.block),
+    fullContent: item.fullContent,
+    propertyValues: item.propertyValues,
+    created: item.block.created ? new Date(item.block.created) : undefined,
+    modified: item.block.modified ? new Date(item.block.modified) : undefined,
+    tags: item.block.aliases || [],
+    rawTree: item.tree, // 保留原始树数据
+  }));
 }
 
 /**
@@ -150,6 +206,10 @@ export async function searchBlocksByTag(
         maxResults: safeMaxResults,
         sort: [["_modified", "DESC"]],
       });
+      console.log(
+        "[searchBlocksByTag] Query description:",
+        JSON.stringify(description)
+      );
       const runQuery = async (desc: any) => {
         const result = await orca.invokeBackend("query", desc);
         const payload = unwrapBackendResult<any>(result);
@@ -160,12 +220,17 @@ export async function searchBlocksByTag(
 
       if (!Array.isArray(blocks)) {
         console.warn("[searchBlocksByTag] Query result is not an array:", blocks);
-        return [];
+      } else if (blocks.length > 0) {
+        console.log(`[searchBlocksByTag] Query returned ${blocks.length} blocks`);
+        const limitedBlocks = blocks.slice(0, safeMaxResults);
+        const trees = await fetchBlockTrees(limitedBlocks);
+        return await transformToSearchResults(trees, {
+          includeProperties: true,
+          expandBlockRefs: true,
+        });
+      } else {
+        console.log("[searchBlocksByTag] Query returned 0 blocks, falling back to tag API");
       }
-
-      const limitedBlocks = blocks.slice(0, safeMaxResults);
-      const trees = await fetchBlockTrees(limitedBlocks);
-      return transformToSearchResults(trees, { includeProperties: true });
     } catch (queryErr) {
       console.warn("[searchBlocksByTag] Query failed, falling back to tag search:", queryErr);
     }
@@ -178,9 +243,59 @@ export async function searchBlocksByTag(
       return [];
     }
 
-    const sortedBlocks = sortAndLimitBlocks(blocks, safeMaxResults);
-    const trees = await fetchBlockTrees(sortedBlocks);
-    return transformToSearchResults(trees, { includeProperties: true });
+    if (blocks.length > 0) {
+      console.log(`[searchBlocksByTag] Tag API returned ${blocks.length} blocks`);
+      const sortedBlocks = sortAndLimitBlocks(blocks, safeMaxResults);
+      const trees = await fetchBlockTrees(sortedBlocks);
+      return await transformToSearchResults(trees, {
+        includeProperties: true,
+        expandBlockRefs: true,
+      });
+    }
+
+    console.log("[searchBlocksByTag] Tag API returned 0 blocks, trying ref fallback");
+    try {
+      const tagBlock = await orca.invokeBackend("get-block-by-alias", normalizedTag);
+      if (tagBlock?.id) {
+        const refDescription = {
+          q: {
+            kind: 100,
+            conditions: [
+              {
+                kind: 6,
+                blockId: tagBlock.id,
+              },
+            ],
+          },
+          sort: [["_modified", "DESC"]],
+          pageSize: safeMaxResults,
+        };
+        console.log(
+          "[searchBlocksByTag] Ref fallback query description:",
+          JSON.stringify(refDescription)
+        );
+
+        const refResult = await orca.invokeBackend("query", refDescription);
+        const refPayload = unwrapBackendResult<any>(refResult);
+        throwIfBackendError(refPayload, "query");
+        const refBlocks = unwrapBlocks(refPayload);
+        if (Array.isArray(refBlocks) && refBlocks.length > 0) {
+          console.log(
+            `[searchBlocksByTag] Ref fallback returned ${refBlocks.length} blocks`
+          );
+          const limitedBlocks = refBlocks.slice(0, safeMaxResults);
+          const trees = await fetchBlockTrees(limitedBlocks);
+          return await transformToSearchResults(trees, {
+            includeProperties: true,
+            expandBlockRefs: true,
+          });
+        }
+      }
+    } catch (refErr) {
+      console.warn("[searchBlocksByTag] Ref fallback failed:", refErr);
+    }
+
+    return [];
   } catch (error: any) {
     console.error(`Failed to search blocks by tag "${tagName}":`, error);
     throw new Error(
@@ -228,7 +343,10 @@ export async function searchBlocksByText(
 
       const limitedBlocks = blocks.slice(0, safeMaxResults);
       const trees = await fetchBlockTrees(limitedBlocks);
-      return transformToSearchResults(trees, { includeProperties: false });
+      return await transformToSearchResults(trees, {
+        includeProperties: false,
+        expandBlockRefs: false,
+      });
     } catch (queryErr) {
       console.warn("[searchBlocksByText] Query failed, falling back to text search:", queryErr);
     }
@@ -246,7 +364,10 @@ export async function searchBlocksByText(
 
     const sortedBlocks = sortAndLimitBlocks(blocks, safeMaxResults);
     const trees = await fetchBlockTrees(sortedBlocks);
-    return transformToSearchResults(trees, { includeProperties: false });
+    return await transformToSearchResults(trees, {
+      includeProperties: false,
+      expandBlockRefs: false,
+    });
   } catch (error: any) {
     console.error(`Failed to search blocks by text "${searchText}":`, error);
     throw new Error(
@@ -400,9 +521,10 @@ export async function queryBlocksByTag(
           .map((v: string) => v.trim())
       : [];
 
-    return transformToSearchResults(trees, {
+    return await transformToSearchResults(trees, {
       includeProperties: true,
       propNames,
+      expandBlockRefs: true,
     });
   } catch (error: any) {
     console.error(`Failed to query blocks by tag "${tagName}":`, error);
@@ -507,7 +629,10 @@ export async function searchTasks(
 
     const limitedBlocks = blocks.slice(0, maxResults);
     const trees = await fetchBlockTrees(limitedBlocks);
-    return transformToSearchResults(trees, { includeProperties: false });
+    return await transformToSearchResults(trees, {
+      includeProperties: false,
+      expandBlockRefs: true,
+    });
   } catch (error: any) {
     console.error("[searchTasks] Failed:", error);
     throw new Error(
@@ -590,7 +715,10 @@ export async function searchJournalEntries(
       options.includeChildren === false
         ? limitedBlocks.map((block) => ({ block, tree: null }))
         : await fetchBlockTrees(limitedBlocks);
-    return transformToSearchResults(trees, { includeProperties: false });
+    return await transformToSearchResults(trees, {
+      includeProperties: false,
+      expandBlockRefs: true,
+    });
   } catch (error: any) {
     console.error("[searchJournalEntries] Failed:", error);
     throw new Error(
@@ -629,8 +757,9 @@ export async function getTodayJournal(
       tree = treePayload;
     }
 
-    const results = transformToSearchResults([{ block, tree }], {
+    const results = await transformToSearchResults([{ block, tree }], {
       includeProperties: false,
+      expandBlockRefs: true,
     });
     return results[0];
   } catch (error: any) {
@@ -698,8 +827,9 @@ export async function getRecentJournals(
         }
       }
       
-      const transformed = transformToSearchResults([{ block, tree }], {
+      const transformed = await transformToSearchResults([{ block, tree }], {
         includeProperties: false,
+        expandBlockRefs: true,
       });
       
       if (transformed.length > 0) {
@@ -800,8 +930,9 @@ export async function getJournalByDate(
       }
     }
     
-    const transformed = transformToSearchResults([{ block, tree }], {
+    const transformed = await transformToSearchResults([{ block, tree }], {
       includeProperties: false,
+      expandBlockRefs: true,
     });
     
     if (transformed.length > 0) {
@@ -992,8 +1123,9 @@ export async function getJournalsByDateRange(
             }
           }
           
-          const transformed = transformToSearchResults([{ block, tree }], {
+          const transformed = await transformToSearchResults([{ block, tree }], {
             includeProperties: false,
+            expandBlockRefs: true,
           });
           
           if (transformed.length > 0) {
@@ -1062,7 +1194,10 @@ export async function queryBlocksAdvanced(
 
     const limitedBlocks = blocks.slice(0, maxResults);
     const trees = await fetchBlockTrees(limitedBlocks);
-    return transformToSearchResults(trees, { includeProperties: true });
+    return await transformToSearchResults(trees, {
+      includeProperties: true,
+      expandBlockRefs: true,
+    });
   } catch (error: any) {
     console.error("[queryBlocksAdvanced] Failed:", error);
     throw new Error(
@@ -1136,7 +1271,10 @@ export async function searchBlocksByReference(
     // Step 4: Transform results
     const limitedBlocks = blocks.slice(0, maxResults);
     const trees = await fetchBlockTrees(limitedBlocks);
-    return transformToSearchResults(trees, { includeProperties: false });
+    return await transformToSearchResults(trees, {
+      includeProperties: false,
+      expandBlockRefs: true,
+    });
   } catch (error: any) {
     console.error(`[searchBlocksByReference] Failed to search references to "${aliasName}":`, error);
     throw new Error(
@@ -1184,8 +1322,9 @@ export async function getPageByName(
     }
 
     // Step 3: Transform to SearchResult
-    const results = transformToSearchResults([{ block, tree }], {
+    const results = await transformToSearchResults([{ block, tree }], {
       includeProperties: true,
+      expandBlockRefs: true,
     });
 
     return results[0];

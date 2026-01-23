@@ -276,11 +276,7 @@ export const TOOLS: OpenAITool[] = [
     type: "function",
     function: {
       name: "searchBlocksByTag",
-      description: `按标签搜索笔记。
-
-【何时使用】用户提到 #标签名，或要查找带特定标签的笔记
-【参数】tag_query必填，格式"#标签名"，多标签用空格如"#TODO #重要"
-【注意】不支持属性过滤，如需Status=Done这种条件用query_blocks_by_tag`,
+      description: `按标签搜索笔记，默认返回内容+标签属性（block-ref 自动展开为块摘要）。briefMode=true 仅标题摘要，不含属性/子块。用于 #标签查询。tag_query 必填（"#标签名"，空格分多标签）；属性过滤用 query_blocks_by_tag。`,
       parameters: {
         type: "object",
         properties: {
@@ -362,13 +358,7 @@ export const TOOLS: OpenAITool[] = [
     type: "function",
     function: {
       name: "query_blocks_by_tag",
-      description: `按标签+属性条件搜索。
-
-【何时使用】需要过滤标签属性值，如"#Task中Status=Done的"
-【参数】
-- tagName: 标签名，不带#号！如"Task"
-- filters: [{name:"Status", op:"==", value:"Done"}]
-【注意】value用文本如"Done"，不要用数字编码`,
+      description: `按标签+属性条件查询，返回内容+标签属性（block-ref 自动展开为块摘要）。用于按属性过滤（如状态/优先级）。tagName 不带#；filters 用文本值。`,
       parameters: {
         type: "object",
         properties: {
@@ -1541,6 +1531,89 @@ function formatBriefResult(result: any, index: number): string {
   return `${index + 1}. [${title}](orca-block:${result.id})`;
 }
 
+const MAX_PROPERTY_LINES = 5;
+const MAX_BLOCK_REF_ITEMS = 3;
+
+function extractBlockId(value: any): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return Math.trunc(value);
+  }
+  if (typeof value === "string") {
+    const match = value.match(/(?:blockid:|orca-block:)?(\d+)/i);
+    if (match) {
+      const parsed = Number(match[1]);
+      return Number.isFinite(parsed) ? parsed : undefined;
+    }
+  }
+  if (value && typeof value === "object") {
+    const candidates = [
+      value.id,
+      value.blockId,
+      value.block_id,
+      value.to,
+    ];
+    for (const candidate of candidates) {
+      const parsed = extractBlockId(candidate);
+      if (parsed !== undefined) return parsed;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * 格式化属性值输出（用于标签搜索结果）
+ */
+function formatPropertyValues(propertyValues: Record<string, any> | undefined): string {
+  if (!propertyValues || typeof propertyValues !== "object") return "";
+  const entries = Object.entries(propertyValues);
+  if (entries.length === 0) return "";
+
+  const lines: string[] = [];
+  for (const [nameRaw, value] of entries) {
+    const name = String(nameRaw ?? "").trim();
+    if (!name || name.startsWith("_")) continue;
+    if (lines.length >= MAX_PROPERTY_LINES) break;
+
+    let formatted = "";
+    if (Array.isArray(value)) {
+      if (value.length === 0) {
+        formatted = "(未设置)";
+      } else {
+        const isBlockRef = value.some((item) => {
+          if (!item || typeof item !== "object") return false;
+          return "title" in item || "id" in item || "blockId" in item || "to" in item;
+        });
+
+        if (isBlockRef) {
+        const items = value.slice(0, MAX_BLOCK_REF_ITEMS);
+        formatted = items
+          .map((item: any) => {
+            const title = typeof item?.title === "string" && item.title.trim()
+              ? item.title.trim()
+              : "(未命名)";
+            const blockId = extractBlockId(item);
+            return `${title} (blockid:${blockId ?? "?"})`;
+          })
+          .join(", ");
+        if (value.length > MAX_BLOCK_REF_ITEMS) {
+          formatted += " 等";
+        }
+        } else {
+        formatted = JSON.stringify(value);
+        }
+      }
+    } else if (value === null || value === undefined) {
+      formatted = "(未设置)";
+    } else {
+      formatted = String(value);
+    }
+
+    lines.push(`   - ${name}: ${formatted}`);
+  }
+
+  return lines.length > 0 ? `\n${lines.join("\n")}` : "";
+}
+
 /**
  * 格式化仅统计模式的结果
  */
@@ -1611,7 +1684,13 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
         const preservationNote = addLinkPreservationNote(results.length);
         const summary = briefMode
           ? results.map((r: any, i: number) => formatBriefResult(r, i + offset)).join("\n")
-          : results.map((r: any, i: number) => formatBlockResult(r, i + offset)).join("\n\n");
+          : results
+              .map((r: any, i: number) => {
+                const base = formatBlockResult(r, i + offset);
+                const props = formatPropertyValues(r.propertyValues);
+                return `${base}${props}`;
+              })
+              .join("\n\n");
         
         // Build pagination info
         let paginationInfo = "";
@@ -1718,7 +1797,13 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
         }
 
         const preservationNote = addLinkPreservationNote(results.length);
-        const summary = results.map((r: any, i: number) => formatBlockResult(r, i)).join("\n\n");
+        const summary = results
+          .map((r: any, i: number) => {
+            const base = formatBlockResult(r, i);
+            const props = formatPropertyValues(r.propertyValues);
+            return `${base}${props}`;
+          })
+          .join("\n\n");
         const limitWarning = buildLimitWarning(results.length, requestedMax, actualLimit);
 
         // Add explicit completion indicator to prevent unnecessary follow-up queries

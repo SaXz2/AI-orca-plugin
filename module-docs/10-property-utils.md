@@ -18,6 +18,8 @@
 | `buildPropertyValues`            | 批量提取多个属性值                               |
 | `pickBlockForPropertyExtraction` | 选择最适合属性提取的 block 对象                  |
 | `extractAllProperties`           | 提取 block 的所有属性                            |
+| `batchFetchBlocks`               | 批量获取块并构建 ID 映射                          |
+| `expandBlockRefProperties`       | 展开 block-ref 属性为块摘要数组（支持 ref.id → ref.to） |
 
 ## 属性查找顺序
 

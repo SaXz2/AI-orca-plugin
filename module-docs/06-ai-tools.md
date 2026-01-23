@@ -63,6 +63,8 @@ executeTool 调用对应的 search-service 函数
 - 可点击的笔记链接：`[标题](orca-block:id)`
 - 笔记内容预览
 - 属性值（如适用）
+- `searchBlocksByTag`/`queryBlocksByTag` 默认返回标签属性；block-ref 属性会展开为块摘要
+- `briefMode=true` 时仅返回标题+摘要，不包含属性详情
 
 示例：
 
@@ -89,3 +91,4 @@ Found 3 note(s) with tag "task" (filtered by: priority >= 8):
 ## 更新记录
 
 - 2025-12-21：从 `AiChatPanel.tsx` 提取为独立模块
+- 2026-01-23：补充标签搜索返回属性与 block-ref 展开说明

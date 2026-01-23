@@ -10,6 +10,12 @@
 ```
 预期：返回带 TODO 标签的笔记列表
 
+### searchBlocksByTag (属性展开)
+```
+搜索 #书籍，显示作者
+```
+预期：结果包含属性行，如 `作者: 东野 (blockid:13)`；block-ref 显示为 `title (blockid:id)` 格式
+
 ### searchBlocksByTag (countOnly)
 ```
 我有多少条 #TODO 笔记

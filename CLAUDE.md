@@ -173,6 +173,8 @@ queryBlocksByTag(tagName: string, options?: {
 - High-priority tasks: `queryBlocksByTag("task", { properties: [{ name: "priority", op: ">=", value: 8 }] })`
 - Notes without category: `queryBlocksByTag("note", { properties: [{ name: "category", op: "is null" }] })`
 
+**说明**：除 `searchBlocksByText` 外，所有搜索工具会自动展开 block-ref 类型的属性，将块 ID 解析为块摘要（id/title/content）。
+
 ### 4. createBlock
 
 MCP-inspired context-independent block creation.
