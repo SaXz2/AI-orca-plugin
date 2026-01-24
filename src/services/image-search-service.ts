@@ -275,6 +275,10 @@ async function searchDuckDuckGoImages(
   console.log(`[DuckDuckGo Images] Searching: ${query}`);
 
   try {
+    // 添加超时控制
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 秒超时
+
     // 步骤1: 获取 vqd token（DuckDuckGo 的搜索令牌）
     const tokenUrl = `https://duckduckgo.com/?q=${encodeURIComponent(query)}`;
     const tokenResponse = await fetch(tokenUrl, {
@@ -283,7 +287,10 @@ async function searchDuckDuckGoImages(
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.9",
       },
+      signal: controller.signal,
     });
+
+    clearTimeout(timeoutId);
 
     if (!tokenResponse.ok) {
       throw new Error(`获取 DuckDuckGo token 失败: ${tokenResponse.status}`);
@@ -563,19 +570,17 @@ async function searchBraveImages(
 // 聚合多个搜索引擎的图片结果
 // ═══════════════════════════════════════════════════════════════════════════
 
-// 公共 SearXNG 实例列表（从 searx.space 选取活跃且支持 JSON API 的实例）
+// 公共 SearXNG 实例列表（只保留最稳定的几个）
 const SEARXNG_IMAGE_INSTANCES = [
   "https://search.inetol.net",
-  "https://searx.tiekoetter.com",
   "https://search.hbubli.cc",
-  "https://searx.juancord.xyz",
-  "https://search.leptons.xyz",
-  "https://searx.daetalytica.io",
-  "https://searx.oakleycord.dev",
-  "https://search.mdosch.de",
-  "https://searx.colbster937.dev",
-  "https://searx.perennialte.ch",
+  // 移除经常失败的实例，减少重试时间
 ];
+
+// 失败实例的黑名单缓存（避免重复尝试已知失败的实例）
+const failedInstances = new Set<string>();
+const instanceFailureTime = new Map<string, number>();
+const INSTANCE_RETRY_DELAY = 5 * 60 * 1000; // 5 分钟后才重试失败的实例
 
 async function searchSearXNGImages(
   query: string,
@@ -587,8 +592,32 @@ async function searchSearXNGImages(
 
   const instances = instanceUrl ? [instanceUrl] : SEARXNG_IMAGE_INSTANCES;
   let lastError: Error | null = null;
+  let attemptedCount = 0;
+  const maxAttempts = 2; // 最多只尝试 2 个实例
+
+  // 清理过期的失败记录
+  const now = Date.now();
+  for (const [instance, failTime] of instanceFailureTime.entries()) {
+    if (now - failTime > INSTANCE_RETRY_DELAY) {
+      failedInstances.delete(instance);
+      instanceFailureTime.delete(instance);
+    }
+  }
 
   for (const instance of instances) {
+    // 跳过最近失败的实例
+    if (failedInstances.has(instance)) {
+      console.log(`[SearXNG Images] Skipping recently failed instance: ${instance}`);
+      continue;
+    }
+
+    if (attemptedCount >= maxAttempts) {
+      console.log(`[SearXNG Images] Reached max attempts (${maxAttempts})`);
+      break;
+    }
+
+    attemptedCount++;
+
     try {
       const cleanInstance = instance.replace(/\/+$/, "");
       const url = new URL(`${cleanInstance}/search`);
@@ -597,14 +626,21 @@ async function searchSearXNGImages(
       url.searchParams.set("categories", "images");
       url.searchParams.set("safesearch", String(safeSearch));
 
-      console.log(`[SearXNG Images] Trying ${cleanInstance} for: ${query}`);
+      console.log(`[SearXNG Images] Trying ${cleanInstance} (attempt ${attemptedCount}/${maxAttempts})`);
+
+      // 添加超时控制
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 秒超时
 
       const response = await fetch(url.toString(), {
         headers: {
           "Accept": "application/json",
           "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         },
+        signal: controller.signal,
       });
+
+      clearTimeout(timeoutId);
 
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}`);
@@ -640,6 +676,10 @@ async function searchSearXNGImages(
     } catch (error: any) {
       lastError = error;
       console.warn(`[SearXNG Images] ${instance} failed:`, error.message);
+      
+      // 标记失败的实例
+      failedInstances.add(instance);
+      instanceFailureTime.set(instance, Date.now());
     }
   }
 

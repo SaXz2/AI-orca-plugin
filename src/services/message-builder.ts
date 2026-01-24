@@ -353,9 +353,19 @@ export async function buildConversationMessages(params: ConversationBuildParams)
         systemContent = (systemContent || "") + summarySection;
         
         // 只保留 pinned 消息和最近消息
-        filteredMessages = [...pinned, ...recentMessages];
+        const combinedMessages = [...pinned, ...recentMessages];
+        
+        // 安全检查：确保至少有一些消息
+        if (combinedMessages.length > 0) {
+          filteredMessages = combinedMessages;
+        } else {
+          console.warn("[message-builder] Compression resulted in empty messages, keeping original");
+          // 保留原始消息，不应用压缩
+        }
       }
     } catch (error) {
+      console.error("[message-builder] Compression failed:", error);
+      // 压缩失败时保留原始消息
     }
   }
   
@@ -409,6 +419,16 @@ export async function buildConversationMessages(params: ConversationBuildParams)
     }
     return true;
   });
+
+  // 安全检查：如果过滤后没有消息了，至少保留最后一条用户消息
+  if (filteredHistory.length === 0 && messages.length > 0) {
+    console.warn("[message-builder] All messages filtered out, keeping last user message");
+    const lastUserMessage = messages.filter(m => m.role === "user").pop();
+    if (lastUserMessage) {
+      const apiMessage = await messageToApiWithImages(lastUserMessage);
+      filteredHistory.push(apiMessage);
+    }
+  }
 
   const standard: OpenAIChatMessage[] = [
     ...(systemContent ? [{ role: "system" as const, content: systemContent }] : []),

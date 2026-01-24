@@ -43,6 +43,10 @@ import {
   getExchangeRates,
   formatExchangeRates,
 } from "./utility-tools";
+import {
+  fetchWebContent,
+  formatFetchedContent,
+} from "./web-fetcher";
 
 // 获取 Skill 工具列表（新的 SkillsManager 实现）
 function getSkillTools(): OpenAITool[] {
@@ -60,6 +64,38 @@ function getSkillTools(): OpenAITool[] {
  */
 
 /**
+ * 将 Skill ID 转换为符合 OpenAI 规范的工具名称
+ * OpenAI 要求工具名称只能包含：字母、数字、下划线、连字符
+ * 
+ * 转换规则：
+ * 1. 移除所有非 ASCII 字符（包括中文）
+ * 2. 将空格替换为下划线
+ * 3. 如果结果为空，使用 skill_ + 索引
+ */
+function sanitizeSkillName(skillId: string, index: number): string {
+  // 移除所有非字母、数字、下划线、连字符的字符
+  let sanitized = skillId.replace(/[^a-zA-Z0-9_-]/g, '');
+  
+  // 移除连续的下划线
+  sanitized = sanitized.replace(/_+/g, '_');
+  
+  // 移除开头和结尾的下划线
+  sanitized = sanitized.replace(/^_+|_+$/g, '');
+  
+  // 如果结果为空，使用索引作为名称
+  if (!sanitized) {
+    return `skill_${index}`;
+  }
+  
+  // 确保以字母开头（如果以数字开头，添加 s 前缀）
+  if (/^\d/.test(sanitized)) {
+    sanitized = 's' + sanitized;
+  }
+  
+  return `skill_${sanitized}`;
+}
+
+/**
  * Level 1: 获取 Skill 元数据列表（轻量级）
  * 用于 AI 发现可用的 Skills，成本极低
  */
@@ -69,17 +105,30 @@ export async function getSkillMetadataAsync(): Promise<OpenAITool[]> {
     const skillIds = await listSkills();
     const tools: OpenAITool[] = [];
     
-    for (const skillId of skillIds) {
+    for (let i = 0; i < skillIds.length; i++) {
+      const skillId = skillIds[i];
       try {
         const skill = await getSkill(skillId);
         if (!skill) continue;
         
+        // 生成符合 OpenAI 规范的工具名称
+        const toolName = sanitizeSkillName(skillId, i);
+        
+        // 验证工具名称是否符合规范
+        if (!/^[a-zA-Z0-9_-]+$/.test(toolName)) {
+          console.error(`[SkillTools] Generated invalid tool name: "${toolName}" from skillId: "${skillId}"`);
+          continue; // 跳过无效的工具
+        }
+        
+        console.log(`[SkillTools] Skill "${skillId}" → tool name "${toolName}"`);
+        
         // Level 1: 只返回元数据，不包含详细指令
+        // 在 description 中包含原始 Skill ID，以便后续查找
         tools.push({
           type: "function",
           function: {
-            name: `skill_${skillId}`,
-            description: skill.metadata.description || skill.metadata.name || skillId,
+            name: toolName,
+            description: `[Skill: ${skillId}] ${skill.metadata.description || skill.metadata.name || skillId}`,
             parameters: {
               type: "object",
               properties: {
@@ -1112,11 +1161,27 @@ export const WIKIPEDIA_TOOL: OpenAITool = {
 
 【参数】
 - query: 搜索关键词
-- lang: 语言代码，默认 zh（中文），可选 en（英文）、ja（日文）等
+- lang: 语言代码（可选）
+  * zh: 中文（默认）
+  * en: 英文
+  * ja: 日文
+  * de: 德文
+  * fr: 法文
+  * es: 西班牙文
+  * 等其他语言代码
+- fallback: 是否在当前语言没有结果时自动尝试其他语言（默认 true）
+
+【语言选择建议】
+- 中文查询 → 优先 zh，可能内容较少
+- 英文查询 → 优先 en，通常内容最详细
+- 科技/学术主题 → 建议 en，内容更全面
+- 本地化主题（如中国历史）→ 建议 zh
+- 不同语言版本内容可能差异很大，可以尝试多个语言
 
 【注意】
-- 优先使用中文 Wikipedia，如果没有结果会自动尝试英文
-- 返回结果包含摘要和链接，可能包含图片`,
+- 返回完整词条内容，可能很长
+- 长内容会自动分段返回
+- 包含图片链接（如果有）`,
     parameters: {
       type: "object",
       properties: {
@@ -1126,10 +1191,62 @@ export const WIKIPEDIA_TOOL: OpenAITool = {
         },
         lang: {
           type: "string",
-          description: "语言代码，默认 zh（中文）",
+          description: "语言代码，默认 zh（中文）。可选：en（英文）、ja（日文）、de（德文）、fr（法文）等",
+          enum: ["zh", "en", "ja", "de", "fr", "es", "ru", "it", "pt", "ko"],
+        },
+        fallback: {
+          type: "boolean",
+          description: "当前语言没有结果时是否自动尝试英文，默认 true",
         },
       },
       required: ["query"],
+    },
+  },
+};
+
+/**
+ * 网页内容抓取工具
+ */
+export const FETCH_URL_TOOL: OpenAITool = {
+  type: "function",
+  function: {
+    name: "fetch_url",
+    description: `抓取指定 URL 的网页内容。
+
+【何时使用】
+- 用户提供了具体的网址链接
+- 需要查看某个网页的详细内容
+- 需要提取网页中的表格、数据、文章等信息
+- Wikipedia 表格内容不完整时，可以直接抓取 Wikipedia 页面
+
+【参数】
+- url: 要抓取的网页 URL（必须是完整的 http:// 或 https:// 链接）
+- max_length: 最大内容长度（可选，默认 100000 字符）
+
+【返回内容】
+- 网页标题
+- 转换为 Markdown 格式的内容
+- 保留表格、列表、标题等结构
+- 自动清理广告、脚本等无关内容
+
+【注意】
+- 只支持公开可访问的网页
+- 某些网站可能有反爬虫限制
+- 内容过长会自动截断
+- 不支持需要登录的页面`,
+    parameters: {
+      type: "object",
+      properties: {
+        url: {
+          type: "string",
+          description: "要抓取的网页 URL（完整的 http:// 或 https:// 链接）",
+        },
+        max_length: {
+          type: "number",
+          description: "最大内容长度（字符数），默认 100000",
+        },
+      },
+      required: ["url"],
     },
   },
 };
@@ -1199,6 +1316,9 @@ export function getTools(webSearchEnabled?: boolean, scriptAnalysisEnabled?: boo
   if (wikipediaOn) {
     tools.push(WIKIPEDIA_TOOL);
   }
+  
+  // 网页抓取工具（总是可用）
+  tools.push(FETCH_URL_TOOL);
   
   // 汇率工具（独立开关）
   if (currencyOn) {
@@ -1754,6 +1874,7 @@ function getToolDefinitionByName(toolName: string): OpenAITool | undefined {
     WEB_SEARCH_TOOL,
     IMAGE_SEARCH_TOOL,
     WIKIPEDIA_TOOL,
+    FETCH_URL_TOOL,
     CURRENCY_TOOL,
     ...getScriptAnalysisTools(),
     ...getSkillTools(),
@@ -3296,15 +3417,16 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
       try {
         const query = args.query;
         const lang = args.lang || "zh";
+        const fallback = args.fallback !== false; // 默认 true
         
         if (!query) {
           return "Error: 请提供搜索关键词";
         }
         
-        const result = await searchWikipedia(query, lang);
+        const result = await searchWikipedia(query, lang, true, fallback);
         
         if (!result) {
-          return `未在 Wikipedia 中找到关于"${query}"的内容。`;
+          return `未在 Wikipedia (${lang}) 中找到关于"${query}"的内容。${fallback ? "已尝试英文版本。" : ""}`;
         }
         
         return formatWikipediaResult(result);
@@ -3333,6 +3455,32 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
         }
       } catch (err: any) {
         return `汇率查询失败: ${err.message}`;
+      }
+    } else if (toolName === "fetch_url") {
+      // 网页内容抓取工具
+      try {
+        const url = args.url;
+        const maxLength = args.max_length || 50000; // 减少默认长度
+        
+        if (!url) {
+          return "Error: 请提供 URL";
+        }
+        
+        // 验证 URL 格式
+        if (!url.startsWith("http://") && !url.startsWith("https://")) {
+          return "Error: URL 必须以 http:// 或 https:// 开头";
+        }
+        
+        console.log(`[fetch_url] Fetching: ${url}`);
+        
+        const result = await fetchWebContent(url, {
+          maxLength,
+          timeout: 15000, // 15 秒超时
+        });
+        
+        return formatFetchedContent(result);
+      } catch (err: any) {
+        return `❌ 网页抓取失败: ${err.message}\n\n💡 可能的原因：\n- 网站拒绝访问或有反爬虫保护\n- URL 不正确或网页不存在\n- 网络连接问题\n- 网站需要登录才能访问`;
       }
     } else if (toolName === "generateFlashcards") {
       // 闪卡生成工具 - 返回结构化数据供前端处理
@@ -3411,6 +3559,54 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
       const scriptResult = await handleScriptAnalysisTool(toolName, args);
       if (scriptResult !== null) {
         return scriptResult;
+      }
+      
+      // 尝试处理 Skill 工具
+      if (toolName.startsWith("skill_")) {
+        try {
+          // 从工具名称中提取原始 Skill ID
+          // 需要从所有 skills 中查找匹配的
+          const { listSkills, getSkill } = await import("./skills-manager");
+          const skillIds = await listSkills();
+          
+          // 尝试找到匹配的 Skill
+          let matchedSkillId: string | null = null;
+          
+          for (let i = 0; i < skillIds.length; i++) {
+            const skillId = skillIds[i];
+            const sanitizedName = sanitizeSkillName(skillId, i);
+            if (sanitizedName === toolName) {
+              matchedSkillId = skillId;
+              break;
+            }
+          }
+          
+          if (!matchedSkillId) {
+            return `Skill not found for tool: ${toolName}`;
+          }
+          
+          // 获取 Skill 详情
+          const skill = await getSkill(matchedSkillId);
+          if (!skill) {
+            return `Skill not found: ${matchedSkillId}`;
+          }
+          
+          // 返回 Skill 的指令和输入
+          const input = args.input || "";
+          return `# 执行技能：${skill.metadata.name}
+
+## 用户输入
+${input}
+
+## 技能指令
+${skill.instruction}
+
+---
+
+请根据上述指令处理用户输入。`;
+        } catch (err: any) {
+          return `Error executing skill: ${err.message}`;
+        }
       }
       
       return `Unknown tool: ${toolName}`;

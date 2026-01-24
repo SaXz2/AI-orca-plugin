@@ -91,6 +91,10 @@ async function readErrorMessage(res: Response): Promise<string> {
   try {
     if (contentType.includes("application/json")) {
       const json = await res.json();
+      
+      // 详细日志：输出完整的错误响应
+      console.error("[API Error] Full error response:", JSON.stringify(json, null, 2));
+      
       const msg =
         json?.error?.message ??
         json?.message ??
@@ -102,7 +106,10 @@ async function readErrorMessage(res: Response): Promise<string> {
 
   try {
     const text = await res.text();
-    if (text.trim()) return text.trim();
+    if (text.trim()) {
+      console.error("[API Error] Text response:", text);
+      return text.trim();
+    }
   } catch {}
 
   return `HTTP ${res.status}`;
@@ -481,8 +488,21 @@ export async function* openAIChatCompletionsStream(
   }
 
   // DEBUG: Log the full request body to help troubleshoot 400 errors
-  if (protocol === "anthropic") {
-    console.log("[Anthropic Debug] Request Body:", JSON.stringify(requestBody, null, 2));
+  console.log(`${logPrefix} Request URL:`, urlCandidates[0]);
+  console.log(`${logPrefix} Request Body:`, JSON.stringify(requestBody, null, 2));
+  
+  // 验证请求体中的关键字段
+  if (requestBody.tools && requestBody.tools.length > 0) {
+    console.log(`${logPrefix} Tools count:`, requestBody.tools.length);
+    requestBody.tools.forEach((tool: any, idx: number) => {
+      const toolName = protocol === "anthropic" ? tool.name : tool.function?.name;
+      console.log(`${logPrefix} Tool[${idx}]:`, toolName);
+      
+      // 检查工具名称是否符合规范（只能包含字母、数字、下划线和连字符）
+      if (toolName && !/^[a-zA-Z0-9_-]+$/.test(toolName)) {
+        console.error(`${logPrefix} ⚠️ Invalid tool name detected: "${toolName}" - must match pattern ^[a-zA-Z0-9_-]+$`);
+      }
+    });
   }
 
   const body = JSON.stringify(requestBody);
@@ -518,7 +538,13 @@ export async function* openAIChatCompletionsStream(
     }
 
     const msg = await readErrorMessage(res);
-    console.error(`${logPrefix} Error response:`, res.status, url, msg);
+    console.error(`${logPrefix} ❌ Error response:`, {
+      status: res.status,
+      statusText: res.statusText,
+      url: url,
+      message: msg,
+      headers: Object.fromEntries(res.headers.entries())
+    });
     throw new Error(msg);
   }
 

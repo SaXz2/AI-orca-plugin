@@ -21,7 +21,6 @@
 
 const SKILLS_ROOT = "skills";
 const SKILL_METADATA_FILE = "SKILL.md";
-const SCRIPTS_DIR = "scripts";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
