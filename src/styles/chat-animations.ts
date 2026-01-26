@@ -429,12 +429,6 @@ export const chatAnimations = `
         background: rgba(255, 255, 255, 0.03);
         border-color: rgba(255, 255, 255, 0.1);
     }
-    
-    /* 标题在暗色模式下的优化 */
-    h1, h2, h3, h4, h5, h6 {
-        background: rgba(255, 255, 255, 0.03) !important;
-        border-left-color: var(--orca-color-primary) !important;
-    }
 }
 
 .md-list-ordered {
