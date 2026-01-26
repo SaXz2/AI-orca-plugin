@@ -328,10 +328,7 @@ export async function updateSkill(
 }
 
 /**
- * 删除 Skill（删除所有文件，但文件夹无法删除 - Orca API 限制）
- * 
- * 注意：Orca API 的 removeFile 不支持删除文件夹，只能删除文件。
- * 因此删除后会留下空文件夹，这是已知的 API 限制。
+ * 删除 Skill（直接删除整个文件夹）
  */
 export async function deleteSkill(skillId: string): Promise<boolean> {
   const pluginName = getPluginName();
@@ -339,35 +336,13 @@ export async function deleteSkill(skillId: string): Promise<boolean> {
   try {
     console.log(`[SkillsManager] Deleting skill: ${skillId}`);
     
-    // 列出所有文件并删除
-    const entries = await orca.plugins.listFiles(pluginName);
-    const skillPrefix = buildSkillPath(skillId);
-    const filesToDelete: string[] = [];
+    // 直接删除整个 Skill 文件夹
+    const skillFolderPath = buildSkillPath(skillId);
+    console.log(`[SkillsManager] Removing folder: ${skillFolderPath}`);
     
-    for (const entry of entries) {
-      const normalizedEntry = entry.replace(/\\/g, "/");
-      if (normalizedEntry.startsWith(`${skillPrefix}/`)) {
-        filesToDelete.push(entry);
-      }
-    }
+    await orca.plugins.removeFolder(pluginName, skillFolderPath);
     
-    // 按路径长度倒序排列，先删除深层文件，再删除浅层文件
-    filesToDelete.sort((a, b) => b.length - a.length);
-    
-    console.log(`[SkillsManager] Found ${filesToDelete.length} files to delete`);
-    
-    // 删除所有文件
-    for (const file of filesToDelete) {
-      try {
-        await orca.plugins.removeFile(pluginName, file);
-        console.log(`[SkillsManager] Deleted: ${file}`);
-      } catch (err) {
-        console.warn(`[SkillsManager] Failed to delete file ${file}:`, err);
-      }
-    }
-    
-    // 注意：文件夹无法删除，这是 Orca API 的限制
-    console.log(`[SkillsManager] Successfully deleted skill files: ${skillId} (empty folder may remain due to API limitation)`);
+    console.log(`[SkillsManager] Successfully deleted skill: ${skillId}`);
     return true;
   } catch (err) {
     console.error(`[SkillsManager] Failed to delete skill ${skillId}:`, err);
