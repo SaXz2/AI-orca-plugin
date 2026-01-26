@@ -1260,6 +1260,33 @@ br + .md-block-dot {
     }
 }
 
+/* ─────────────────────────────────────────────────────────────────────────────
+   Panel Background Override
+   去除面板内多余的背景色和边框
+   ─────────────────────────────────────────────────────────────────────────── */
+
+/* .orca-hideable 的直接子元素去掉背景色 */
+#main .orca-panel.active > .orca-hideable > div {
+    background: transparent !important;
+}
+
+/* .orca-hideable 内第一个子元素去掉背景色 */
+#main .orca-panel.active > .orca-hideable > div > div:first-child {
+    background: transparent !important;
+}
+
+/* .orca-hideable 内第四个子元素去掉边框和背景色 */
+#main .orca-panel.active > .orca-hideable > div > div:nth-child(4) {
+    border-top: none !important;
+    background: transparent !important;
+}
+
+/* 用户消息气泡样式调整 */
+.message-bubble-user {
+    background: var(--orca-color-bg-1) !important;
+    box-shadow: none !important;
+}
+
 `;
 
 let styleElement: HTMLStyleElement | null = null;
