@@ -58,7 +58,7 @@ import {
 } from "../services/session-service";
 import { exportSessionAsFile, saveSessionToJournal, saveMessagesToJournal } from "../services/export-service";
 import { sessionStore, updateSessionStore, clearSessionStore } from "../store/session-store";
-import { TOOLS, FLASHCARD_TOOL, executeTool, getToolsForDraggedContext, getTools, extractSearchResultsFromToolResults, getSkillToolsAsync, getSkillInstructionsAsync } from "../services/ai-tools";
+import { TOOLS, FLASHCARD_TOOL, executeTool, getToolsForDraggedContext, getTools, extractSearchResultsFromToolResults, getSkillToolsAsync, getSkillInstructionsAsync, getSkillToolName, resolveSkillIdFromToolName } from "../services/ai-tools";
 import { TODOIST_TOOLS, executeTodoistTool, isTodoistTool } from "../services/todoist-tools";
 import { startPythonServer, stopPythonServer, getPythonServerStatus, browserAIChat, browserAIStatus as checkBrowserAIStatus } from "../services/python-runtime";
 import { getToolStatus, isToolDisabled, shouldAskForTool, isAgenticRAGEnabled, getAgenticRAGConfig, isSkillPrecheckEnabled } from "../store/tool-store";
@@ -463,17 +463,20 @@ export default function AiChatPanel({ panelId }: PanelProps) {
   }): Promise<SkillPrecheckSummary | null> => {
     if (!text.trim() || skills.length === 0) return null;
 
-    const maxSkills = 30;
+    const maxSkills = 60;
     const skillLines = skills.slice(0, maxSkills).map((skill) => {
+      const tags = Array.isArray(skill.metadata.tags) && skill.metadata.tags.length
+        ? ` tags=${skill.metadata.tags.join(",")}`
+        : "";
       const desc = skill.metadata.description ? ` - ${skill.metadata.description}` : "";
-      return `- ${skill.id}: ${skill.metadata.name}${desc}`;
+      return `- ${skill.id}: ${skill.metadata.name}${tags}${desc}`;
     }).join("\n");
     const truncatedNote = skills.length > maxSkills
       ? `\n(Only showing first ${maxSkills} skills.)`
       : "";
 
     const systemPrompt = `你是技能预检器，目标是判断用户请求是否适合调用某个技能。
-只输出 JSON，不要添加解释或代码块。
+只输出 JSON，不要添加解释、不要用代码块。
 
 输出格式：
 {
@@ -486,9 +489,11 @@ export default function AiChatPanel({ panelId }: PanelProps) {
 
 规则：
 - matches 最多 3 条，按相关性排序。
-- 如果没有合适技能，matches 为空，suggestedSkillId 为 null。`;
+- matches 中 skillId 不能重复。
+- suggestedSkillId 必须是 matches 中最相关的一条；如无合适技能则为 null。
+- 如果用户只是闲聊/不需要特定流程/不需要特定工具，返回 null。`;
 
-    const userPrompt = `用户请求：\n${text}\n\n可用技能：\n${skillLines}${truncatedNote}\n\n请按要求输出 JSON。`;
+    const userPrompt = `用户请求：\n${text}\n\n可用技能（按 skillId 列表，skillId 需要原样返回）：\n${skillLines}${truncatedNote}\n\n请按要求输出 JSON。`;
 
     const precheckMessages: OpenAIChatMessage[] = [
       { role: "system", content: systemPrompt },
@@ -520,12 +525,15 @@ export default function AiChatPanel({ panelId }: PanelProps) {
 
     const skillMap = new Map(skills.map((skill) => [skill.id, skill]));
     const rawMatches = Array.isArray(parsed.matches) ? parsed.matches : [];
+    const seenMatchIds = new Set<string>();
     const matches = rawMatches
       .map((entry: any) => {
         const skillId = String(entry?.skillId || entry?.id || "").trim();
         if (!skillId) return null;
         const skill = skillMap.get(skillId);
         if (!skill) return null;
+        if (seenMatchIds.has(skill.id)) return null;
+        seenMatchIds.add(skill.id);
         const reason = String(entry?.reason || "").trim() || "相关";
         return {
           skillId: skill.id,
@@ -1827,8 +1835,8 @@ graph TD
               if (approved && summary.suggestedSkillId) {
                 const matchedSkill = availableSkills.find((skill) => skill.id === summary.suggestedSkillId);
                 if (matchedSkill) {
-                  // Generate tool name from skill ID
-                  const toolName = `skill_${matchedSkill.id}`;
+                  // Generate tool name from skill ID (must match tool registry)
+                  const toolName = getSkillToolName(matchedSkill.id);
                   preapprovedSkillToolNames.add(toolName);
                   systemPrompt += `\n\n【技能预检】用户已确认使用技能「${matchedSkill.metadata.name}」。请优先调用工具 ${toolName}。如缺少必要输入，先询问用户再继续。`;
                 }
@@ -2416,21 +2424,25 @@ graph TD
 
              if (isSkillCall) {
                // Skill 工具执行 - Level 2: 按需加载详细指令
-               const skillId = toolName.replace("skill_", "");
-               try {
-                 const instructions = await getSkillInstructionsAsync(skillId);
-                 if (!instructions) {
-                   result = `Error: Skill not found: ${skillId}`;
-                 } else {
-                   // 返回 Skill 的详细指令供 AI 使用
-                   const userInput = args.input || "";
-                   result = `${instructions}
+               const resolvedSkillId = await resolveSkillIdFromToolName(toolName);
+               if (!resolvedSkillId) {
+                 result = `Error: Skill not found for tool: ${toolName}`;
+               } else {
+                 try {
+                   const instructions = await getSkillInstructionsAsync(resolvedSkillId);
+                   if (!instructions) {
+                     result = `Error: Skill not found: ${resolvedSkillId}`;
+                   } else {
+                     // 返回 Skill 的详细指令供 AI 使用
+                     const userInput = args.input || "";
+                     result = `${instructions}
 
 ## 用户输入
 ${userInput}`;
+                   }
+                 } catch (err: any) {
+                   result = `Error: Failed to execute skill ${resolvedSkillId}: ${err?.message || "Unknown error"}`;
                  }
-               } catch (err: any) {
-                 result = `Error: Failed to execute skill ${skillId}: ${err?.message || "Unknown error"}`;
                }
              } else {
                // 检查工具是否需要询问用户

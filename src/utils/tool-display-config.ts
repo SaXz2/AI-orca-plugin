@@ -5,6 +5,8 @@
  * Maps tool names to user-friendly icons, animations, and text.
  */
 
+import { skillToolNameToSkillIdCache } from "../services/ai-tools";
+
 // 检查是否是 Skill 工具
 function isSkillToolName(toolName: string): boolean {
   return toolName.startsWith("skill_");
@@ -13,10 +15,19 @@ function isSkillToolName(toolName: string): boolean {
 // 获取 Skill 显示名称
 function getSkillDisplayName(toolName: string): string {
   if (!isSkillToolName(toolName)) return toolName;
-  // 从工具名称中提取 skill ID
-  const skillId = toolName.slice("skill_".length);
-  // 返回 skill ID 作为显示名称（可以后续从 store 中获取实际名称）
-  return skillId;
+
+  // 优先从缓存反查原始 Skill ID（支持中文等）
+  const skillId = skillToolNameToSkillIdCache.get(toolName);
+  if (skillId) return skillId;
+
+  // 兜底：解析 toolName 结构 skill_<slug>_<hash>
+  const parts = toolName.split("_");
+  if (parts.length >= 3) {
+    // parts[0] = skill, parts[1] = slug
+    return parts[1] || "技能";
+  }
+
+  return "技能";
 }
 
 export type ToolCategory = "create" | "search" | "query";

@@ -63,36 +63,80 @@ function getSkillTools(): OpenAITool[] {
  * Level 3: 资源（执行时加载）- 脚本、模板、文档
  */
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Skill Tool Name Helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
 /**
- * 将 Skill ID 转换为符合 OpenAI 规范的工具名称
- * OpenAI 要求工具名称只能包含：字母、数字、下划线、连字符
- * 
- * 转换规则：
- * 1. 移除所有非 ASCII 字符（包括中文）
- * 2. 将空格替换为下划线
- * 3. 如果结果为空，使用 skill_ + 索引
+ * 生成稳定、可复现且符合 OpenAI 规范的 Skill 工具名。
+ *
+ * 约束：工具名称只能包含字母、数字、下划线、连字符。
+ *
+ * 设计目标：
+ * - 对中文/特殊字符友好（不会被清空成同一个名字）
+ * - 名称稳定（不依赖数组 index，避免列表变化导致映射错乱）
+ * - 尽量避免重复（使用 64-bit FNV-1a hash 作为稳定后缀）
  */
-function sanitizeSkillName(skillId: string, index: number): string {
-  // 移除所有非字母、数字、下划线、连字符的字符
-  let sanitized = skillId.replace(/[^a-zA-Z0-9_-]/g, '');
-  
-  // 移除连续的下划线
-  sanitized = sanitized.replace(/_+/g, '_');
-  
-  // 移除开头和结尾的下划线
-  sanitized = sanitized.replace(/^_+|_+$/g, '');
-  
-  // 如果结果为空，使用索引作为名称
-  if (!sanitized) {
-    return `skill_${index}`;
+function fnv1a64Hex(input: string): string {
+  // 64-bit FNV-1a
+  let hash = 0xcbf29ce484222325n;
+  const prime = 0x100000001b3n;
+  for (let i = 0; i < input.length; i++) {
+    hash ^= BigInt(input.charCodeAt(i));
+    hash = (hash * prime) & 0xffffffffffffffffn;
   }
-  
-  // 确保以字母开头（如果以数字开头，添加 s 前缀）
-  if (/^\d/.test(sanitized)) {
-    sanitized = 's' + sanitized;
+  return hash.toString(16).padStart(16, "0");
+}
+
+function skillIdToSlug(skillId: string): string {
+  // 1) 把空白变成下划线
+  // 2) 移除非 [a-zA-Z0-9_-] 字符
+  // 3) 合并多余下划线
+  const slug = skillId
+    .trim()
+    .replace(/\s+/g, "_")
+    .replace(/[^a-zA-Z0-9_-]/g, "")
+    .replace(/_+/g, "_")
+    .replace(/^_+|_+$/g, "");
+
+  // 过长的函数名可能被模型/SDK 拒绝；这里保守截断 slug。
+  const capped = (slug || "s").slice(0, 24);
+  return capped || "s";
+}
+
+/**
+ * Exported: other modules (precheck / tool execution) must use the same naming.
+ */
+export function getSkillToolName(skillId: string): string {
+  const slug = skillIdToSlug(skillId);
+  const hash = fnv1a64Hex(skillId);
+  // Always starts with "skill_" (letter), and only contains allowed chars.
+  return `skill_${slug}_${hash}`;
+}
+
+/**
+ * In-memory cache for displaying and resolving skill tool names.
+ *
+ * NOTE: Tool names are generated deterministically from skillId, so this cache is only
+ * a convenience for sync lookups (UI display). It is populated when skill tools are loaded.
+ */
+export const skillToolNameToSkillIdCache = new Map<string, string>();
+
+export async function resolveSkillIdFromToolName(toolName: string): Promise<string | null> {
+  if (!toolName.startsWith("skill_")) return null;
+  try {
+    const { listSkills } = await import("./skills-manager");
+    const skillIds = await listSkills();
+    for (const skillId of skillIds) {
+      if (getSkillToolName(skillId) === toolName) {
+        return skillId;
+      }
+    }
+    return null;
+  } catch (err) {
+    console.warn("[SkillTools] Failed to resolve skill ID from tool name:", err);
+    return null;
   }
-  
-  return `skill_${sanitized}`;
 }
 
 /**
@@ -104,6 +148,9 @@ export async function getSkillMetadataAsync(): Promise<OpenAITool[]> {
     const { listSkills, getSkill } = await import("./skills-manager");
     const skillIds = await listSkills();
     const tools: OpenAITool[] = [];
+
+    // Reset cache to avoid stale entries when skills list changes
+    skillToolNameToSkillIdCache.clear();
     
     for (let i = 0; i < skillIds.length; i++) {
       const skillId = skillIds[i];
@@ -111,8 +158,8 @@ export async function getSkillMetadataAsync(): Promise<OpenAITool[]> {
         const skill = await getSkill(skillId);
         if (!skill) continue;
         
-        // 生成符合 OpenAI 规范的工具名称
-        const toolName = sanitizeSkillName(skillId, i);
+        // 生成符合 OpenAI 规范的工具名称（稳定映射）
+        const toolName = getSkillToolName(skillId);
         
         // 验证工具名称是否符合规范
         if (!/^[a-zA-Z0-9_-]+$/.test(toolName)) {
@@ -124,6 +171,9 @@ export async function getSkillMetadataAsync(): Promise<OpenAITool[]> {
         
         // Level 1: 只返回元数据，不包含详细指令
         // 在 description 中包含原始 Skill ID，以便后续查找
+        // Populate cache for UI display
+        skillToolNameToSkillIdCache.set(toolName, skillId);
+
         tools.push({
           type: "function",
           function: {
@@ -3564,18 +3614,13 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
       // 尝试处理 Skill 工具
       if (toolName.startsWith("skill_")) {
         try {
-          // 从工具名称中提取原始 Skill ID
-          // 需要从所有 skills 中查找匹配的
+          // 从工具名称反查 Skill ID
           const { listSkills, getSkill } = await import("./skills-manager");
           const skillIds = await listSkills();
           
-          // 尝试找到匹配的 Skill
           let matchedSkillId: string | null = null;
-          
-          for (let i = 0; i < skillIds.length; i++) {
-            const skillId = skillIds[i];
-            const sanitizedName = sanitizeSkillName(skillId, i);
-            if (sanitizedName === toolName) {
+          for (const skillId of skillIds) {
+            if (getSkillToolName(skillId) === toolName) {
               matchedSkillId = skillId;
               break;
             }
