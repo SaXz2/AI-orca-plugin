@@ -113,6 +113,53 @@ function extractTitle(html: string): string {
 }
 
 /**
+ * 获取针对特定网站的请求头
+ */
+function getHeaders(url: string): Record<string, string> {
+  const urlObj = new URL(url);
+  const hostname = urlObj.hostname;
+  
+  // 基础请求头
+  const baseHeaders: Record<string, string> = {
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+    'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+    'Cache-Control': 'no-cache',
+    'Pragma': 'no-cache',
+    'Sec-Ch-Ua': '"Not_A Brand";v="8", "Chromium";v="120"',
+    'Sec-Ch-Ua-Mobile': '?0',
+    'Sec-Ch-Ua-Platform': '"Windows"',
+    'Sec-Fetch-Dest': 'document',
+    'Sec-Fetch-Mode': 'navigate',
+    'Sec-Fetch-Site': 'none',
+    'Sec-Fetch-User': '?1',
+    'Upgrade-Insecure-Requests': '1',
+  };
+  
+  // 针对知乎的特殊处理
+  if (hostname.includes('zhihu.com')) {
+    return {
+      ...baseHeaders,
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      'Referer': 'https://www.zhihu.com/',
+    };
+  }
+  
+  // 针对微信公众号的特殊处理
+  if (hostname.includes('weixin.qq.com')) {
+    return {
+      ...baseHeaders,
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    };
+  }
+  
+  // 默认 User-Agent
+  return {
+    ...baseHeaders,
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0',
+  };
+}
+
+/**
  * 抓取网页内容
  * @param url 目标 URL
  * @param options 可选配置
@@ -136,13 +183,13 @@ export async function fetchWebContent(
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeout);
     
+    // 使用针对特定网站优化的请求头
+    const headers = getHeaders(url);
+    
     const response = await fetch(url, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-      },
+      headers,
       signal: controller.signal,
+      redirect: 'follow', // 自动跟随重定向
     });
     
     clearTimeout(timeoutId);

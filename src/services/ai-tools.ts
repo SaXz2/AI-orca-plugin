@@ -3530,7 +3530,27 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
         
         return formatFetchedContent(result);
       } catch (err: any) {
-        return `❌ 网页抓取失败: ${err.message}\n\n💡 可能的原因：\n- 网站拒绝访问或有反爬虫保护\n- URL 不正确或网页不存在\n- 网络连接问题\n- 网站需要登录才能访问`;
+        const errorMessage = err.message || "未知错误";
+        const url = args.url || "";
+        
+        // 检测是否是 403 错误
+        if (errorMessage.includes("403")) {
+          // 针对知乎的特殊建议
+          if (url.includes("zhihu.com")) {
+            return `❌ 知乎反爬虫保护\n\n**问题：** 知乎检测到非浏览器访问，拒绝了请求 (403)\n\n**建议解决方案：**\n1. **总结一下这个问题/回答的关键信息**\n   - 我可以帮你分析问题、提供观点\n   \n2. **复制知乎内容粘贴给我**\n   - 手动打开链接，复制文字内容\n   - 我可以基于你的内容进行分析\n\n3. **使用浏览器插件**\n   - 安装类似 "Simple Allow Copy" 的插件\n   - 更方便地复制知乎内容\n\n💡 **技术原因：** 知乎有较强的反爬虫机制，会检测请求头、访问频率等，即使模拟浏览器也很难绕过。`;
+          }
+          
+          // 其他网站的 403 错误
+          return `❌ 网站拒绝访问 (403)\n\n**问题：** 该网站检测到非浏览器访问，拒绝了请求\n\n**建议解决方案：**\n1. **复制网页内容粘贴给我**\n   - 手动打开链接，复制文字内容\n   - 我可以基于你的内容进行分析\n   \n2. **直接描述问题**\n   - 告诉我你想了解什么\n   - 我会尽力帮你回答\n\n💡 **原因：** 该网站有反爬虫保护，会检测并阻止自动化访问。`;
+        }
+        
+        // 超时错误
+        if (errorMessage.includes("超时") || errorMessage.includes("timeout")) {
+          return `❌ 网页请求超时\n\n**问题：** 网页加载时间过长，超过 15 秒限制\n\n**建议解决方案：**\n1. **检查网络连接**\n2. **尝试其他链接或网站**\n3. **复制网页内容粘贴给我**`;
+        }
+        
+        // 默认错误消息
+        return `❌ 网页抓取失败: ${errorMessage}\n\n💡 可能的原因：\n- 网站拒绝访问或有反爬虫保护\n- URL 不正确或网页不存在\n- 网络连接问题\n- 网站需要登录才能访问\n\n**建议：** 可以将网页内容复制粘贴给我，我来帮你分析。`;
       }
     } else if (toolName === "generateFlashcards") {
       // 闪卡生成工具 - 返回结构化数据供前端处理

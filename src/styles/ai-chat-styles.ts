@@ -12,7 +12,7 @@ export const panelContainerStyle: React.CSSProperties = {
   width: "100%",
   display: "flex",
   flexDirection: "column",
-  background: "var(--orca-color-bg-1)",
+  background: "transparent",
   color: "var(--orca-color-text-1)",
   animation: "panelEnter 240ms ease-out",
   transformOrigin: "left center",
@@ -24,7 +24,7 @@ export const headerStyle: React.CSSProperties = {
   alignItems: "center",
   gap: 8,
   borderBottom: "none",
-  background: "var(--orca-color-bg-1)",
+  background: "transparent",
   zIndex: 10,
 };
 
@@ -169,7 +169,8 @@ export const codeBlockPreStyle: React.CSSProperties = {
   overflowX: "auto",
   userSelect: "text", // 允许选择/复制 Markdown 内容
   fontFamily: 'var(--orca-fontfamily-code)',
-  fontSize: "13px",
+  // Use em units to scale with base font size from display settings
+  fontSize: "0.875em",
   lineHeight: "1.5",
   color: "var(--orca-color-text-1)",
 };
@@ -188,7 +189,7 @@ export const markdownContainerStyle = (role: string): React.CSSProperties => ({
   fontFamily: role === "assistant"
     ? 'var(--orca-fontfamily-editor)'
     : 'var(--orca-fontfamily-ui)',
-  fontSize: "16px",
+  // fontSize removed - inherit from parent bubble (controlled by display settings)
   color: role === "user" ? "var(--orca-color-text-inverse)" : "var(--orca-color-text-1)",
   lineHeight: "1.6",
   userSelect: "text", // 允许选择/复制 Markdown 内容
@@ -210,7 +211,8 @@ export const headingStyle = (level: number): React.CSSProperties => ({
   marginTop: level === 1 ? "24px" : "20px",
   marginBottom: "12px",
   fontWeight: "bold",
-  fontSize: level === 1 ? "24px" : level === 2 ? "20px" : "18px",
+  // Use em units to scale with base font size from display settings
+  fontSize: level === 1 ? "1.5em" : level === 2 ? "1.25em" : "1.125em",
   lineHeight: "1.4",
   borderLeft: "4px solid var(--orca-color-primary)",
   paddingLeft: "12px",

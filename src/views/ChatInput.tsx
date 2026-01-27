@@ -117,8 +117,8 @@ type Props = {
 // Enhanced Styles
 const inputContainerStyle: React.CSSProperties = {
   padding: "16px",
-  borderTop: "1px solid var(--orca-color-border)",
-  background: "var(--orca-color-bg-1)",
+  borderTop: "none",
+  background: "transparent",
 };
 
 const TOOLBAR_HIDE_BREAKPOINTS = {
