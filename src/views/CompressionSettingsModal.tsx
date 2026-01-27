@@ -22,6 +22,7 @@ interface CompressionSettingsModalProps {
 export default function CompressionSettingsModal({ isOpen, onClose }: CompressionSettingsModalProps) {
   const [enableCompression, setEnableCompression] = useState(true);
   const [compressAfterMessages, setCompressAfterMessages] = useState(10);
+  const [streamTimeout, setStreamTimeout] = useState(30);
   const [saving, setSaving] = useState(false);
 
   // 加载当前设置
@@ -31,6 +32,7 @@ export default function CompressionSettingsModal({ isOpen, onClose }: Compressio
       const settings = getAiChatSettings(pluginName);
       setEnableCompression(settings.enableCompression);
       setCompressAfterMessages(settings.compressAfterMessages);
+      setStreamTimeout(Math.round(settings.streamTimeout / 1000));
     }
   }, [isOpen]);
 
@@ -41,8 +43,9 @@ export default function CompressionSettingsModal({ isOpen, onClose }: Compressio
       await updateAiChatSettings("app", pluginName, {
         enableCompression,
         compressAfterMessages,
+        streamTimeout: streamTimeout * 1000,
       });
-      orca.notify("success", "压缩设置已保存");
+      orca.notify("success", "设置已保存");
       onClose();
     } catch (e) {
       orca.notify("error", "保存失败");
@@ -187,6 +190,29 @@ export default function CompressionSettingsModal({ isOpen, onClose }: Compressio
           },
           [5, 8, 10, 12, 15, 20].map(n =>
             createElement("option", { key: n, value: n }, `${n} 条`)
+          )
+        )
+      ),
+      
+      // Stream timeout setting
+      createElement(
+        "div",
+        { style: { ...rowStyle, marginTop: 8 } },
+        createElement(
+          "div",
+          null,
+          createElement("div", { style: labelStyle }, "流式响应超时"),
+          createElement("div", { style: descStyle }, "本地模型建议设置 120 秒或更长")
+        ),
+        createElement(
+          "select",
+          {
+            style: selectStyle,
+            value: streamTimeout,
+            onChange: (e: any) => setStreamTimeout(Number(e.target.value)),
+          },
+          [30, 60, 90, 120, 180, 300].map(n =>
+            createElement("option", { key: n, value: n }, `${n} 秒`)
           )
         )
       ),

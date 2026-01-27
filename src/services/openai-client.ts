@@ -39,6 +39,8 @@ export type OpenAIChatStreamArgs = {
   tools?: OpenAITool[];
   protocol?: "openai" | "anthropic";
   anthropicApiPath?: string;
+  /** 模型上下文长度限制（tokens），超出时自动截断 */
+  maxContextTokens?: number;
 };
 
 function joinUrl(base: string, path: string): string {
@@ -423,6 +425,110 @@ function extractAnthropicToolCalls(json: any): StreamChunk["tool_calls"] {
   });
 }
 
+/**
+ * 估算内容的 token 数（简单方法：字符数/3.5 for 中文，/4 for 英文）
+ * base64 图片大约每 3 字符 = 1 token
+ */
+function estimateTokens(content: any): number {
+  if (!content) return 0;
+  if (typeof content === "string") {
+    // 检测是否是 base64 图片数据
+    if (content.startsWith("data:image")) {
+      // base64 图片：大约每 3 个字符 = 1 token
+      return Math.ceil(content.length / 3);
+    }
+    // 普通文本：中英文混合，用 3.5 作为平均值
+    return Math.ceil(content.length / 3.5);
+  }
+  if (Array.isArray(content)) {
+    return content.reduce((sum, part) => {
+      if (part?.type === "text") return sum + estimateTokens(part.text);
+      if (part?.type === "image_url") return sum + estimateTokens(part.image_url?.url);
+      return sum + estimateTokens(JSON.stringify(part));
+    }, 0);
+  }
+  return Math.ceil(JSON.stringify(content).length / 4);
+}
+
+/**
+ * 估算消息数组的总 token 数
+ */
+function estimateMessagesTokens(messages: OpenAIChatMessage[]): number {
+  return messages.reduce((sum, msg) => {
+    // 每条消息有约 4 token 的开销
+    return sum + 4 + estimateTokens(msg.content);
+  }, 0);
+}
+
+/**
+ * 估算工具定义的 token 数
+ */
+function estimateToolsTokens(tools: OpenAITool[]): number {
+  if (!tools || tools.length === 0) return 0;
+  return tools.reduce((sum, tool) => {
+    const desc = tool.function.description || "";
+    const params = JSON.stringify(tool.function.parameters || {});
+    return sum + estimateTokens(tool.function.name) + estimateTokens(desc) + estimateTokens(params);
+  }, 0);
+}
+
+/**
+ * 移除消息中的图片，替换为文本提示
+ */
+function stripImagesFromMessages(messages: OpenAIChatMessage[]): OpenAIChatMessage[] {
+  return messages.map(msg => {
+    if (!msg.content || typeof msg.content === "string") return msg;
+    // OpenAI multimodal messages can have array content
+    const contentArr = msg.content as any[];
+    if (!Array.isArray(contentArr)) return msg;
+    
+    const newContent = contentArr.map((part: any) => {
+      if (part?.type === "image_url") {
+        return { type: "text", text: "[图片已移除以适应上下文限制]" };
+      }
+      return part;
+    });
+    
+    return { ...msg, content: newContent as any };
+  });
+}
+
+/**
+ * 截断较早的消息以适应上下文限制
+ */
+function truncateOlderMessages(
+  messages: OpenAIChatMessage[],
+  targetTokens: number,
+  currentTokens: number
+): OpenAIChatMessage[] {
+  if (currentTokens <= targetTokens) return messages;
+  
+  // 保留 system 消息和最近的消息
+  const systemMessages = messages.filter(m => m.role === "system");
+  const nonSystemMessages = messages.filter(m => m.role !== "system");
+  
+  // 从最早的非系统消息开始移除
+  let result = [...nonSystemMessages];
+  let tokens = currentTokens;
+  
+  while (tokens > targetTokens && result.length > 2) {
+    const removed = result.shift();
+    if (removed) {
+      tokens -= (4 + estimateTokens(removed.content));
+    }
+  }
+  
+  // 如果还是超出，添加摘要提示
+  if (tokens > targetTokens && result.length > 0) {
+    result = [{
+      role: "user" as const,
+      content: "[早期对话已被截断以适应上下文限制]"
+    }, ...result.slice(-2)];
+  }
+  
+  return [...systemMessages, ...result];
+}
+
 export async function* openAIChatCompletionsStream(
   args: OpenAIChatStreamArgs,
 ): AsyncGenerator<StreamChunk, void, unknown> {
@@ -475,15 +581,74 @@ export async function* openAIChatCompletionsStream(
   }
 
   // Add tools (OpenAI-compatible vs Anthropic-compatible schemas)
-  if (args.tools && args.tools.length > 0) {
+  let toolsToUse = args.tools;
+  if (toolsToUse && toolsToUse.length > 0) {
     if (protocol === "anthropic") {
-      requestBody.tools = args.tools.map((t) => ({
+      requestBody.tools = toolsToUse.map((t) => ({
         name: t.function.name,
         description: t.function.description,
         input_schema: t.function.parameters,
       }));
     } else {
-      requestBody.tools = args.tools;
+      requestBody.tools = toolsToUse;
+    }
+  }
+
+  // ========== 上下文溢出保护 ==========
+  const maxContextTokens = args.maxContextTokens || 0;
+  if (maxContextTokens > 0) {
+    // 预留响应空间（max_tokens 或默认 2048）
+    const reservedForResponse = args.maxTokens || 2048;
+    const availableTokens = maxContextTokens - reservedForResponse;
+    
+    // 估算当前 token 数
+    let messagesTokens = estimateMessagesTokens(requestBody.messages);
+    let toolsTokens = toolsToUse ? estimateToolsTokens(toolsToUse) : 0;
+    let totalTokens = messagesTokens + toolsTokens;
+    
+    console.log(`${logPrefix} Token 估算: messages=${messagesTokens}, tools=${toolsTokens}, total=${totalTokens}, limit=${availableTokens}`);
+    
+    // 如果超出限制，依次执行截断策略
+    if (totalTokens > availableTokens) {
+      console.warn(`${logPrefix} ⚠️ 上下文超出限制 (${totalTokens} > ${availableTokens})，开始自动调整...`);
+      
+      // 策略 1：移除图片
+      const messagesWithoutImages = stripImagesFromMessages(requestBody.messages);
+      const tokensAfterStripImages = estimateMessagesTokens(messagesWithoutImages);
+      
+      if (tokensAfterStripImages + toolsTokens <= availableTokens) {
+        console.log(`${logPrefix} 策略 1 成功：移除图片后 tokens=${tokensAfterStripImages + toolsTokens}`);
+        requestBody.messages = messagesWithoutImages;
+        totalTokens = tokensAfterStripImages + toolsTokens;
+      } else {
+        // 图片已移除，继续下一策略
+        requestBody.messages = messagesWithoutImages;
+        messagesTokens = tokensAfterStripImages;
+        totalTokens = messagesTokens + toolsTokens;
+        
+        // 策略 2：移除工具（如果 tools 占比很大）
+        if (toolsTokens > availableTokens * 0.3 && toolsTokens > 500) {
+          console.log(`${logPrefix} 策略 2：移除工具以节省 ${toolsTokens} tokens`);
+          delete requestBody.tools;
+          toolsToUse = undefined;
+          toolsTokens = 0;
+          totalTokens = messagesTokens;
+        }
+        
+        // 策略 3：截断早期消息
+        if (totalTokens > availableTokens) {
+          console.log(`${logPrefix} 策略 3：截断早期消息...`);
+          requestBody.messages = truncateOlderMessages(
+            requestBody.messages,
+            availableTokens - toolsTokens,
+            messagesTokens
+          );
+          totalTokens = estimateMessagesTokens(requestBody.messages) + toolsTokens;
+          console.log(`${logPrefix} 截断后 tokens=${totalTokens}`);
+        }
+      }
+      
+      console.log(`${logPrefix} ✅ 调整完成，最终 tokens=${totalTokens}`);
     }
   }
 

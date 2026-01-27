@@ -480,7 +480,7 @@ function ProviderConfigPanel({
   const [name, setName] = useState(provider.name);
   const [apiUrl, setApiUrl] = useState(provider.apiUrl);
   const [apiKey, setApiKey] = useState(provider.apiKey);
-  const [protocol, setProtocol] = useState<"openai" | "anthropic">(provider.protocol || "openai");
+  const [protocol, setProtocol] = useState<"openai" | "anthropic">(provider.protocol === "anthropic" ? "anthropic" : "openai");
   const [anthropicApiPath, setAnthropicApiPath] = useState(provider.anthropicApiPath || "");
   const [newModelId, setNewModelId] = useState("");
   const [newModelLabel, setNewModelLabel] = useState("");
@@ -620,7 +620,7 @@ function ProviderConfigPanel({
       createElement("input", { type: "text", value: apiUrl, onChange: (e: any) => setApiUrl(e.target.value), placeholder: "https://api.openai.com/v1", style: inputStyle })
     ),
 
-    // 协议选择
+    // 协议
     createElement("div", { style: { marginBottom: "12px" } },
       createElement("label", { style: labelStyle }, "协议"),
       createElement("select", {

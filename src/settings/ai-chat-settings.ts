@@ -14,12 +14,11 @@ export const DEFAULT_SYSTEM_PROMPT = `你是笔记库智能助手。
 
 ## 工具使用
 - 工具返回"✅ Search complete"后立即展示结果，不再调用其他工具
-- 如果不确定工具用法，先调用 tool_instructions 获取该工具说明，不要查询所有工具
 - 搜索结果已含完整内容，禁止对其调用 getPage
 - 一次成功即停止，避免重复查询
-- 属性查询：先 get_tag_schema 获取定义 → 再 query_blocks_by_tag 过滤
+- 属性查询：queryByTagProperty 按标签+属性过滤
 - 无结果时尝试替代方案（最多 {maxToolRounds} 轮）：标签变体 → 搜索降级 → 条件放宽
-- 总结今天用 getTodayJournal，总结近期用 getRecentJournals
+- 总结今天用 getTodayJournal，总结近期用 getJournals
 
 ## 写入操作
 - 仅在用户明确要求「创建/添加/写入」时才写入
@@ -31,10 +30,11 @@ export const DEFAULT_SYSTEM_PROMPT = `你是笔记库智能助手。
 - 无结果就说"没有找到"，不脑补
 - 明确区分"笔记库内容"和"AI 一般知识"
 
-## 引用格式
+## 引用格式（红线）
 - **句中提及**：[标题](orca-block:id) — 作为句子一部分
 - **句末来源**：直接写 orca-block:数字 — 渲染为彩色圆点
-- ❌ 绝对禁止：[1]、[2]、^1、^2 等脚注格式，这些毫无意义
+- ❌ 绝对禁止：[1]、[2]、^1、^2 等脚注格式
+- ⚠️ **blockid 必须从工具返回中复制**，绝对禁止编造数字
 
 ## 特殊格式
 - 时间线事件用 \`\`\`timeline 代码块
@@ -75,6 +75,7 @@ export type ProviderModel = {
   maxTokens?: number;      // 最大输出 token
   maxToolRounds?: number;  // 工具调用最大轮数
   currency?: CurrencyType; // 价格币种
+  contextLength?: number;  // 模型上下文长度（tokens），用于本地模型防溢出
 };
 
 /** AI 平台/提供商配置 */
@@ -83,7 +84,7 @@ export type AiProvider = {
   name: string;            // 平台显示名称
   apiUrl: string;          // API 地址
   apiKey: string;          // API 密钥
-  protocol?: "openai" | "anthropic"; // 协议类型，默认 openai
+  protocol?: "openai" | "anthropic"; // API 协议类型，默认 openai
   anthropicApiPath?: string; // Anthropic 请求路径（可选；留空则自动拼接 /v1/messages 并回退 /messages）
   models: ProviderModel[]; // 该平台下的模型列表
   enabled: boolean;        // 是否启用
@@ -174,7 +175,6 @@ export type AiChatSettings = {
   temperature: number;
   maxTokens: number;
   maxToolRounds: number;
-  skillPrecheckEnabled: boolean;
   currency: CurrencyType;
   // Token 优化设置
   maxHistoryMessages: number;        // 最大历史消息数（0=不限制）
@@ -183,6 +183,8 @@ export type AiChatSettings = {
   // 动态压缩设置
   enableCompression: boolean;        // 是否启用压缩
   compressAfterMessages: number;     // 超过多少条后开始压缩旧消息（5-20）
+  // 流式超时设置
+  streamTimeout: number;             // 流式响应超时（毫秒），本地模型建议设置更长
   // 联网搜索设置
   webSearch: WebSearchConfig;
   // 兼容旧版本的字段（迁移用）
@@ -236,7 +238,6 @@ export const DEFAULT_AI_CHAT_SETTINGS: AiChatSettings = {
   temperature: 0.7,
   maxTokens: 4096,
   maxToolRounds: 5,
-  skillPrecheckEnabled: false,
   currency: "USD",
   // Token 优化默认值
   maxHistoryMessages: 0,           // 0=不限制（改用动态压缩）
@@ -245,6 +246,8 @@ export const DEFAULT_AI_CHAT_SETTINGS: AiChatSettings = {
   // 动态压缩设置
   enableCompression: true,         // 默认启用压缩
   compressAfterMessages: 10,       // 超过 10 条后开始压缩旧消息
+  // 流式超时设置
+  streamTimeout: 30000,            // 默认 30 秒，本地模型可设置 120000（2分钟）或更长
   // 联网搜索设置
   webSearch: {
     enabled: false,
@@ -420,7 +423,6 @@ type StoredConfig = {
   temperature: number;
   maxTokens: number;
   maxToolRounds: number;
-  skillPrecheckEnabled?: boolean;
   currency: CurrencyType;
   // Token 优化设置
   maxHistoryMessages?: number;
@@ -428,6 +430,8 @@ type StoredConfig = {
   maxContextChars?: number;
   enableCompression?: boolean;
   compressAfterMessages?: number;
+  // 流式超时设置
+  streamTimeout?: number;
   // 联网搜索设置
   webSearch?: WebSearchConfig;
 };
@@ -529,7 +533,6 @@ export function getAiChatSettings(pluginName: string): AiChatSettings {
     temperature: config?.temperature ?? DEFAULT_AI_CHAT_SETTINGS.temperature,
     maxTokens: config?.maxTokens ?? DEFAULT_AI_CHAT_SETTINGS.maxTokens,
     maxToolRounds: config?.maxToolRounds ?? DEFAULT_AI_CHAT_SETTINGS.maxToolRounds,
-    skillPrecheckEnabled: config?.skillPrecheckEnabled ?? DEFAULT_AI_CHAT_SETTINGS.skillPrecheckEnabled,
     currency: config?.currency ?? DEFAULT_AI_CHAT_SETTINGS.currency,
     // Token 优化设置
     maxHistoryMessages: config?.maxHistoryMessages ?? DEFAULT_AI_CHAT_SETTINGS.maxHistoryMessages,
@@ -537,6 +540,8 @@ export function getAiChatSettings(pluginName: string): AiChatSettings {
     maxContextChars: config?.maxContextChars ?? DEFAULT_AI_CHAT_SETTINGS.maxContextChars,
     enableCompression: config?.enableCompression ?? DEFAULT_AI_CHAT_SETTINGS.enableCompression,
     compressAfterMessages: config?.compressAfterMessages ?? DEFAULT_AI_CHAT_SETTINGS.compressAfterMessages,
+    // 流式超时设置
+    streamTimeout: config?.streamTimeout ?? DEFAULT_AI_CHAT_SETTINGS.streamTimeout,
     // 联网搜索设置
     webSearch: config?.webSearch ?? DEFAULT_AI_CHAT_SETTINGS.webSearch,
   };
@@ -549,6 +554,7 @@ export function getAiChatSettings(pluginName: string): AiChatSettings {
   merged.maxToolResultChars = Math.max(0, Math.floor(merged.maxToolResultChars));
   merged.maxContextChars = Math.max(5000, Math.floor(merged.maxContextChars));
   merged.compressAfterMessages = Math.max(5, Math.min(20, Math.floor(merged.compressAfterMessages)));
+  merged.streamTimeout = Math.max(10000, Math.floor(merged.streamTimeout)); // 最小 10 秒
 
   return merged;
 }
@@ -578,7 +584,6 @@ export async function updateAiChatSettings(
     temperature: next.temperature,
     maxTokens: next.maxTokens,
     maxToolRounds: next.maxToolRounds,
-    skillPrecheckEnabled: next.skillPrecheckEnabled,
     currency: next.currency,
     // Token 优化设置
     maxHistoryMessages: next.maxHistoryMessages,
@@ -586,6 +591,8 @@ export async function updateAiChatSettings(
     maxContextChars: next.maxContextChars,
     enableCompression: next.enableCompression,
     compressAfterMessages: next.compressAfterMessages,
+    // 流式超时设置
+    streamTimeout: next.streamTimeout,
     // 联网搜索设置
     webSearch: next.webSearch,
   };
@@ -622,7 +629,7 @@ export function getCurrentApiConfig(settings: AiChatSettings): {
     apiUrl: provider?.apiUrl || "",
     apiKey: provider?.apiKey || "",
     model: settings.selectedModelId,
-    protocol: provider?.protocol || "openai",
+    protocol: provider?.protocol === "anthropic" ? "anthropic" : "openai",
     anthropicApiPath: typeof provider?.anthropicApiPath === "string" ? provider.anthropicApiPath : undefined,
   };
 }
@@ -663,6 +670,28 @@ export function validateCurrentConfig(settings: AiChatSettings): string | null {
   if (!provider.apiKey.trim()) return `请设置 ${provider.name} 的 API 密钥`;
   if (!settings.selectedModelId.trim()) return "请选择一个模型";
   return null;
+}
+
+/** 检查模型是否支持 function calling (tools) */
+export function modelSupportsTools(settings: AiChatSettings, modelId?: string): boolean {
+  const targetModelId = modelId || settings.selectedModelId;
+  
+  // 查找模型
+  for (const provider of settings.providers) {
+    const model = provider.models.find(m => m.id === targetModelId);
+    if (model) {
+      // 如果模型明确配置了 capabilities，检查是否包含 "tools"
+      if (model.capabilities && model.capabilities.length > 0) {
+        return model.capabilities.includes("tools");
+      }
+      // 没有配置 capabilities，默认支持
+      // 即使模型输出 XML 格式的 <tool_call>，适配层也能解析
+      return true;
+    }
+  }
+  
+  // 未找到模型，默认支持（依赖适配层）
+  return true;
 }
 
 /** 创建新平台 */
@@ -706,7 +735,7 @@ export function getModelApiConfig(
       return {
         apiUrl: provider.apiUrl,
         apiKey: provider.apiKey,
-        protocol: provider.protocol || "openai",
+        protocol: provider.protocol === "anthropic" ? "anthropic" : "openai",
         anthropicApiPath: typeof provider.anthropicApiPath === "string" ? provider.anthropicApiPath : undefined,
       };
     }
@@ -725,7 +754,7 @@ export function getModelApiConfig(
     return {
       apiUrl: selectedProvider.apiUrl,
       apiKey: selectedProvider.apiKey,
-      protocol: selectedProvider.protocol || "openai",
+      protocol: selectedProvider.protocol === "anthropic" ? "anthropic" : "openai",
       anthropicApiPath: typeof selectedProvider.anthropicApiPath === "string" ? selectedProvider.anthropicApiPath : undefined,
     };
   }
@@ -745,7 +774,7 @@ export function getModelApiConfig(
     return {
       apiUrl: best.apiUrl,
       apiKey: best.apiKey,
-      protocol: best.protocol || "openai",
+      protocol: best.protocol === "anthropic" ? "anthropic" : "openai",
       anthropicApiPath: typeof best.anthropicApiPath === "string" ? best.anthropicApiPath : undefined,
     };
   }

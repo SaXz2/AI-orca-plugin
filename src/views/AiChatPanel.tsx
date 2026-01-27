@@ -39,6 +39,7 @@ import {
   getSelectedProvider,
   updateAiChatSettings,
   validateCurrentConfig,
+  modelSupportsTools,
   DEFAULT_SYSTEM_PROMPT,
   type AiChatSettings,
 } from "../settings/ai-chat-settings";
@@ -58,10 +59,10 @@ import {
 } from "../services/session-service";
 import { exportSessionAsFile, saveSessionToJournal, saveMessagesToJournal } from "../services/export-service";
 import { sessionStore, updateSessionStore, clearSessionStore } from "../store/session-store";
-import { TOOLS, FLASHCARD_TOOL, executeTool, getToolsForDraggedContext, getTools, extractSearchResultsFromToolResults, getSkillToolsAsync, getSkillInstructionsAsync, getSkillToolName, resolveSkillIdFromToolName } from "../services/ai-tools";
+import { TOOLS, FLASHCARD_TOOL, executeTool, getToolsForDraggedContext, getTools, extractSearchResultsFromToolResults, getSkillToolsAsync, getSkillInstructionsAsync, getSkillToolName, resolveSkillIdFromToolName, detectToolCategories, getToolsByCategories } from "../services/ai-tools";
 import { TODOIST_TOOLS, executeTodoistTool, isTodoistTool } from "../services/todoist-tools";
 import { startPythonServer, stopPythonServer, getPythonServerStatus, browserAIChat, browserAIStatus as checkBrowserAIStatus } from "../services/python-runtime";
-import { getToolStatus, isToolDisabled, shouldAskForTool, isAgenticRAGEnabled, getAgenticRAGConfig, isSkillPrecheckEnabled } from "../store/tool-store";
+import { getToolStatus, isToolDisabled, shouldAskForTool, isAgenticRAGEnabled, getAgenticRAGConfig } from "../store/tool-store";
 import { listSkills, getSkill, type Skill } from "../services/skills-manager";
 import { nowId, safeText } from "../utils/text-utils";
 import { buildConversationMessages } from "../services/message-builder";
@@ -181,19 +182,6 @@ function restoreScrollPosition(el: HTMLDivElement | null, savedPosition?: number
 type EditableTitleProps = {
   title: string;
   onSave: (newTitle: string) => void;
-};
-
-type SkillPrecheckMatch = {
-  skillId: string;
-  skillName: string;
-  reason: string;
-};
-
-type SkillPrecheckSummary = {
-  matches: SkillPrecheckMatch[];
-  suggestedSkillId?: string;
-  suggestedSkillName?: string;
-  proposedAction?: string;
 };
 
 function EditableTitle({ title, onSave }: EditableTitleProps) {
@@ -371,7 +359,6 @@ export default function AiChatPanel({ panelId }: PanelProps) {
   const listRef = useRef<HTMLDivElement | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const skillConfirmResolversRef = useRef(new Map<string, (approved: boolean) => void>());
-  const skillPrecheckResolversRef = useRef(new Map<string, (approved: boolean) => void>());
   // 追踪用户是否在底部附近，用于决定流式输出时是否自动滚动
   const isNearBottomRef = useRef(true);
   const scrollAnimationStateRef = useRef<ScrollAnimationState>({ rafId: null, cancelToken: 0 });
@@ -446,166 +433,6 @@ export default function AiChatPanel({ panelId }: PanelProps) {
     }
   }, []);
 
-  const runSkillPrecheck = useCallback(async ({
-    text,
-    skills,
-    model,
-    apiConfig,
-    maxTokens,
-    signal,
-  }: {
-    text: string;
-    skills: Skill[];
-    model: string;
-    apiConfig: { apiUrl: string; apiKey: string; protocol?: "openai" | "anthropic"; anthropicApiPath?: string };
-    maxTokens: number;
-    signal: AbortSignal;
-  }): Promise<SkillPrecheckSummary | null> => {
-    if (!text.trim() || skills.length === 0) return null;
-
-    const maxSkills = 60;
-    const skillLines = skills.slice(0, maxSkills).map((skill) => {
-      const tags = Array.isArray(skill.metadata.tags) && skill.metadata.tags.length
-        ? ` tags=${skill.metadata.tags.join(",")}`
-        : "";
-      const desc = skill.metadata.description ? ` - ${skill.metadata.description}` : "";
-      return `- ${skill.id}: ${skill.metadata.name}${tags}${desc}`;
-    }).join("\n");
-    const truncatedNote = skills.length > maxSkills
-      ? `\n(Only showing first ${maxSkills} skills.)`
-      : "";
-
-    const systemPrompt = `你是技能预检器，目标是判断用户请求是否适合调用某个技能。
-只输出 JSON，不要添加解释、不要用代码块。
-
-输出格式：
-{
-  "matches": [
-    { "skillId": "id", "skillName": "name", "reason": "short reason" }
-  ],
-  "suggestedSkillId": "id or null",
-  "proposedAction": "one-line action description"
-}
-
-规则：
-- matches 最多 3 条，按相关性排序。
-- matches 中 skillId 不能重复。
-- suggestedSkillId 必须是 matches 中最相关的一条；如无合适技能则为 null。
-- 如果用户只是闲聊/不需要特定流程/不需要特定工具，返回 null。`;
-
-    const userPrompt = `用户请求：\n${text}\n\n可用技能（按 skillId 列表，skillId 需要原样返回）：\n${skillLines}${truncatedNote}\n\n请按要求输出 JSON。`;
-
-    const precheckMessages: OpenAIChatMessage[] = [
-      { role: "system", content: systemPrompt },
-      { role: "user", content: userPrompt },
-    ];
-
-    let content = "";
-      for await (const chunk of streamChatWithRetry(
-        {
-          apiUrl: apiConfig.apiUrl,
-          apiKey: apiConfig.apiKey,
-          model,
-          protocol: apiConfig.protocol,
-          anthropicApiPath: apiConfig.anthropicApiPath,
-          temperature: 0.2,
-          maxTokens: Math.min(800, Math.max(200, maxTokens)),
-          signal,
-        },
-      precheckMessages,
-      precheckMessages,
-    )) {
-      if (chunk.type === "content") {
-        content += chunk.content;
-      }
-    }
-
-    const parsed = extractJsonPayload(content);
-    if (!parsed) return null;
-
-    const skillMap = new Map(skills.map((skill) => [skill.id, skill]));
-    const rawMatches = Array.isArray(parsed.matches) ? parsed.matches : [];
-    const seenMatchIds = new Set<string>();
-    const matches = rawMatches
-      .map((entry: any) => {
-        const skillId = String(entry?.skillId || entry?.id || "").trim();
-        if (!skillId) return null;
-        const skill = skillMap.get(skillId);
-        if (!skill) return null;
-        if (seenMatchIds.has(skill.id)) return null;
-        seenMatchIds.add(skill.id);
-        const reason = String(entry?.reason || "").trim() || "相关";
-        return {
-          skillId: skill.id,
-          skillName: skill.metadata.name,
-          reason,
-        } satisfies SkillPrecheckMatch;
-      })
-      .filter(Boolean)
-      .slice(0, 3) as SkillPrecheckMatch[];
-
-    if (matches.length === 0) return null;
-
-    const suggestedIdRaw = String(
-      parsed.suggestedSkillId || parsed.suggestedSkill || parsed.skillId || ""
-    ).trim();
-    const suggestedSkill = suggestedIdRaw ? skillMap.get(suggestedIdRaw) : undefined;
-    const proposedAction = typeof parsed.proposedAction === "string" && parsed.proposedAction.trim()
-      ? parsed.proposedAction.trim()
-      : suggestedSkill
-        ? `建议使用技能「${suggestedSkill.metadata.name}」执行。`
-        : undefined;
-
-    return {
-      matches,
-      suggestedSkillId: suggestedSkill?.id,
-      suggestedSkillName: suggestedSkill?.metadata.name,
-      proposedAction,
-    };
-  }, [extractJsonPayload]);
-
-  const requestSkillPrecheckConfirm = useCallback((summary: SkillPrecheckSummary): Promise<boolean> => {
-    if (!summary.suggestedSkillId) {
-      const messageId = nowId();
-      const createdAt = Date.now();
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: messageId,
-          role: "assistant",
-          content: "",
-          createdAt,
-          localOnly: true,
-          skillPrecheck: {
-            ...summary,
-            status: "pending",
-          },
-        },
-      ]);
-      return Promise.resolve(false);
-    }
-
-    return new Promise((resolve) => {
-      const messageId = nowId();
-      const createdAt = Date.now();
-      skillPrecheckResolversRef.current.set(messageId, resolve);
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: messageId,
-          role: "assistant",
-          content: "",
-          createdAt,
-          localOnly: true,
-          skillPrecheck: {
-            ...summary,
-            status: "pending",
-          },
-        },
-      ]);
-    });
-  }, []);
-
   const requestSkillConfirm = useCallback((skill: Skill): Promise<boolean> => {
     return new Promise((resolve) => {
       const messageId = nowId();
@@ -629,27 +456,6 @@ export default function AiChatPanel({ panelId }: PanelProps) {
         },
       ]);
     });
-  }, []);
-
-  const handleSkillPrecheckAction = useCallback((messageId: string, approved: boolean) => {
-    const resolver = skillPrecheckResolversRef.current.get(messageId);
-    if (resolver) {
-      resolver(approved);
-      skillPrecheckResolversRef.current.delete(messageId);
-    }
-
-    setMessages((prev) =>
-      prev.map((m) => {
-        if (m.id !== messageId || !m.skillPrecheck) return m;
-        return {
-          ...m,
-          skillPrecheck: {
-            ...m.skillPrecheck,
-            status: approved ? "approved" : "denied",
-          },
-        };
-      })
-    );
   }, []);
 
   const handleSkillConfirmAction = useCallback((messageId: string, approved: boolean) => {
@@ -1801,59 +1607,7 @@ graph TD
     }
     // ─────────────────────────────────────────────────────────────────────────
 
-    // 发送给 API 的消息使用处理后的内容（去掉指令）
-    const preapprovedSkillToolNames = new Set<string>();
-    const skillPrecheckEnabled = isSkillPrecheckEnabled() || settings.skillPrecheckEnabled;
-    if (includeTools && skillPrecheckEnabled) {
-      try {
-        // Load available skills asynchronously
-        const skillIds = await listSkills();
-        const availableSkills: Skill[] = [];
-        for (const skillId of skillIds) {
-          const skill = await getSkill(skillId);
-          if (skill) {
-            availableSkills.push(skill);
-          }
-        }
-
-        if (availableSkills.length > 0) {
-          const precheckAborter = new AbortController();
-          abortRef.current = precheckAborter;
-          try {
-            const precheckApiConfig = getModelApiConfig(settings, model);
-            const summary = await runSkillPrecheck({
-              text: processedContent,
-              skills: availableSkills,
-              model,
-              apiConfig: precheckApiConfig,
-              maxTokens: settings.maxTokens,
-              signal: precheckAborter.signal,
-            });
-
-            if (summary) {
-              const approved = await requestSkillPrecheckConfirm(summary);
-              if (approved && summary.suggestedSkillId) {
-                const matchedSkill = availableSkills.find((skill) => skill.id === summary.suggestedSkillId);
-                if (matchedSkill) {
-                  // Generate tool name from skill ID (must match tool registry)
-                  const toolName = getSkillToolName(matchedSkill.id);
-                  preapprovedSkillToolNames.add(toolName);
-                  systemPrompt += `\n\n【技能预检】用户已确认使用技能「${matchedSkill.metadata.name}」。请优先调用工具 ${toolName}。如缺少必要输入，先询问用户再继续。`;
-                }
-              }
-            }
-          } catch (err: any) {
-            console.warn("[SkillPrecheck] Failed:", err?.message ?? err);
-          } finally {
-            if (abortRef.current === precheckAborter) abortRef.current = null;
-          }
-        }
-      } catch (err: any) {
-        console.warn("[SkillPrecheck] Failed to load skills:", err?.message ?? err);
-      }
-    }
-
-    const userMsgForApi: Message = { 
+    const userMsgForApi: Message = {
       id: userMsg.id, 
       role: "user", 
       content: processedContent, 
@@ -1952,18 +1706,26 @@ graph TD
       // 根据是否有拖入的块来选择工具列表
       // 有拖入块时禁用搜索类工具，强制 AI 使用已提供的上下文
       const hasHighPriorityContext = highPriorityContexts.length > 0;
-      // 根据用户工具设置过滤工具列表（排除禁用的工具）
-      // 使用 getTools() 动态获取工具列表（包含联网搜索工具，如果已启用）
-      let baseTools = hasHighPriorityContext ? getToolsForDraggedContext() : getTools();
       
-      // 动态加载 Skill 工具
-      try {
-        const skillTools = await getSkillToolsAsync();
-        if (skillTools.length > 0) {
-          baseTools = [...baseTools, ...skillTools];
+      // 💡 智能工具加载：根据用户输入检测需要的工具类别
+      const detectedCategories = detectToolCategories(processedContent);
+      const needsTools = detectedCategories.size > 0;
+      
+      // 如果没有检测到需要工具，跳过工具加载
+      let baseTools = hasHighPriorityContext 
+        ? getToolsForDraggedContext() 
+        : (needsTools ? getToolsByCategories(detectedCategories) : []);
+      
+      // 动态加载 Skill 工具（只有检测到需要时）
+      if (needsTools && detectedCategories.has("skill")) {
+        try {
+          const skillTools = await getSkillToolsAsync();
+          if (skillTools.length > 0) {
+            baseTools = [...baseTools, ...skillTools];
+          }
+        } catch (err) {
+          console.warn("[AiChatPanel] Failed to load skill tools:", err);
         }
-      } catch (err) {
-        console.warn("[AiChatPanel] Failed to load skill tools:", err);
       }
       
       // 如果启用了 Todoist AI 模式，注入 Todoist 工具
@@ -1972,7 +1734,20 @@ graph TD
       }
       
       const filteredTools = baseTools.filter(tool => !isToolDisabled(tool.function.name));
-      const toolsToUse = includeTools && filteredTools.length > 0 ? filteredTools : undefined;
+      
+      // 检查模型是否支持原生 function calling
+      const supportsTools = modelSupportsTools(settings, model);
+      
+      // 调试日志：显示加载的工具数量
+      if (filteredTools.length > 0) {
+        if (supportsTools) {
+          console.log(`[AiChatPanel] 智能工具加载: ${filteredTools.length} 个工具 (类别: ${[...detectedCategories].join(", ")})`);
+        } else {
+          console.log(`[AiChatPanel] 模型 ${model} 不支持 tools 能力，跳过工具加载`);
+        }
+      }
+      // 只有当模型支持 tools 时才传递工具，避免不支持的模型输出 XML 格式
+      const toolsToUse = includeTools && supportsTools && filteredTools.length > 0 ? filteredTools : undefined;
 
       // ─────────────────────────────────────────────────────────────────────────
       // Agentic RAG 模式：AI 自主规划检索策略，多轮迭代
@@ -2013,12 +1788,12 @@ graph TD
             let result = "";
             for await (const chunk of streamChatWithRetry(
               {
-                apiUrl: apiConfig.apiUrl,
-                apiKey: apiConfig.apiKey,
-                model,
-                protocol: apiConfig.protocol,
-                anthropicApiPath: apiConfig.anthropicApiPath,
-                temperature: options?.temperature ?? 0.3,
+              apiUrl: apiConfig.apiUrl,
+              apiKey: apiConfig.apiKey,
+              model,
+              protocol: apiConfig.protocol,
+              anthropicApiPath: apiConfig.anthropicApiPath,
+              temperature: options?.temperature ?? 0.3,
                 maxTokens: options?.maxTokens ?? 1000,
                 signal: aborter.signal,
               },
@@ -2122,6 +1897,7 @@ graph TD
           maxTokens: settings.maxTokens,
           signal: aborter.signal,
           tools: toolsToUse,
+          timeoutMs: settings.streamTimeout,
         },
         apiMessages,
         apiMessagesFallback,
@@ -2531,7 +2307,7 @@ ${userInput}`;
           enableCompression: settings.enableCompression,
           compressAfterMessages: settings.compressAfterMessages,
           sessionId: currentSession.id,
-        apiConfig: { apiUrl: apiConfig.apiUrl, apiKey: apiConfig.apiKey, model, protocol: apiConfig.protocol, anthropicApiPath: apiConfig.anthropicApiPath },
+          apiConfig: { apiUrl: apiConfig.apiUrl, apiKey: apiConfig.apiKey, model, protocol: apiConfig.protocol, anthropicApiPath: apiConfig.anthropicApiPath },
         });
 
         // Stream next response with reasoning support
@@ -2556,6 +2332,7 @@ ${userInput}`;
               maxTokens: settings.maxTokens,
               signal: aborter.signal,
               tools: enableTools ? filteredTools : undefined, // Last round: disable tools to force an answer
+              timeoutMs: settings.streamTimeout,
             },
             standard,
             fallback
@@ -3218,7 +2995,6 @@ ${userInput}`;
           onGenerateSuggestions: isLastAi && m.content ? createSuggestionGenerator(m.content) : undefined,
           tokenStats: tokenStatsMap.get(m.id),
           onSkillConfirmAction: m.skillConfirm ? handleSkillConfirmAction : undefined,
-          onSkillPrecheckAction: m.skillPrecheck ? handleSkillPrecheckAction : undefined,
           // onSkillDraftAction is no longer supported in the new system
         })
       );

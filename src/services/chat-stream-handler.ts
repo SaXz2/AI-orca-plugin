@@ -11,6 +11,64 @@ import {
 } from "./openai-client";
 import { nowId } from "../utils/text-utils";
 
+// ═══════════════════════════════════════════════════════════════════════════
+// Qwen3/Llama 风格 <tool_call> XML 标签适配层
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * 解析 Qwen3/Llama 风格的 <tool_call> XML 标签
+ * 输入: '<tool_call>\n{"name": "searchNotes", "arguments": {"query": "酒馆"}}\n</tool_call>'
+ * 输出: [{ id, type, function: { name, arguments } }]
+ */
+export function parseXmlToolCalls(content: string): ToolCallInfo[] {
+  const toolCalls: ToolCallInfo[] = [];
+  
+  // 匹配所有 <tool_call>...</tool_call> 块
+  const toolCallRegex = /<tool_call>\s*([\s\S]*?)\s*<\/tool_call>/g;
+  let match;
+  let index = 0;
+  
+  while ((match = toolCallRegex.exec(content)) !== null) {
+    const jsonStr = match[1].trim();
+    try {
+      const parsed = JSON.parse(jsonStr);
+      const name = parsed.name || parsed.function?.name || "";
+      // arguments 可能是对象或字符串
+      let args = parsed.arguments ?? parsed.parameters ?? {};
+      if (typeof args === "object") {
+        args = JSON.stringify(args);
+      }
+      
+      toolCalls.push({
+        id: `xml_tool_call_${index++}`,
+        type: "function",
+        function: {
+          name,
+          arguments: args,
+        },
+      });
+    } catch (e) {
+      console.warn("[parseXmlToolCalls] Failed to parse tool call JSON:", jsonStr, e);
+    }
+  }
+  
+  return toolCalls;
+}
+
+/**
+ * 检查内容是否包含 <tool_call> 标签
+ */
+export function hasXmlToolCalls(content: string): boolean {
+  return /<tool_call>/.test(content);
+}
+
+/**
+ * 从内容中移除 <tool_call> 块，返回纯文本内容
+ */
+export function stripXmlToolCalls(content: string): string {
+  return content.replace(/<tool_call>[\s\S]*?<\/tool_call>/g, "").trim();
+}
+
 export interface StreamOptions {
   apiUrl: string;
   apiKey: string;
@@ -23,6 +81,8 @@ export interface StreamOptions {
   timeoutMs?: number;
   protocol?: "openai" | "anthropic";
   anthropicApiPath?: string;
+  /** 模型上下文长度限制（tokens），超出时自动截断 */
+  maxContextTokens?: number;
 }
 
 export interface StreamResult {
@@ -158,6 +218,7 @@ export async function* streamChatCompletion(
     tools: options.tools,
     protocol: options.protocol,
     anthropicApiPath: options.anthropicApiPath,
+    maxContextTokens: options.maxContextTokens,
   })) {
     if (chunk.type === "content" && chunk.content) {
       content += chunk.content;
@@ -230,10 +291,11 @@ export async function* streamChatWithRetry(
         messages,
         temperature: options.temperature,
         maxTokens: options.maxTokens,
-        signal: timeoutController.signal, // Use the combined signal!
+        signal: timeoutController.signal,
         tools: options.tools,
         protocol: options.protocol,
         anthropicApiPath: options.anthropicApiPath,
+        maxContextTokens: options.maxContextTokens,
       })) {
         // Reset timeout on each chunk received (prevents timeout during slow responses)
         resetTimeout();
@@ -281,6 +343,22 @@ export async function* streamChatWithRetry(
     try {
       yield* doStream(fallbackMessages);
     } catch (fallbackErr: any) {
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Qwen3/Llama 适配: 检查 content 中是否包含 <tool_call> XML 标签
+  // 如果模型不支持原生 tool_calls 格式，会把调用写在 content 里
+  // ═══════════════════════════════════════════════════════════════════════════
+  if (toolCalls.length === 0 && hasXmlToolCalls(content)) {
+    console.log("[streamChatWithRetry] Detected <tool_call> XML in content, parsing...");
+    const xmlToolCalls = parseXmlToolCalls(content);
+    if (xmlToolCalls.length > 0) {
+      toolCalls = xmlToolCalls;
+      // 从 content 中移除 tool_call 块，保留其他文本
+      content = stripXmlToolCalls(content);
+      // 通知调用方有 tool_calls
+      yield { type: "tool_calls", toolCalls };
     }
   }
 

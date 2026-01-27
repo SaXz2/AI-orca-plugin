@@ -1,30 +1,27 @@
 /**
  * Skills Manager Service
  * 
- * 管理 Skills 的存储和操作，采用新的文件夹结构：
- * plugin-data/ai-chat/skills/
- * ├── 日记整理/
- * │   ├── SKILL.md              # 主指令（metadata + instruction）
- * │   └── scripts/              # 可选脚本文件夹
- * │       ├── process.py
- * │       └── utils.js
- * ├── 知识卡片/
- * │   ├── SKILL.md
- * │   └── scripts/
- * │       └── generate.py
- * └── 周报聚合/
- *     ├── SKILL.md
- *     └── scripts/
- *         ├── fetch.py
- *         └── format.js
+ * 管理 Skills 的存储和操作，支持全局和局部两种存储模式：
+ * 
+ * 全局存储 (pluginAsRoot: true):
+ * {plugin-dir}/skills/{skill-id}/SKILL.md
+ * - 所有仓库共享
+ * - 适合通用的、跨项目使用的 Skills
+ * 
+ * 局部存储 (pluginAsRoot: false):
+ * {repo}/plugin-data/ai-chat/skills/{skill-id}/SKILL.md
+ * - 仅当前仓库可见
+ * - 适合项目特定的 Skills
  */
+
+import { getAiChatPluginName } from "../ui/ai-chat-ui";
 
 const SKILLS_ROOT = "skills";
 const SKILL_METADATA_FILE = "SKILL.md";
 
-// ─────────────────────────────────────────────────────────────────────────────
+// ───────────────────────────────────────────────────────────────────────────────
 // Types
-// ─────────────────────────────────────────────────────────────────────────────
+// ───────────────────────────────────────────────────────────────────────────────
 
 export interface SkillMetadata {
   id: string;           // Skill ID = 文件夹名称
@@ -49,14 +46,27 @@ export interface Skill {
   instruction: string;  // SKILL.md 的指令内容
   files: SkillFile[];   // Skill 下的所有文件
   enabled: boolean;     // 是否启用
+  isGlobal: boolean;    // 是否为全局 Skill
+}
+
+/** Skill 引用，用于列表返回 */
+export interface SkillRef {
+  id: string;
+  isGlobal: boolean;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Internal Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-function getPluginName(): string {
-  // 始终使用 "ai-chat" 作为插件名称，确保一致性
+/** 获取插件名称，根据 scope 决定 */
+function getPluginName(isGlobal: boolean): string {
+  if (isGlobal) {
+    // 全局存储：动态获取插件名称，确保存储到正确的插件目录
+    const name = getAiChatPluginName();
+    return name || "ai-chat";
+  }
+  // 局部存储：固定使用 "ai-chat"，存储在仓库的 plugin-data/ai-chat/ 目录
   return "ai-chat";
 }
 
@@ -132,55 +142,102 @@ function buildSkillMetadataContent(metadata: Partial<SkillMetadata>, instruction
   return lines.join("\n");
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// ───────────────────────────────────────────────────────────────────────────────
+// Scope Helpers - 处理全局/局部存储
+// ───────────────────────────────────────────────────────────────────────────────
+
+/** 列出指定 scope 的所有文件 */
+async function listFilesForScope(isGlobal: boolean): Promise<string[]> {
+  const pluginName = getPluginName(isGlobal);
+  return orca.plugins.listFiles(pluginName, isGlobal);
+}
+
+/** 读取指定 scope 的文件 */
+async function readFileForScope(path: string, isGlobal: boolean): Promise<string | null> {
+  const pluginName = getPluginName(isGlobal);
+  const content = await orca.plugins.readFile(pluginName, path, "string", isGlobal);
+  if (!content) return null;
+  return typeof content === 'string' 
+    ? content 
+    : new TextDecoder().decode(new Uint8Array(content as ArrayBuffer));
+}
+
+/** 写入指定 scope 的文件 */
+async function writeFileForScope(path: string, content: string, isGlobal: boolean): Promise<void> {
+  const pluginName = getPluginName(isGlobal);
+  await orca.plugins.writeFile(pluginName, path, content, isGlobal);
+}
+
+/** 删除指定 scope 的文件 */
+async function removeFileForScope(path: string, isGlobal: boolean): Promise<void> {
+  const pluginName = getPluginName(isGlobal);
+  await orca.plugins.removeFile(pluginName, path, isGlobal);
+}
+
+/** 删除指定 scope 的文件夹 */
+async function removeFolderForScope(path: string, isGlobal: boolean): Promise<void> {
+  const pluginName = getPluginName(isGlobal);
+  await orca.plugins.removeFolder(pluginName, path, isGlobal);
+}
+
+/** 从文件列表中提取 Skill IDs */
+function extractSkillIdsFromEntries(entries: string[]): string[] {
+  const skillIds = new Set<string>();
+  
+  for (const entry of entries) {
+    const normalizedEntry = entry.replace(/\\/g, "/");
+    const skillsPrefix = `${SKILLS_ROOT}/`;
+    
+    if (!normalizedEntry.startsWith(skillsPrefix)) continue;
+    
+    const relative = normalizedEntry.slice(SKILLS_ROOT.length + 1);
+    const parts = relative.split("/");
+    
+    if (parts.length > 0 && parts[0]) {
+      skillIds.add(parts[0]);
+    }
+  }
+  
+  return Array.from(skillIds);
+}
+
+// ───────────────────────────────────────────────────────────────────────────────
 // Public API
-// ─────────────────────────────────────────────────────────────────────────────
+// ───────────────────────────────────────────────────────────────────────────────
 
 /**
- * 列出所有 Skills
+ * 列出所有 Skills（合并全局和局部）
+ * @returns SkillRef 数组，包含 id 和 isGlobal
  */
-export async function listSkills(): Promise<string[]> {
-  const pluginName = getPluginName();
-  
+export async function listSkills(): Promise<SkillRef[]> {
   try {
-    const entries = await orca.plugins.listFiles(pluginName);
-    console.log(`[SkillsManager] listFiles returned ${entries.length} entries:`, entries);
+    // 获取全局 Skills
+    const globalEntries = await listFilesForScope(true).catch(() => []);
+    const globalIds = extractSkillIdsFromEntries(globalEntries);
     
-    const skillIds = new Set<string>();
-
-    for (let i = 0; i < entries.length; i++) {
-      const entry = entries[i];
-      console.log(`[SkillsManager] [${i}] Raw entry: "${entry}"`);
-      
-      // 规范化路径分隔符（Windows 使用 \，Unix 使用 /）
-      const normalizedEntry = entry.replace(/\\/g, "/");
-      console.log(`[SkillsManager] [${i}] Normalized: "${normalizedEntry}"`);
-      
-      // 检查是否在 skills 目录下
-      const skillsPrefix = `${SKILLS_ROOT}/`;
-      console.log(`[SkillsManager] [${i}] Checking if starts with "${skillsPrefix}": ${normalizedEntry.startsWith(skillsPrefix)}`);
-      
-      if (!normalizedEntry.startsWith(skillsPrefix)) {
-        console.log(`[SkillsManager] [${i}] Does not start with skills/, skipping`);
-        continue;
-      }
-
-      const relative = normalizedEntry.slice(SKILLS_ROOT.length + 1);
-      console.log(`[SkillsManager] [${i}] Relative path: "${relative}"`);
-      
-      const parts = relative.split("/");
-      console.log(`[SkillsManager] [${i}] Parts:`, parts);
-      
-      if (parts.length > 0 && parts[0]) {
-        console.log(`[SkillsManager] [${i}] Adding skill ID: "${parts[0]}"`);
-        skillIds.add(parts[0]);
-      } else {
-        console.log(`[SkillsManager] [${i}] parts[0] is empty or invalid`);
-      }
+    // 获取局部 Skills
+    const localEntries = await listFilesForScope(false).catch(() => []);
+    const localIds = extractSkillIdsFromEntries(localEntries);
+    
+    // 合并结果，标记 isGlobal
+    const result: SkillRef[] = [];
+    const seen = new Set<string>();
+    
+    // 先添加全局 Skills
+    for (const id of globalIds) {
+      result.push({ id, isGlobal: true });
+      seen.add(`global:${id}`);
     }
-
-    const result = Array.from(skillIds).sort();
-    console.log(`[SkillsManager] listSkills() found ${result.length} skills:`, result);
+    
+    // 再添加局部 Skills（如果同名，两个都保留）
+    for (const id of localIds) {
+      result.push({ id, isGlobal: false });
+    }
+    
+    // 按名称排序
+    result.sort((a, b) => a.id.localeCompare(b.id));
+    
+    console.log(`[SkillsManager] listSkills() found ${result.length} skills (global: ${globalIds.length}, local: ${localIds.length})`);
     return result;
   } catch (err) {
     console.error("[SkillsManager] Failed to list skills:", err);
@@ -190,96 +247,95 @@ export async function listSkills(): Promise<string[]> {
 
 /**
  * 获取 Skill 详情
+ * @param skillId Skill ID
+ * @param isGlobal 是否为全局 Skill（如果不确定，会先查全局再查局部）
  */
-export async function getSkill(skillId: string): Promise<Skill | null> {
-  const pluginName = getPluginName();
-
+export async function getSkill(skillId: string, isGlobal?: boolean): Promise<Skill | null> {
   try {
-    // 读取 SKILL.md
     const skillMdPath = buildSkillPath(skillId, SKILL_METADATA_FILE);
-    console.log(`[SkillsManager] getSkill() reading: ${skillMdPath}`);
     
-    const skillMdContent = await orca.plugins.readFile(pluginName, skillMdPath);
-
-    if (!skillMdContent) {
-      console.warn(`[SkillsManager] SKILL.md not found for skill: ${skillId}`);
-      return null;
+    // 如果指定了 isGlobal，直接查找
+    if (isGlobal !== undefined) {
+      const content = await readFileForScope(skillMdPath, isGlobal);
+      if (!content) return null;
+      return await buildSkillFromContent(skillId, content, isGlobal);
     }
-
-    // 确保内容是字符串
-    const contentStr = typeof skillMdContent === 'string' 
-      ? skillMdContent 
-      : new TextDecoder().decode(new Uint8Array(skillMdContent as ArrayBuffer));
-
-    console.log(`[SkillsManager] getSkill() read ${contentStr.length} bytes for ${skillId}`);
-
-    const { metadata, instruction } = parseSkillMetadata(contentStr);
-    metadata.id = skillId;
-
-    // 列出 Skill 下的所有文件
-    const files = await listSkillFiles(skillId);
-
-    // 检查是否启用
-    const enabled = await isSkillEnabled(skillId);
-
-    return {
-      id: skillId,
-      metadata,
-      instruction,
-      files,
-      enabled,
-    };
+    
+    // 否则先查全局，再查局部
+    const globalContent = await readFileForScope(skillMdPath, true).catch(() => null);
+    if (globalContent) {
+      return await buildSkillFromContent(skillId, globalContent, true);
+    }
+    
+    const localContent = await readFileForScope(skillMdPath, false).catch(() => null);
+    if (localContent) {
+      return await buildSkillFromContent(skillId, localContent, false);
+    }
+    
+    console.warn(`[SkillsManager] SKILL.md not found for skill: ${skillId}`);
+    return null;
   } catch (err) {
     console.error(`[SkillsManager] Failed to get skill ${skillId}:`, err);
     return null;
   }
 }
 
+/** 从内容构建 Skill 对象 */
+async function buildSkillFromContent(skillId: string, content: string, isGlobal: boolean): Promise<Skill> {
+  const { metadata, instruction } = parseSkillMetadata(content);
+  metadata.id = skillId;
+  
+  const files = await listSkillFiles(skillId, isGlobal);
+  const enabled = await isSkillEnabled(skillId, isGlobal);
+  
+  return {
+    id: skillId,
+    metadata,
+    instruction,
+    files,
+    enabled,
+    isGlobal,
+  };
+}
+
 /**
  * 创建新 Skill
+ * @param skillId Skill ID
+ * @param metadata Skill 元数据
+ * @param instruction Skill 指令
+ * @param isGlobal 是否为全局 Skill（默认 false，即局部）
  */
 export async function createSkill(
   skillId: string,
   metadata: Omit<SkillMetadata, "id">,
-  instruction: string
+  instruction: string,
+  isGlobal: boolean = false
 ): Promise<boolean> {
-  const pluginName = getPluginName();
-  console.log(`[SkillsManager] createSkill() called: skillId=${skillId}, name=${metadata.name}`);
+  console.log(`[SkillsManager] createSkill() called: skillId=${skillId}, name=${metadata.name}, isGlobal=${isGlobal}`);
 
   try {
-    // 检查是否已存在
-    const existing = await getSkill(skillId);
+    // 检查在同一 scope 中是否已存在
+    const existing = await getSkill(skillId, isGlobal);
     if (existing) {
-      console.warn(`[SkillsManager] Skill already exists: ${skillId}`);
+      console.warn(`[SkillsManager] Skill already exists in ${isGlobal ? 'global' : 'local'} scope: ${skillId}`);
       return false;
     }
 
     // 创建 SKILL.md
     const skillMdPath = buildSkillPath(skillId, SKILL_METADATA_FILE);
-    console.log(`[SkillsManager] Writing SKILL.md to: ${skillMdPath}`);
-    
     const fullMetadata: SkillMetadata = { id: skillId, name: metadata.name, ...metadata };
     const content = buildSkillMetadataContent(fullMetadata, instruction);
-    console.log(`[SkillsManager] Content length: ${content.length} bytes`);
-    console.log(`[SkillsManager] Content preview:`, content.slice(0, 200));
 
-    await orca.plugins.writeFile(pluginName, skillMdPath, content);
-    console.log(`[SkillsManager] Successfully wrote SKILL.md`);
+    await writeFileForScope(skillMdPath, content, isGlobal);
     
-    // Verify the file was written
-    const verifyContent = await orca.plugins.readFile(pluginName, skillMdPath);
+    // 验证文件已写入
+    const verifyContent = await readFileForScope(skillMdPath, isGlobal);
     if (!verifyContent) {
       console.error(`[SkillsManager] Verification failed: SKILL.md not found after write`);
       return false;
     }
-    console.log(`[SkillsManager] Verification passed: SKILL.md exists`);
-    
-    // Verify it appears in listFiles
-    const entries = await orca.plugins.listFiles(pluginName);
-    const found = entries.some(e => e.replace(/\\/g, "/").includes(`${skillId}/SKILL.md`));
-    console.log(`[SkillsManager] File appears in listFiles: ${found}`);
 
-    console.log(`[SkillsManager] Successfully created skill: ${skillId}`);
+    console.log(`[SkillsManager] Successfully created skill: ${skillId} (${isGlobal ? 'global' : 'local'})`);
     return true;
   } catch (err) {
     console.error(`[SkillsManager] Failed to create skill ${skillId}:`, err);
@@ -289,16 +345,30 @@ export async function createSkill(
 
 /**
  * 更新 Skill 的元数据和指令
+ * @param skillId Skill ID
+ * @param metadata 要更新的元数据
+ * @param instruction 新的指令（可选）
+ * @param isGlobal 是否为全局 Skill
  */
 export async function updateSkill(
   skillId: string,
   metadata: Partial<SkillMetadata>,
-  instruction?: string
+  instruction?: string,
+  isGlobal?: boolean
 ): Promise<boolean> {
-  const pluginName = getPluginName();
-
   try {
-    const skill = await getSkill(skillId);
+    // 如果没指定 isGlobal，先查找 Skill 确定其位置
+    let targetIsGlobal = isGlobal;
+    if (targetIsGlobal === undefined) {
+      const skill = await getSkill(skillId);
+      if (!skill) {
+        console.warn(`[SkillsManager] Skill not found: ${skillId}`);
+        return false;
+      }
+      targetIsGlobal = skill.isGlobal;
+    }
+    
+    const skill = await getSkill(skillId, targetIsGlobal);
     if (!skill) {
       console.warn(`[SkillsManager] Skill not found: ${skillId}`);
       return false;
@@ -318,7 +388,7 @@ export async function updateSkill(
     const skillMdPath = buildSkillPath(skillId, SKILL_METADATA_FILE);
     const content = buildSkillMetadataContent(updatedMetadata, updatedInstruction);
 
-    await orca.plugins.writeFile(pluginName, skillMdPath, content);
+    await writeFileForScope(skillMdPath, content, targetIsGlobal);
 
     return true;
   } catch (err) {
@@ -329,18 +399,15 @@ export async function updateSkill(
 
 /**
  * 删除 Skill（直接删除整个文件夹）
+ * @param skillId Skill ID
+ * @param isGlobal 是否为全局 Skill
  */
-export async function deleteSkill(skillId: string): Promise<boolean> {
-  const pluginName = getPluginName();
-
+export async function deleteSkill(skillId: string, isGlobal: boolean): Promise<boolean> {
   try {
-    console.log(`[SkillsManager] Deleting skill: ${skillId}`);
+    console.log(`[SkillsManager] Deleting skill: ${skillId} (${isGlobal ? 'global' : 'local'})`);
     
-    // 直接删除整个 Skill 文件夹
     const skillFolderPath = buildSkillPath(skillId);
-    console.log(`[SkillsManager] Removing folder: ${skillFolderPath}`);
-    
-    await orca.plugins.removeFolder(pluginName, skillFolderPath);
+    await removeFolderForScope(skillFolderPath, isGlobal);
     
     console.log(`[SkillsManager] Successfully deleted skill: ${skillId}`);
     return true;
@@ -352,18 +419,17 @@ export async function deleteSkill(skillId: string): Promise<boolean> {
 
 /**
  * 列出 Skill 下的所有文件
+ * @param skillId Skill ID
+ * @param isGlobal 是否为全局 Skill
  */
-export async function listSkillFiles(skillId: string): Promise<SkillFile[]> {
-  const pluginName = getPluginName();
-
+export async function listSkillFiles(skillId: string, isGlobal: boolean): Promise<SkillFile[]> {
   try {
-    const entries = await orca.plugins.listFiles(pluginName);
+    const entries = await listFilesForScope(isGlobal);
     const skillPrefix = buildSkillPath(skillId);
     const files: SkillFile[] = [];
     const seen = new Set<string>();
 
     for (const entry of entries) {
-      // 规范化路径分隔符
       const normalizedEntry = entry.replace(/\\/g, "/");
       const normalizedPrefix = skillPrefix.replace(/\\/g, "/");
       
@@ -394,34 +460,14 @@ export async function listSkillFiles(skillId: string): Promise<SkillFile[]> {
 
 /**
  * 读取 Skill 中的文件
+ * @param skillId Skill ID
+ * @param filePath 文件路径
+ * @param isGlobal 是否为全局 Skill
  */
-export async function readSkillFile(skillId: string, filePath: string): Promise<string | null> {
-  const pluginName = getPluginName();
-
+export async function readSkillFile(skillId: string, filePath: string, isGlobal: boolean): Promise<string | null> {
   try {
     const fullPath = buildSkillPath(skillId, filePath);
-    const content = await orca.plugins.readFile(pluginName, fullPath);
-    
-    if (!content) {
-      return null;
-    }
-
-    // 确保返回字符串
-    if (typeof content === 'string') {
-      return content;
-    }
-
-    // 如果是 ArrayBuffer 或 Uint8Array，转换为字符串
-    if (content && typeof content === 'object') {
-      try {
-        const bytes = content instanceof Uint8Array ? content : new Uint8Array(content as ArrayBuffer);
-        return new TextDecoder().decode(bytes);
-      } catch {
-        return null;
-      }
-    }
-
-    return null;
+    return await readFileForScope(fullPath, isGlobal);
   } catch (err) {
     console.error(`[SkillsManager] Failed to read file ${filePath} from skill ${skillId}:`, err);
     return null;
@@ -430,17 +476,20 @@ export async function readSkillFile(skillId: string, filePath: string): Promise<
 
 /**
  * 写入 Skill 中的文件
+ * @param skillId Skill ID
+ * @param filePath 文件路径
+ * @param content 文件内容
+ * @param isGlobal 是否为全局 Skill
  */
 export async function writeSkillFile(
   skillId: string,
   filePath: string,
-  content: string
+  content: string,
+  isGlobal: boolean
 ): Promise<boolean> {
-  const pluginName = getPluginName();
-
   try {
     const fullPath = buildSkillPath(skillId, filePath);
-    await orca.plugins.writeFile(pluginName, fullPath, content);
+    await writeFileForScope(fullPath, content, isGlobal);
     return true;
   } catch (err) {
     console.error(`[SkillsManager] Failed to write file ${filePath} to skill ${skillId}:`, err);
@@ -450,13 +499,14 @@ export async function writeSkillFile(
 
 /**
  * 删除 Skill 中的文件
+ * @param skillId Skill ID
+ * @param filePath 文件路径
+ * @param isGlobal 是否为全局 Skill
  */
-export async function deleteSkillFile(skillId: string, filePath: string): Promise<boolean> {
-  const pluginName = getPluginName();
-
+export async function deleteSkillFile(skillId: string, filePath: string, isGlobal: boolean): Promise<boolean> {
   try {
     const fullPath = buildSkillPath(skillId, filePath);
-    await orca.plugins.removeFile(pluginName, fullPath);
+    await removeFileForScope(fullPath, isGlobal);
     return true;
   } catch (err) {
     console.error(`[SkillsManager] Failed to delete file ${filePath} from skill ${skillId}:`, err);
@@ -466,10 +516,14 @@ export async function deleteSkillFile(skillId: string, filePath: string): Promis
 
 /**
  * 检查 Skill 是否启用
+ * @param skillId Skill ID
+ * @param isGlobal 是否为全局 Skill
  */
-export async function isSkillEnabled(skillId: string): Promise<boolean> {
-  const pluginName = getPluginName();
-  const disabledKey = `skills:disabled:${skillId}`;
+export async function isSkillEnabled(skillId: string, isGlobal: boolean): Promise<boolean> {
+  // 启用状态是用户配置，统一存储在固定插件名下
+  const pluginName = "ai-chat";
+  // 使用 scope 前缀区分全局和局部的启用状态
+  const disabledKey = `skills:disabled:${isGlobal ? 'global' : 'local'}:${skillId}`;
 
   try {
     const value = await orca.plugins.getData(pluginName, disabledKey);
@@ -481,10 +535,14 @@ export async function isSkillEnabled(skillId: string): Promise<boolean> {
 
 /**
  * 启用/禁用 Skill
+ * @param skillId Skill ID
+ * @param enabled 是否启用
+ * @param isGlobal 是否为全局 Skill
  */
-export async function setSkillEnabled(skillId: string, enabled: boolean): Promise<boolean> {
-  const pluginName = getPluginName();
-  const disabledKey = `skills:disabled:${skillId}`;
+export async function setSkillEnabled(skillId: string, enabled: boolean, isGlobal: boolean): Promise<boolean> {
+  // 启用状态是用户配置，统一存储在固定插件名下
+  const pluginName = "ai-chat";
+  const disabledKey = `skills:disabled:${isGlobal ? 'global' : 'local'}:${skillId}`;
 
   try {
     if (enabled) {
@@ -501,10 +559,12 @@ export async function setSkillEnabled(skillId: string, enabled: boolean): Promis
 
 /**
  * 导出 Skill（返回 JSON 格式）
+ * @param skillId Skill ID
+ * @param isGlobal 是否为全局 Skill
  */
-export async function exportSkill(skillId: string): Promise<string | null> {
+export async function exportSkill(skillId: string, isGlobal: boolean): Promise<string | null> {
   try {
-    const skill = await getSkill(skillId);
+    const skill = await getSkill(skillId, isGlobal);
     if (!skill) return null;
 
     const exported = {
@@ -512,6 +572,7 @@ export async function exportSkill(skillId: string): Promise<string | null> {
       metadata: skill.metadata,
       instruction: skill.instruction,
       enabled: skill.enabled,
+      isGlobal: skill.isGlobal,
     };
 
     return JSON.stringify(exported, null, 2);
@@ -523,18 +584,21 @@ export async function exportSkill(skillId: string): Promise<string | null> {
 
 /**
  * 导入 Skill（从 JSON 格式）
+ * @param skillId Skill ID
+ * @param jsonContent JSON 内容
+ * @param isGlobal 是否导入为全局 Skill（默认 false）
  */
-export async function importSkill(skillId: string, jsonContent: string): Promise<boolean> {
+export async function importSkill(skillId: string, jsonContent: string, isGlobal: boolean = false): Promise<boolean> {
   try {
     const data = JSON.parse(jsonContent);
 
     // 创建 Skill
-    const success = await createSkill(skillId, data.metadata, data.instruction);
+    const success = await createSkill(skillId, data.metadata, data.instruction, isGlobal);
     if (!success) return false;
 
     // 设置启用状态
     if (data.enabled !== undefined) {
-      await setSkillEnabled(skillId, data.enabled);
+      await setSkillEnabled(skillId, data.enabled, isGlobal);
     }
 
     return true;
@@ -748,17 +812,18 @@ export async function ensureBuiltInSkills(): Promise<void> {
 
   for (const skill of builtInSkills) {
     try {
-      // 检查是否已存在 - 只检查 Skill ID 是否在列表中
+      // 检查全局 Skills 中是否已存在
       const existingSkills = await listSkills();
-      if (existingSkills.includes(skill.id)) {
+      const exists = existingSkills.some(s => s.id === skill.id && s.isGlobal);
+      if (exists) {
         console.log(`[SkillsManager] Built-in skill already exists: ${skill.id}`);
         continue;
       }
 
-      // 创建内置 Skill
-      const success = await createSkill(skill.id, skill.metadata, skill.instruction);
+      // 创建内置 Skill（全局）
+      const success = await createSkill(skill.id, skill.metadata, skill.instruction, true);
       if (success) {
-        console.log(`[SkillsManager] Created built-in skill: ${skill.id}`);
+        console.log(`[SkillsManager] Created built-in skill (global): ${skill.id}`);
       } else {
         console.warn(`[SkillsManager] Failed to create built-in skill: ${skill.id}`);
       }

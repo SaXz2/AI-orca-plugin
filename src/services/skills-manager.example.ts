@@ -46,7 +46,9 @@ async function exampleCreateSkill() {
 3. 生成结构化输出
 `;
 
-  const success = await createSkill(skillId, metadata, instruction);
+  // isGlobal: false = 局部存储，true = 全局存储
+  const isGlobal = false;
+  const success = await createSkill(skillId, metadata, instruction, isGlobal);
   console.log(`Create skill result: ${success}`);
 }
 
@@ -55,13 +57,15 @@ async function exampleCreateSkill() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 async function exampleGetSkill() {
-  const skill = await getSkill("日记整理");
+  // 如果知道是全局还是局部，可以指定 isGlobal
+  const skill = await getSkill("日记整理", false);
   if (skill) {
     console.log("Skill ID:", skill.id);
     console.log("Metadata:", skill.metadata);
     console.log("Instruction:", skill.instruction);
     console.log("Files:", skill.files);
     console.log("Enabled:", skill.enabled);
+    console.log("IsGlobal:", skill.isGlobal);
   }
 }
 
@@ -71,6 +75,7 @@ async function exampleGetSkill() {
 
 async function exampleAddScriptToSkill() {
   const skillId = "日记整理";
+  const isGlobal = false; // 局部 Skill
 
   // 添加 Python 脚本
   const pythonScript = `
@@ -89,7 +94,7 @@ if __name__ == '__main__':
     print(json.dumps(result))
 `;
 
-  await writeSkillFile(skillId, "scripts/process.py", pythonScript);
+  await writeSkillFile(skillId, "scripts/process.py", pythonScript, isGlobal);
 
   // 添加 JavaScript 工具函数
   const jsUtils = `
@@ -102,7 +107,7 @@ export function generateSummary(text, maxLength = 100) {
 }
 `;
 
-  await writeSkillFile(skillId, "scripts/utils.js", jsUtils);
+  await writeSkillFile(skillId, "scripts/utils.js", jsUtils, isGlobal);
 
   console.log("Scripts added successfully");
 }
@@ -112,13 +117,14 @@ export function generateSummary(text, maxLength = 100) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 async function exampleListSkills() {
-  const skillIds = await listSkills();
-  console.log("Available skills:", skillIds);
+  // listSkills() 返回 SkillRef[]，包含 id 和 isGlobal
+  const skillRefs = await listSkills();
+  console.log("Available skills:", skillRefs);
 
-  for (const skillId of skillIds) {
-    const skill = await getSkill(skillId);
+  for (const ref of skillRefs) {
+    const skill = await getSkill(ref.id, ref.isGlobal);
     if (skill) {
-      console.log(`\n${skill.metadata.name}:`);
+      console.log(`\n${skill.metadata.name} (${skill.isGlobal ? '全局' : '局部'}):`);
       console.log(`  Description: ${skill.metadata.description}`);
       console.log(`  Enabled: ${skill.enabled}`);
       console.log(`  Files: ${skill.files.length}`);
@@ -132,6 +138,7 @@ async function exampleListSkills() {
 
 async function exampleUpdateSkill() {
   const skillId = "日记整理";
+  const isGlobal = false; // 局部 Skill
 
   const success = await updateSkill(
     skillId,
@@ -151,7 +158,8 @@ async function exampleUpdateSkill() {
 1. 输入日记内容
 2. 系统自动分析和分类
 3. 生成详细的结构化输出
-`
+`,
+    isGlobal
   );
 
   console.log(`Update skill result: ${success}`);
@@ -163,17 +171,18 @@ async function exampleUpdateSkill() {
 
 async function exampleToggleSkill() {
   const skillId = "日记整理";
+  const isGlobal = false; // 局部 Skill
 
   // 禁用
-  await setSkillEnabled(skillId, false);
+  await setSkillEnabled(skillId, false, isGlobal);
   console.log(`Skill ${skillId} disabled`);
 
   // 检查状态
-  const enabled = await isSkillEnabled(skillId);
+  const enabled = await isSkillEnabled(skillId, isGlobal);
   console.log(`Skill ${skillId} enabled: ${enabled}`);
 
   // 启用
-  await setSkillEnabled(skillId, true);
+  await setSkillEnabled(skillId, true, isGlobal);
   console.log(`Skill ${skillId} enabled`);
 }
 
@@ -183,16 +192,17 @@ async function exampleToggleSkill() {
 
 async function exampleExportImportSkill() {
   const skillId = "日记整理";
+  const isGlobal = false; // 局部 Skill
 
   // 导出
-  const exported = await exportSkill(skillId);
+  const exported = await exportSkill(skillId, isGlobal);
   if (exported) {
     console.log("Exported skill:");
     console.log(exported);
 
-    // 导入到新 Skill
+    // 导入到新 Skill（也创建为局部）
     const newSkillId = "日记整理_备份";
-    const success = await importSkill(newSkillId, exported);
+    const success = await importSkill(newSkillId, exported, isGlobal);
     console.log(`Import skill result: ${success}`);
   }
 }
@@ -203,16 +213,17 @@ async function exampleExportImportSkill() {
 
 async function exampleReadSkillFile() {
   const skillId = "日记整理";
+  const isGlobal = false; // 局部 Skill
 
   // 读取 Python 脚本
-  const pythonContent = await readSkillFile(skillId, "scripts/process.py");
+  const pythonContent = await readSkillFile(skillId, "scripts/process.py", isGlobal);
   if (pythonContent) {
     console.log("Python script content:");
     console.log(pythonContent);
   }
 
   // 读取 JavaScript 工具
-  const jsContent = await readSkillFile(skillId, "scripts/utils.js");
+  const jsContent = await readSkillFile(skillId, "scripts/utils.js", isGlobal);
   if (jsContent) {
     console.log("JavaScript utils content:");
     console.log(jsContent);
@@ -225,7 +236,8 @@ async function exampleReadSkillFile() {
 
 async function exampleListSkillFiles() {
   const skillId = "日记整理";
-  const files = await listSkillFiles(skillId);
+  const isGlobal = false; // 局部 Skill
+  const files = await listSkillFiles(skillId, isGlobal);
 
   console.log(`Files in skill ${skillId}:`);
   for (const file of files) {
@@ -239,7 +251,8 @@ async function exampleListSkillFiles() {
 
 async function exampleDeleteSkill() {
   const skillId = "日记整理_备份";
-  const success = await deleteSkill(skillId);
+  const isGlobal = false; // 局部 Skill
+  const success = await deleteSkill(skillId, isGlobal);
   console.log(`Delete skill result: ${success}`);
 }
 

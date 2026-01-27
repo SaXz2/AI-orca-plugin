@@ -122,7 +122,6 @@ interface ToolStore {
   wikipediaEnabled: boolean;
   /** 汇率查询开关 */
   currencyEnabled: boolean;
-  skillPrecheckEnabled: boolean;
 }
 
 export const toolStore = proxy<ToolStore>({
@@ -138,7 +137,6 @@ export const toolStore = proxy<ToolStore>({
   scriptAnalysisEnabled: false,
   wikipediaEnabled: true,
   currencyEnabled: true,
-  skillPrecheckEnabled: false,
 });
 
 /**
@@ -336,20 +334,6 @@ export function isCurrencyEnabled(): boolean {
   return toolStore.currencyEnabled;
 }
 
-export function toggleSkillPrecheck(): void {
-  toolStore.skillPrecheckEnabled = !toolStore.skillPrecheckEnabled;
-  saveToolSettings();
-}
-
-export function setSkillPrecheckEnabled(enabled: boolean): void {
-  toolStore.skillPrecheckEnabled = enabled;
-  saveToolSettings();
-}
-
-export function isSkillPrecheckEnabled(): boolean {
-  return toolStore.skillPrecheckEnabled;
-}
-
 /**
  * 保存工具设置到本地存储
  */
@@ -364,7 +348,6 @@ function saveToolSettings(): void {
       scriptAnalysisEnabled: toolStore.scriptAnalysisEnabled,
       wikipediaEnabled: toolStore.wikipediaEnabled,
       currencyEnabled: toolStore.currencyEnabled,
-      skillPrecheckEnabled: toolStore.skillPrecheckEnabled,
     };
     localStorage.setItem("ai-chat-tool-settings", JSON.stringify(settings));
   } catch (e) {
@@ -390,7 +373,6 @@ export function loadToolSettings(): void {
           toolStore.scriptAnalysisEnabled = parsed.scriptAnalysisEnabled ?? false;
           toolStore.wikipediaEnabled = parsed.wikipediaEnabled ?? true;
           toolStore.currencyEnabled = parsed.currencyEnabled ?? true;
-          toolStore.skillPrecheckEnabled = parsed.skillPrecheckEnabled ?? false;
           if (parsed.agenticRAGConfig) {
             toolStore.agenticRAGConfig = {
               ...toolStore.agenticRAGConfig,

@@ -770,8 +770,6 @@ interface MessageItemProps {
   onGenerateSuggestions?: () => Promise<string[]>;
   // Skill confirm actions (inline)
   onSkillConfirmAction?: (messageId: string, approved: boolean) => void;
-  // Skill precheck actions (inline)
-  onSkillPrecheckAction?: (messageId: string, approved: boolean) => void;
   // Skill draft actions (save/discard)
   onSkillDraftAction?: (messageId: string, action: "save" | "discard") => void;
   // Token statistics for this message
@@ -1076,7 +1074,6 @@ export default function MessageItem({
   onSuggestedReply,
   onGenerateSuggestions,
   onSkillConfirmAction,
-  onSkillPrecheckAction,
   onSkillDraftAction,
   tokenStats,
 }: MessageItemProps) {
@@ -1090,7 +1087,6 @@ export default function MessageItem({
   const isAssistant = message.role === "assistant";
   const isPinned = (message as any).pinned === true;
   const skillConfirm = message.skillConfirm;
-  const skillPrecheck = message.skillPrecheck;
   const skillDraft = message.skillDraft;
 
   const handleSkillConfirm = useCallback(
@@ -1100,15 +1096,6 @@ export default function MessageItem({
       }
     },
     [message.id, onSkillConfirmAction]
-  );
-
-  const handleSkillPrecheck = useCallback(
-    (approved: boolean) => {
-      if (onSkillPrecheckAction) {
-        onSkillPrecheckAction(message.id, approved);
-      }
-    },
-    [message.id, onSkillPrecheckAction]
   );
 
   const handleSkillDraft = useCallback(
@@ -1559,168 +1546,6 @@ export default function MessageItem({
           )
         ))
       ),
-
-      // Skill Precheck (inline)
-      skillPrecheck &&
-        createElement(
-          "div",
-          {
-            style: {
-              padding: "12px 16px",
-              background: "var(--orca-color-bg-2)",
-              borderRadius: 8,
-              border: "1px solid var(--orca-color-border)",
-              marginBottom: 8,
-            },
-          },
-          createElement(
-            "div",
-            {
-              style: {
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-                marginBottom: 8,
-                color: "var(--orca-color-text-1)",
-                fontWeight: 600,
-                fontSize: 13,
-              },
-            },
-            createElement("i", { className: "ti ti-sparkles", style: { fontSize: 16 } }),
-            "Skill Check"
-          ),
-          skillPrecheck.matches && skillPrecheck.matches.length > 0
-            ? createElement(
-                "div",
-                { style: { display: "flex", flexDirection: "column", gap: 6, fontSize: 12 } },
-                ...skillPrecheck.matches.map((match) =>
-                  createElement(
-                    "div",
-                    {
-                      key: match.skillId,
-                      style: {
-                        display: "flex",
-                        gap: 6,
-                        color: "var(--orca-color-text-2)",
-                      },
-                    },
-                    createElement("span", { style: { fontWeight: 500, color: "var(--orca-color-text-1)" } }, match.skillName),
-                    createElement("span", null, "-"),
-                    createElement("span", null, match.reason)
-                  )
-                )
-              )
-            : createElement(
-                "div",
-                { style: { fontSize: 12, color: "var(--orca-color-text-2)" } },
-                "无匹配技能"
-              ),
-          skillPrecheck.proposedAction
-            ? createElement(
-                "div",
-                {
-                  style: {
-                    marginTop: 8,
-                    padding: "6px 8px",
-                    background: "var(--orca-color-bg-1)",
-                    borderRadius: 6,
-                    fontSize: 12,
-                    color: "var(--orca-color-text-2)",
-                  },
-                },
-                skillPrecheck.proposedAction
-              )
-            : null,
-          skillPrecheck.status === "pending" && skillPrecheck.suggestedSkillId
-            ? createElement(
-                "div",
-                {
-                  style: {
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: 8,
-                    marginTop: 10,
-                  },
-                },
-                createElement(
-                  "div",
-                  { style: { fontSize: 12, color: "var(--orca-color-text-2)" } },
-                  "使用该技能？"
-                ),
-                createElement(
-                  "div",
-                  {
-                    style: {
-                      display: "flex",
-                      gap: 8,
-                      justifyContent: "flex-end",
-                    },
-                  },
-                  createElement(
-                  "button",
-                  {
-                    onClick: () => handleSkillPrecheck(false),
-                    style: {
-                      padding: "6px 12px",
-                      borderRadius: 4,
-                      border: "1px solid var(--orca-color-border)",
-                      background: "var(--orca-color-bg-1)",
-                      color: "var(--orca-color-text-2)",
-                      cursor: "pointer",
-                      fontSize: 12,
-                    },
-                  },
-                  "拒绝"
-                ),
-                createElement(
-                  "button",
-                  {
-                    onClick: () => handleSkillPrecheck(true),
-                    style: {
-                      padding: "6px 12px",
-                      borderRadius: 4,
-                      border: "1px solid var(--orca-color-border)",
-                      background: "var(--orca-color-bg-3)",
-                      color: "var(--orca-color-text-1)",
-                      cursor: "pointer",
-                      fontSize: 12,
-                    },
-                  },
-                  "允许"
-                )
-                )
-              )
-            : skillPrecheck.suggestedSkillId
-              ? createElement(
-                  "div",
-                  {
-                    style: {
-                      display: "flex",
-                      justifyContent: "flex-end",
-                      marginTop: 8,
-                      fontSize: 12,
-                      color:
-                        skillPrecheck.status === "approved"
-                          ? "var(--orca-color-success)"
-                          : "var(--orca-color-danger)",
-                    },
-                  },
-                  skillPrecheck.status === "approved" ? "已允许" : "已拒绝"
-                )
-              : createElement(
-                  "div",
-                  {
-                    style: {
-                      display: "flex",
-                      justifyContent: "flex-end",
-                      marginTop: 8,
-                      fontSize: 12,
-                      color: "var(--orca-color-text-3)",
-                    },
-                  },
-                  "无可执行技能"
-                )
-        ),
 
       // Skill Confirm (inline)
       skillConfirm &&

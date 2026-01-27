@@ -5,7 +5,7 @@
  * Supports multimodal messages with images, videos, and other files.
  */
 
-import type { OpenAIChatMessage } from "./openai-client";
+import type { OpenAIChatMessage, OpenAITool } from "./openai-client";
 import type { Message } from "./session-service";
 import type { ChatMode } from "../store/chat-mode-store";
 import { buildImageContent } from "./image-service";

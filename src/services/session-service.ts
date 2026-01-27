@@ -69,17 +69,6 @@ export type Message = {
     steps: string[];
     status: "pending" | "approved" | "denied";
   };
-  skillPrecheck?: {
-    status: "pending" | "approved" | "denied";
-    matches: Array<{
-      skillId: string;
-      skillName: string;
-      reason: string;
-    }>;
-    suggestedSkillId?: string;
-    suggestedSkillName?: string;
-    proposedAction?: string;
-  };
   skillDraft?: {
     status: "generating" | "saving" | "draft" | "saved" | "discarded" | "error";
     folderName?: string;

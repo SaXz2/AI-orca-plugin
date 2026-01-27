@@ -210,7 +210,7 @@ export async function generatePortrait(memories: MemoryItem[], signal?: AbortSig
 interface PortraitAPIParams {
   apiUrl: string;
   apiKey: string;
-  protocol: "openai" | "anthropic";
+  protocol: "openai" | "anthropic" | "xml-tools";  // xml-tools 使用 OpenAI 兼容格式
   anthropicApiPath?: string;
   model: string;
   prompt: string;
@@ -339,10 +339,10 @@ function buildAnthropicMessagesUrl(apiUrl: string): string {
   return `${trimmed}/v1/messages`;
 }
 
-function buildChatUrl(apiUrl: string, protocol: "openai" | "anthropic"): string {
+function buildChatUrl(apiUrl: string, protocol: "openai" | "anthropic" | "xml-tools"): string {
   return protocol === "anthropic"
     ? buildAnthropicMessagesUrl(apiUrl)
-    : buildChatCompletionsUrl(apiUrl);
+    : buildChatCompletionsUrl(apiUrl);  // xml-tools 使用 OpenAI 兼容端点
 }
 
 function buildAnthropicMessagesUrlCandidates(apiUrl: string, anthropicApiPath?: string): string[] {
@@ -362,10 +362,10 @@ function buildAnthropicMessagesUrlCandidates(apiUrl: string, anthropicApiPath?: 
   return [`${trimmed}/v1/messages`, `${trimmed}/messages`, trimmed];
 }
 
-function buildChatUrlCandidates(apiUrl: string, protocol: "openai" | "anthropic", anthropicApiPath?: string): string[] {
+function buildChatUrlCandidates(apiUrl: string, protocol: "openai" | "anthropic" | "xml-tools", anthropicApiPath?: string): string[] {
   return protocol === "anthropic"
     ? buildAnthropicMessagesUrlCandidates(apiUrl, anthropicApiPath)
-    : buildChatCompletionsUrlCandidates(apiUrl);
+    : buildChatCompletionsUrlCandidates(apiUrl);  // xml-tools 使用 OpenAI 兼容端点
 }
 
 /**

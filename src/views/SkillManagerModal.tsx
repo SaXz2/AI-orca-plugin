@@ -31,6 +31,7 @@ import {
   isSkillEnabled,
   setSkillEnabled,
   type Skill,
+  type SkillRef,
 } from "../services/skills-manager";
 import MarkdownMessage from "../components/MarkdownMessage";
 
@@ -50,6 +51,7 @@ interface SkillFormState {
   name: string;
   description: string;
   instruction: string;
+  isGlobal: boolean; // 是否存储为全局 Skill
 }
 
 export default function SkillManagerModal({ isOpen, onClose }: SkillManagerModalProps) {
@@ -61,18 +63,23 @@ export default function SkillManagerModal({ isOpen, onClose }: SkillManagerModal
   
   // Edit modal state
   const [editingSkill, setEditingSkill] = useState<Skill | null>(null);
-  const [editForm, setEditForm] = useState<SkillFormState>({ name: "", description: "", instruction: "" });
+  const [editForm, setEditForm] = useState<SkillFormState>({ name: "", description: "", instruction: "", isGlobal: false });
   const [editingSaving, setEditingSaving] = useState(false);
   const [editingError, setEditingError] = useState<string | null>(null);
   
   // Create modal state
   const [showCreateModal, setShowCreateModal] = useState(false);
-  const [createForm, setCreateForm] = useState<SkillFormState>({ name: "", description: "", instruction: "" });
+  const [createForm, setCreateForm] = useState<SkillFormState>({ name: "", description: "", instruction: "", isGlobal: false });
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   
   // Delete confirmation
   const [deleteTarget, setDeleteTarget] = useState<Skill | null>(null);
+  
+  // Import scope selection
+  const [pendingImportData, setPendingImportData] = useState<any[] | null>(null);
+  const [importScope, setImportScope] = useState<boolean>(false); // false = local, true = global
+  const [importing, setImporting] = useState(false);
 
   // Load skills on mount or when modal opens
   useEffect(() => {
@@ -87,10 +94,10 @@ export default function SkillManagerModal({ isOpen, onClose }: SkillManagerModal
       // Add a small delay to ensure file system has flushed
       await new Promise(resolve => setTimeout(resolve, 100));
       
-      const skillIds = await listSkills();
+      const skillRefs = await listSkills();
       const skillsData: Skill[] = [];
-      for (const skillId of skillIds) {
-        const skill = await getSkill(skillId);
+      for (const ref of skillRefs) {
+        const skill = await getSkill(ref.id, ref.isGlobal);
         if (skill) {
           skillsData.push(skill);
         }
@@ -104,17 +111,21 @@ export default function SkillManagerModal({ isOpen, onClose }: SkillManagerModal
     }
   }, []);
 
-  const toggleSkillSelection = useCallback((skillId: string) => {
+  // 使用 "g:id" 或 "l:id" 作为唯一键区分全局/局部 Skills
+  const getSkillKey = useCallback((skill: Skill) => `${skill.isGlobal ? 'g' : 'l'}:${skill.id}`, []);
+  
+  const toggleSkillSelection = useCallback((skill: Skill) => {
+    const key = getSkillKey(skill);
     setSelectedSkills(prev => {
       const next = new Set(prev);
-      if (next.has(skillId)) {
-        next.delete(skillId);
+      if (next.has(key)) {
+        next.delete(key);
       } else {
-        next.add(skillId);
+        next.add(key);
       }
       return next;
     });
-  }, []);
+  }, [getSkillKey]);
 
   const handleSkillRefresh = useCallback(async () => {
     await loadSkillsData();
@@ -134,14 +145,14 @@ export default function SkillManagerModal({ isOpen, onClose }: SkillManagerModal
 
   // Create skill handlers
   const handleOpenCreate = useCallback(() => {
-    setCreateForm({ name: "", description: "", instruction: "" });
+    setCreateForm({ name: "", description: "", instruction: "", isGlobal: false });
     setCreateError(null);
     setShowCreateModal(true);
   }, []);
 
   const handleCloseCreate = useCallback(() => {
     setShowCreateModal(false);
-    setCreateForm({ name: "", description: "", instruction: "" });
+    setCreateForm({ name: "", description: "", instruction: "", isGlobal: false });
     setCreateError(null);
   }, []);
 
@@ -165,10 +176,10 @@ export default function SkillManagerModal({ isOpen, onClose }: SkillManagerModal
     try {
       // 使用技能名称作为 ID（支持中文）
       const skillId = name;
-      await createSkill(skillId, { name, description: createForm.description }, createForm.instruction);
+      await createSkill(skillId, { name, description: createForm.description }, createForm.instruction, createForm.isGlobal);
       await loadSkillsData();
       handleCloseCreate();
-      orca.notify("success", "技能创建成功");
+      orca.notify("success", `技能创建成功 (${createForm.isGlobal ? '全局' : '局部'})`);
     } catch (err: any) {
       setCreateError(err?.message ?? "创建技能失败");
     } finally {
@@ -178,12 +189,12 @@ export default function SkillManagerModal({ isOpen, onClose }: SkillManagerModal
 
   // Export/Import handlers
   const handleExportSkills = useCallback(async () => {
-    const selected = skills.filter(skill => selectedSkills.has(skill.id));
+    const selected = skills.filter(skill => selectedSkills.has(`${skill.isGlobal ? 'g' : 'l'}:${skill.id}`));
     if (selected.length === 0) return;
     
     if (selected.length === 1) {
       const skill = selected[0];
-      const content = await exportSkill(skill.id);
+      const content = await exportSkill(skill.id, skill.isGlobal);
       if (!content) {
         orca.notify("error", "导出失败");
         return;
@@ -203,7 +214,7 @@ export default function SkillManagerModal({ isOpen, onClose }: SkillManagerModal
     // For multiple skills, export as JSON array
     const exported = [];
     for (const skill of selected) {
-      const content = await exportSkill(skill.id);
+      const content = await exportSkill(skill.id, skill.isGlobal);
       if (content) {
         exported.push(JSON.parse(content));
       }
@@ -234,21 +245,48 @@ export default function SkillManagerModal({ isOpen, onClose }: SkillManagerModal
         // Handle both single skill and array of skills
         const skillsToImport = Array.isArray(data) ? data : [data];
         
-        for (const skillData of skillsToImport) {
-          const skillId = skillData.id || skillData.metadata?.name?.toLowerCase().replace(/\s+/g, "-");
-          if (!skillId) continue;
-          
-          await importSkill(skillId, JSON.stringify(skillData));
-        }
-        
-        await loadSkillsData();
-        orca.notify("success", "技能导入成功");
+        // 显示导入位置选择弹窗
+        setPendingImportData(skillsToImport);
+        setImportScope(false); // 默认局部
       } catch (err: any) {
-        orca.notify("error", err?.message ?? "导入失败");
+        orca.notify("error", err?.message ?? "解析文件失败");
       }
     };
     input.click();
-  }, [loadSkillsData]);
+  }, []);
+  
+  const handleCancelImport = useCallback(() => {
+    setPendingImportData(null);
+  }, []);
+  
+  const handleConfirmImport = useCallback(async () => {
+    if (!pendingImportData) return;
+    
+    setImporting(true);
+    let successCount = 0;
+    try {
+      for (const skillData of pendingImportData) {
+        // 使用技能名称作为 ID，与创建时保持一致
+        const skillName = skillData.metadata?.name || skillData.id;
+        if (!skillName) continue;
+        
+        const success = await importSkill(skillName, JSON.stringify(skillData), importScope);
+        if (success) successCount++;
+      }
+      
+      await loadSkillsData();
+      if (successCount > 0) {
+        orca.notify("success", `${successCount} 个技能导入成功 (${importScope ? '全局' : '当前仓库'})`);
+      } else {
+        orca.notify("warn", "没有技能被导入，可能已存在同名技能");
+      }
+      setPendingImportData(null);
+    } catch (err: any) {
+      orca.notify("error", err?.message ?? "导入失败");
+    } finally {
+      setImporting(false);
+    }
+  }, [pendingImportData, importScope, loadSkillsData]);
 
   // Edit handlers
   const handleOpenEditor = useCallback((skill: Skill) => {
@@ -257,13 +295,14 @@ export default function SkillManagerModal({ isOpen, onClose }: SkillManagerModal
       name: skill.metadata.name,
       description: skill.metadata.description || "",
       instruction: skill.instruction,
+      isGlobal: skill.isGlobal,
     });
     setEditingError(null);
   }, []);
 
   const handleCloseEditor = useCallback(() => {
     setEditingSkill(null);
-    setEditForm({ name: "", description: "", instruction: "" });
+    setEditForm({ name: "", description: "", instruction: "", isGlobal: false });
     setEditingError(null);
   }, []);
 
@@ -290,7 +329,8 @@ export default function SkillManagerModal({ isOpen, onClose }: SkillManagerModal
       await updateSkill(
         editingSkill.id,
         { name, description: editForm.description },
-        editForm.instruction
+        editForm.instruction,
+        editingSkill.isGlobal
       );
       await loadSkillsData();
       handleCloseEditor();
@@ -314,7 +354,7 @@ export default function SkillManagerModal({ isOpen, onClose }: SkillManagerModal
   const handleConfirmDelete = useCallback(async () => {
     if (!deleteTarget) return;
     try {
-      await deleteSkill(deleteTarget.id);
+      await deleteSkill(deleteTarget.id, deleteTarget.isGlobal);
       await loadSkillsData();
       orca.notify("success", "技能已删除");
     } catch (err: any) {
@@ -337,7 +377,7 @@ export default function SkillManagerModal({ isOpen, onClose }: SkillManagerModal
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
-    zIndex: 1000,
+    zIndex: 50,
   };
 
   const modalStyle: React.CSSProperties = {
@@ -400,7 +440,7 @@ export default function SkillManagerModal({ isOpen, onClose }: SkillManagerModal
 
   const editOverlayStyle: React.CSSProperties = {
     ...overlayStyle,
-    zIndex: 1100,
+    zIndex: 60,
   };
 
   const editModalStyle: React.CSSProperties = {
@@ -505,7 +545,8 @@ export default function SkillManagerModal({ isOpen, onClose }: SkillManagerModal
     form: SkillFormState,
     setForm: (f: SkillFormState) => void,
     error: string | null,
-    showInstructionField: boolean = true
+    showInstructionField: boolean = true,
+    showScopeSelector: boolean = false // 创建时显示，编辑时不显示
   ) => {
     const fields = [
       // Name field
@@ -558,6 +599,52 @@ export default function SkillManagerModal({ isOpen, onClose }: SkillManagerModal
         )
       ),
     ];
+
+    // Scope selector (only for create modal)
+    if (showScopeSelector) {
+      fields.push(
+        createElement(
+          "div",
+          { key: "scope", style: formFieldStyle },
+          createElement(
+            "div",
+            { style: fieldLabelStyle },
+            createElement("span", null, "存储位置")
+          ),
+          createElement(
+            "div",
+            { style: { display: "flex", gap: 16, marginTop: 4 } },
+            createElement(
+              "label",
+              { style: { display: "flex", alignItems: "center", gap: 6, cursor: "pointer", fontSize: 13 } },
+              createElement("input", {
+                type: "radio",
+                name: "scope",
+                checked: !form.isGlobal,
+                onChange: () => setForm({ ...form, isGlobal: false }),
+              }),
+              "📁 当前仓库（局部）"
+            ),
+            createElement(
+              "label",
+              { style: { display: "flex", alignItems: "center", gap: 6, cursor: "pointer", fontSize: 13 } },
+              createElement("input", {
+                type: "radio",
+                name: "scope",
+                checked: form.isGlobal,
+                onChange: () => setForm({ ...form, isGlobal: true }),
+              }),
+              "🌐 全局（所有仓库）"
+            )
+          ),
+          createElement(
+            "div",
+            { style: { fontSize: 11, color: "var(--orca-color-text-3)", marginTop: 4 } },
+            form.isGlobal ? "全局技能在所有仓库中可用" : "局部技能仅在当前仓库中可用"
+          )
+        )
+      );
+    }
 
     // Instruction field (optional, for non-split layout)
     if (showInstructionField) {
@@ -653,7 +740,7 @@ export default function SkillManagerModal({ isOpen, onClose }: SkillManagerModal
         createElement(
           "div",
           { style: createBodyStyle },
-          ...renderSkillFormFields(createForm, setCreateForm, createError, true)
+          ...renderSkillFormFields(createForm, setCreateForm, createError, true, true) // showScopeSelector = true
         ),
         createElement(
           "div",
@@ -801,6 +888,129 @@ export default function SkillManagerModal({ isOpen, onClose }: SkillManagerModal
       )
     );
   };
+  
+  // Render import scope selection modal
+  const renderImportScopeModal = () => {
+    if (!pendingImportData) return null;
+    
+    const skillCount = pendingImportData.length;
+    const skillNames = pendingImportData
+      .slice(0, 3)
+      .map(s => s.metadata?.name || s.id || '未命名')
+      .join('、');
+    const moreText = skillCount > 3 ? `等 ${skillCount} 个技能` : '';
+    
+    return createElement(
+      "div",
+      {
+        style: editOverlayStyle,
+        onClick: (e: any) => {
+          e.stopPropagation();
+          handleCancelImport();
+        },
+      },
+      createElement(
+        "div",
+        { style: { ...modalStyle, width: 400 }, onClick: (e: any) => e.stopPropagation() },
+        createElement("div", { style: titleStyle }, "选择导入位置"),
+        createElement(
+          "div",
+          { style: { marginTop: 12, fontSize: 12, color: "var(--orca-color-text-2)" } },
+          `即将导入: ${skillNames}${moreText}`
+        ),
+        createElement(
+          "div",
+          { style: { marginTop: 16, display: "flex", flexDirection: "column", gap: 12 } },
+          createElement(
+            "label",
+            {
+              style: {
+                display: "flex",
+                alignItems: "flex-start",
+                gap: 10,
+                padding: "12px",
+                border: `2px solid ${!importScope ? 'var(--orca-color-primary)' : 'var(--orca-color-border)'}`,
+                borderRadius: 8,
+                cursor: "pointer",
+                background: !importScope ? 'var(--orca-color-primary-bg, rgba(0, 123, 255, 0.08))' : 'transparent',
+                transition: "all 0.15s",
+              },
+              onClick: () => setImportScope(false),
+            },
+            createElement("input", {
+              type: "radio",
+              name: "importScope",
+              checked: !importScope,
+              onChange: () => setImportScope(false),
+              style: { marginTop: 2 },
+            }),
+            createElement(
+              "div",
+              null,
+              createElement(
+                "div",
+                { style: { fontWeight: 500, fontSize: 13, color: "var(--orca-color-text-1)" } },
+                "📁 当前仓库（局部）"
+              ),
+              createElement(
+                "div",
+                { style: { fontSize: 11, color: "var(--orca-color-text-3)", marginTop: 4 } },
+                "仅在当前仓库中可用，不影响其他项目"
+              )
+            )
+          ),
+          createElement(
+            "label",
+            {
+              style: {
+                display: "flex",
+                alignItems: "flex-start",
+                gap: 10,
+                padding: "12px",
+                border: `2px solid ${importScope ? 'var(--orca-color-primary)' : 'var(--orca-color-border)'}`,
+                borderRadius: 8,
+                cursor: "pointer",
+                background: importScope ? 'var(--orca-color-primary-bg, rgba(0, 123, 255, 0.08))' : 'transparent',
+                transition: "all 0.15s",
+              },
+              onClick: () => setImportScope(true),
+            },
+            createElement("input", {
+              type: "radio",
+              name: "importScope",
+              checked: importScope,
+              onChange: () => setImportScope(true),
+              style: { marginTop: 2 },
+            }),
+            createElement(
+              "div",
+              null,
+              createElement(
+                "div",
+                { style: { fontWeight: 500, fontSize: 13, color: "var(--orca-color-text-1)" } },
+                "🌐 全局"
+              ),
+              createElement(
+                "div",
+                { style: { fontSize: 11, color: "var(--orca-color-text-3)", marginTop: 4 } },
+                "在所有仓库中可用，适合通用技能"
+              )
+            )
+          )
+        ),
+        createElement(
+          "div",
+          { style: { ...footerStyle, marginTop: 20 } },
+          createElement(Button, { variant: "secondary", onClick: handleCancelImport }, "取消"),
+          createElement(
+            Button,
+            { variant: "secondary", onClick: handleConfirmImport, disabled: importing },
+            importing ? "导入中..." : "确认导入"
+          )
+        )
+      )
+    );
+  };
 
   // Main modal content
   return createElement(
@@ -890,7 +1100,7 @@ export default function SkillManagerModal({ isOpen, onClose }: SkillManagerModal
           `已选择 ${selectedSkills.size} 个`
         )
       ),
-      // Skill list
+      // Skill list - separated by global and local
       createElement(
         "div",
         { style: listStyle },
@@ -900,85 +1110,154 @@ export default function SkillManagerModal({ isOpen, onClose }: SkillManagerModal
               { style: { ...rowStyle, justifyContent: "center", borderBottom: "none" } },
               "加载中..."
             )
-          : skills.length === 0
-            ? createElement(
+          : (() => {
+              const filtered = skills.filter(skill => {
+                if (!searchQuery.trim()) return true;
+                const query = searchQuery.toLowerCase();
+                return (
+                  skill.metadata.name.toLowerCase().includes(query) ||
+                  (skill.metadata.description?.toLowerCase().includes(query) ?? false)
+                );
+              });
+              const globalSkills = filtered.filter(s => s.isGlobal);
+              const localSkills = filtered.filter(s => !s.isGlobal);
+              
+              if (filtered.length === 0) {
+                return createElement(
+                  "div",
+                  { style: { ...rowStyle, justifyContent: "center", borderBottom: "none" } },
+                  searchQuery ? "未找到匹配的技能" : "暂无技能"
+                );
+              }
+              
+              const renderSkillRow = (skill: Skill, isLast: boolean) => createElement(
                 "div",
-                { style: { ...rowStyle, justifyContent: "center", borderBottom: "none" } },
-                searchQuery ? "未找到匹配的技能" : "暂无技能"
-              )
-            : skills
-                .filter(skill => {
-                  if (!searchQuery.trim()) return true;
-                  const query = searchQuery.toLowerCase();
-                  return (
-                    skill.metadata.name.toLowerCase().includes(query) ||
-                    (skill.metadata.description?.toLowerCase().includes(query) ?? false)
-                  );
-                })
-                .map((skill, index, filtered) =>
+                {
+                  key: getSkillKey(skill),
+                  style: {
+                    ...rowStyle,
+                    borderBottom: isLast ? "none" : rowStyle.borderBottom,
+                  },
+                },
+                // Checkbox
+                createElement("input", {
+                  type: "checkbox",
+                  checked: selectedSkills.has(getSkillKey(skill)),
+                  onChange: () => toggleSkillSelection(skill),
+                  style: { cursor: "pointer" },
+                }),
+                // Skill info
                 createElement(
                   "div",
-                  {
-                    key: skill.id,
-                    style: {
-                      ...rowStyle,
-                      borderBottom: index === filtered.length - 1 ? "none" : rowStyle.borderBottom,
-                    },
-                  },
-                  // Checkbox
-                  createElement("input", {
-                    type: "checkbox",
-                    checked: selectedSkills.has(skill.id),
-                    onChange: () => toggleSkillSelection(skill.id),
-                    style: { cursor: "pointer" },
-                  }),
-                  // Skill info
+                  { style: { flex: 1, minWidth: 0 } },
                   createElement(
                     "div",
-                    { style: { flex: 1, minWidth: 0 } },
-                    createElement(
-                      "div",
-                      { style: { fontWeight: 500, color: "var(--orca-color-text-1)" } },
-                      skill.metadata.name
-                    ),
-                    skill.metadata.description && createElement(
-                      "div",
-                      {
-                        style: {
-                          fontSize: 11,
-                          color: "var(--orca-color-text-3)",
-                          marginTop: 2,
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                          whiteSpace: "nowrap",
-                        },
+                    { style: { fontWeight: 500, color: "var(--orca-color-text-1)" } },
+                    skill.metadata.name
+                  ),
+                  skill.metadata.description && createElement(
+                    "div",
+                    {
+                      style: {
+                        fontSize: 11,
+                        color: "var(--orca-color-text-3)",
+                        marginTop: 2,
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
                       },
-                      skill.metadata.description
+                    },
+                    skill.metadata.description
+                  )
+                ),
+                // Actions
+                createElement(
+                  "div",
+                  { style: actionRowStyle },
+                  withTooltip(
+                    "编辑",
+                    createElement(
+                      Button,
+                      { variant: "plain", onClick: () => handleOpenEditor(skill) },
+                      createElement("i", { className: "ti ti-edit" })
                     )
                   ),
-                  // Actions
-                  createElement(
-                    "div",
-                    { style: actionRowStyle },
-                    withTooltip(
-                      "编辑",
-                      createElement(
-                        Button,
-                        { variant: "plain", onClick: () => handleOpenEditor(skill) },
-                        createElement("i", { className: "ti ti-edit" })
-                      )
-                    ),
-                    withTooltip(
-                      "删除",
-                      createElement(
-                        Button,
-                        { variant: "plain", onClick: () => handleDeleteSkill(skill) },
-                        createElement("i", { className: "ti ti-trash" })
-                      )
+                  withTooltip(
+                    "删除",
+                    createElement(
+                      Button,
+                      { variant: "plain", onClick: () => handleDeleteSkill(skill) },
+                      createElement("i", { className: "ti ti-trash" })
                     )
                   )
                 )
-              )
+              );
+              
+              const sectionHeaderStyle: React.CSSProperties = {
+                padding: "8px 10px",
+                background: "var(--orca-color-bg-3)",
+                fontSize: 11,
+                fontWeight: 600,
+                color: "var(--orca-color-text-2)",
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                borderBottom: "1px solid var(--orca-color-border)",
+                position: "sticky" as const,
+                top: 0,
+                zIndex: 1,
+              };
+              
+              const sections: any[] = [];
+              
+              // Global skills section
+              if (globalSkills.length > 0) {
+                sections.push(
+                  createElement(
+                    "div",
+                    { key: "global-section" },
+                    createElement(
+                      "div",
+                      { style: sectionHeaderStyle },
+                      "🌐 全局技能",
+                      createElement(
+                        "span",
+                        { style: { fontWeight: 400, color: "var(--orca-color-text-3)" } },
+                        `(${globalSkills.length})`
+                      )
+                    ),
+                    ...globalSkills.map((skill, idx) => 
+                      renderSkillRow(skill, localSkills.length === 0 && idx === globalSkills.length - 1)
+                    )
+                  )
+                );
+              }
+              
+              // Local skills section
+              if (localSkills.length > 0) {
+                sections.push(
+                  createElement(
+                    "div",
+                    { key: "local-section" },
+                    createElement(
+                      "div",
+                      { style: { ...sectionHeaderStyle, top: globalSkills.length > 0 ? undefined : 0 } },
+                      "📁 当前仓库技能",
+                      createElement(
+                        "span",
+                        { style: { fontWeight: 400, color: "var(--orca-color-text-3)" } },
+                        `(${localSkills.length})`
+                      )
+                    ),
+                    ...localSkills.map((skill, idx) => 
+                      renderSkillRow(skill, idx === localSkills.length - 1)
+                    )
+                  )
+                );
+              }
+              
+              return sections;
+            })()
       ),
       // Error message
       // (No error state in new system, but can be added if needed)
@@ -986,6 +1265,7 @@ export default function SkillManagerModal({ isOpen, onClose }: SkillManagerModal
     // Modals
     renderCreateModal(),
     renderEditModal(),
-    renderDeleteConfirm()
+    renderDeleteConfirm(),
+    renderImportScopeModal()
   );
 }
