@@ -12,43 +12,116 @@ import {
 import { nowId } from "../utils/text-utils";
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Qwen3/Llama 风格 <tool_call> XML 标签适配层
+// <tool_call> XML 标签适配层 (Qwen3/Llama/DeepSeek/GLM 等模型)
 // ═══════════════════════════════════════════════════════════════════════════
 
 /**
- * 解析 Qwen3/Llama 风格的 <tool_call> XML 标签
- * 输入: '<tool_call>\n{"name": "searchNotes", "arguments": {"query": "酒馆"}}\n</tool_call>'
+ * 解析 <tool_call> XML 标签，支持多种格式：
+ * 格式1 (JSON): '<tool_call>{"name": "searchNotes", "arguments": {"query": "酒馆"}}</tool_call>'
+ * 格式2 (arg_key/arg_value): '<tool_call>searchNotes<arg_key>query</arg_key><arg_value>脂肪</arg_value></tool_call>'
+ * 格式3 (name属性): '<tool_call name="searchNotes"><arg>...</arg></tool_call>'
  * 输出: [{ id, type, function: { name, arguments } }]
  */
 export function parseXmlToolCalls(content: string): ToolCallInfo[] {
   const toolCalls: ToolCallInfo[] = [];
   
   // 匹配所有 <tool_call>...</tool_call> 块
-  const toolCallRegex = /<tool_call>\s*([\s\S]*?)\s*<\/tool_call>/g;
+  const toolCallRegex = /<tool_call(?:\s+name="([^"]+)")?[^>]*>\s*([\s\S]*?)\s*<\/tool_call>/g;
   let match;
   let index = 0;
   
   while ((match = toolCallRegex.exec(content)) !== null) {
-    const jsonStr = match[1].trim();
-    try {
-      const parsed = JSON.parse(jsonStr);
-      const name = parsed.name || parsed.function?.name || "";
-      // arguments 可能是对象或字符串
-      let args = parsed.arguments ?? parsed.parameters ?? {};
-      if (typeof args === "object") {
-        args = JSON.stringify(args);
+    const nameAttr = match[1]; // 从 name 属性获取的工具名
+    const innerContent = match[2].trim();
+    
+    let toolName = "";
+    let args: Record<string, any> = {};
+    let parsed = false;
+    
+    // 尝试格式1: JSON 格式
+    if (!parsed && innerContent.startsWith("{")) {
+      try {
+        const jsonObj = JSON.parse(innerContent);
+        toolName = jsonObj.name || jsonObj.function?.name || "";
+        let jsonArgs = jsonObj.arguments ?? jsonObj.parameters ?? {};
+        if (typeof jsonArgs === "object") {
+          args = jsonArgs;
+        } else if (typeof jsonArgs === "string") {
+          try {
+            args = JSON.parse(jsonArgs);
+          } catch {
+            args = { value: jsonArgs };
+          }
+        }
+        parsed = true;
+      } catch {
+        // 不是有效 JSON，继续尝试其他格式
       }
+    }
+    
+    // 尝试格式2: <arg_key>...</arg_key><arg_value>...</arg_value> 格式
+    if (!parsed && innerContent.includes("<arg_key>")) {
+      // 工具名是 <arg_key> 之前的文本
+      const argKeyIndex = innerContent.indexOf("<arg_key>");
+      toolName = innerContent.substring(0, argKeyIndex).trim();
       
+      // 解析所有 arg_key/arg_value 对
+      const argPairRegex = /<arg_key>([\s\S]*?)<\/arg_key>\s*<arg_value>([\s\S]*?)<\/arg_value>/g;
+      let argMatch;
+      while ((argMatch = argPairRegex.exec(innerContent)) !== null) {
+        const key = argMatch[1].trim();
+        let value: any = argMatch[2].trim();
+        // 尝试解析为 JSON
+        try {
+          value = JSON.parse(value);
+        } catch {
+          // 保持字符串值
+        }
+        args[key] = value;
+      }
+      parsed = true;
+    }
+    
+    // 尝试格式3: 使用 name 属性，内容可能是其他参数格式
+    if (!parsed && nameAttr) {
+      toolName = nameAttr;
+      // 尝试解析内容为参数
+      if (innerContent.startsWith("{")) {
+        try {
+          args = JSON.parse(innerContent);
+        } catch {
+          args = { input: innerContent };
+        }
+      } else if (innerContent) {
+        args = { input: innerContent };
+      }
+      parsed = true;
+    }
+    
+    // 如果以上都失败，尝试将整个内容作为简单的工具名+参数
+    if (!parsed && innerContent) {
+      // 简单启发式：如果内容看起来像是 "toolName param1 param2"
+      const parts = innerContent.split(/\s+/);
+      if (parts.length > 0) {
+        toolName = parts[0];
+        if (parts.length > 1) {
+          args = { input: parts.slice(1).join(" ") };
+        }
+        parsed = true;
+      }
+    }
+    
+    if (toolName) {
       toolCalls.push({
         id: `xml_tool_call_${index++}`,
         type: "function",
         function: {
-          name,
-          arguments: args,
+          name: toolName,
+          arguments: JSON.stringify(args),
         },
       });
-    } catch (e) {
-      console.warn("[parseXmlToolCalls] Failed to parse tool call JSON:", jsonStr, e);
+    } else {
+      console.warn("[parseXmlToolCalls] Could not parse tool call:", innerContent);
     }
   }
   
@@ -67,6 +140,82 @@ export function hasXmlToolCalls(content: string): boolean {
  */
 export function stripXmlToolCalls(content: string): string {
   return content.replace(/<tool_call>[\s\S]*?<\/tool_call>/g, "").trim();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// DSML 风格工具调用适配层 (DeepSeek/GLM 等模型)
+// 格式: <｜DSML｜function_calls><｜DSML｜invoke name="..."><｜DSML｜parameter name="...">value</｜DSML｜parameter></｜DSML｜invoke></｜DSML｜function_calls>
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * 检查内容是否包含 DSML 格式的工具调用
+ */
+export function hasDsmlToolCalls(content: string): boolean {
+  return /<｜DSML｜function_calls>/.test(content) || /<｜DSML｜invoke/.test(content);
+}
+
+/**
+ * 解析 DeepSeek DSML 格式的工具调用
+ * 输入: '<｜DSML｜function_calls><｜DSML｜invoke name="queryByTagProperty"><｜DSML｜parameter name="repoId">value</｜DSML｜parameter></｜DSML｜invoke></｜DSML｜function_calls>'
+ * 输出: [{ id, type, function: { name, arguments } }]
+ */
+export function parseDsmlToolCalls(content: string): ToolCallInfo[] {
+  const toolCalls: ToolCallInfo[] = [];
+  
+  // 匹配所有 <｜DSML｜invoke>...</｜DSML｜invoke> 块
+  const invokeRegex = /<｜DSML｜invoke\s+name="([^"]+)"[^>]*>([\s\S]*?)<\/｜DSML｜invoke>/g;
+  let match;
+  let index = 0;
+  
+  while ((match = invokeRegex.exec(content)) !== null) {
+    const toolName = match[1];
+    const invokeContent = match[2];
+    
+    // 解析参数
+    const args: Record<string, any> = {};
+    const paramRegex = /<｜DSML｜parameter\s+name="([^"]+)"[^>]*>([\s\S]*?)<\/｜DSML｜parameter>/g;
+    let paramMatch;
+    
+    while ((paramMatch = paramRegex.exec(invokeContent)) !== null) {
+      const paramName = paramMatch[1];
+      let paramValue: any = paramMatch[2].trim();
+      
+      // 尝试解析 JSON 值
+      try {
+        paramValue = JSON.parse(paramValue);
+      } catch {
+        // 保持字符串值
+      }
+      
+      args[paramName] = paramValue;
+    }
+    
+    toolCalls.push({
+      id: `dsml_tool_call_${index++}`,
+      type: "function",
+      function: {
+        name: toolName,
+        arguments: JSON.stringify(args),
+      },
+    });
+  }
+  
+  return toolCalls;
+}
+
+/**
+ * 从内容中移除 DSML 格式的工具调用块，返回纯文本内容
+ */
+export function stripDsmlToolCalls(content: string): string {
+  // 移除完整的 function_calls 块
+  let result = content.replace(/<｜DSML｜function_calls>[\s\S]*?<\/｜DSML｜function_calls>/g, "");
+  // 移除单独的 invoke 块（没有被 function_calls 包围的情况）
+  result = result.replace(/<｜DSML｜invoke[\s\S]*?<\/｜DSML｜invoke>/g, "");
+  // 移除单独的 parameter 标签（不完整的情况）
+  result = result.replace(/<｜DSML｜parameter[\s\S]*?<\/｜DSML｜parameter>/g, "");
+  // 移除自闭合的标签
+  result = result.replace(/<｜DSML｜[^>]*\/>/g, "");
+  return result.trim();
 }
 
 export interface StreamOptions {
@@ -232,6 +381,26 @@ export async function* streamChatCompletion(
     }
   }
 
+  // 检查 content 中是否包含 <tool_call> XML 标签
+  if (toolCalls.length === 0 && hasXmlToolCalls(content)) {
+    const xmlToolCalls = parseXmlToolCalls(content);
+    if (xmlToolCalls.length > 0) {
+      toolCalls = xmlToolCalls;
+      content = stripXmlToolCalls(content);
+      yield { type: "tool_calls", toolCalls };
+    }
+  }
+
+  // 检查 content 中是否包含 DSML 格式的工具调用
+  if (toolCalls.length === 0 && hasDsmlToolCalls(content)) {
+    const dsmlToolCalls = parseDsmlToolCalls(content);
+    if (dsmlToolCalls.length > 0) {
+      toolCalls = dsmlToolCalls;
+      content = stripDsmlToolCalls(content);
+      yield { type: "tool_calls", toolCalls };
+    }
+  }
+
   yield { type: "done", result: { content, toolCalls, reasoning: reasoning || undefined } };
 }
 
@@ -357,6 +526,21 @@ export async function* streamChatWithRetry(
       toolCalls = xmlToolCalls;
       // 从 content 中移除 tool_call 块，保留其他文本
       content = stripXmlToolCalls(content);
+      // 通知调用方有 tool_calls
+      yield { type: "tool_calls", toolCalls };
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // DeepSeek DSML 适配: 检查 content 中是否包含 <｜DSML｜ 格式的工具调用
+  // ═══════════════════════════════════════════════════════════════════════════
+  if (toolCalls.length === 0 && hasDsmlToolCalls(content)) {
+    console.log("[streamChatWithRetry] Detected DSML format tool calls in content, parsing...");
+    const dsmlToolCalls = parseDsmlToolCalls(content);
+    if (dsmlToolCalls.length > 0) {
+      toolCalls = dsmlToolCalls;
+      // 从 content 中移除 DSML 块，保留其他文本
+      content = stripDsmlToolCalls(content);
       // 通知调用方有 tool_calls
       yield { type: "tool_calls", toolCalls };
     }
