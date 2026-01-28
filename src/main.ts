@@ -5,6 +5,7 @@ import { loadMemoryStore } from "./store/memory-store";
 import { AiChatPluginAPI } from "./services/plugin-api";
 import { ensureBuiltInSkills } from "./services/skills-manager";
 import { initToolPrompts } from "./services/tool-prompt-loader";
+import { initCommands } from "./services/commands-loader";
 
 let pluginName: string;
 let hideableObserver: MutationObserver | null = null;
@@ -93,6 +94,9 @@ export async function load(_name: string) {
 
   // 初始化 Tool-Prompt 目录（确保工具说明文件存在）
   await initToolPrompts();
+
+  // 初始化 Commands 目录（确保默认命令模板存在）
+  await initCommands();
 
   // 挂载 Plugin API 到全局，供外部插件调用
   (window as any).AiChatPluginAPI = AiChatPluginAPI;

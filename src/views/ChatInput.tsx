@@ -25,6 +25,7 @@ import { MultiModelToggleButton } from "../components/MultiModelSelector";
 import { multiModelStore } from "../store/multi-model-store";
 import ToolPanel from "../components/ToolPanel";
 import { loadToolSettings, toolStore, toggleWebSearch, toggleAgenticRAG, toggleScriptAnalysis } from "../store/tool-store";
+import { getAllCommandsInfo } from "../services/commands-loader";
 
 const React = window.React as unknown as {
   createElement: typeof window.React.createElement;
@@ -89,6 +90,7 @@ const CATEGORY_LABELS: Record<SlashCommandCategory, string> = {
   visualization: "可视化",
   todoist: "Todoist 任务",
   skill: "技能",
+  command: "命令",
 };
 
 const { useSnapshot } = (window as any).Valtio as {
@@ -215,6 +217,7 @@ export default function ChatInput({
   const [isSending, setIsSending] = useState(false);
   const [isDraggingFile, setIsDraggingFile] = useState(false);
   const [toolbarWidth, setToolbarWidth] = useState(0);
+  const [availableCommands, setAvailableCommands] = useState<{ name: string; description: string }[]>([]);
   const addContextBtnRef = useRef<HTMLElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -299,12 +302,23 @@ export default function ChatInput({
     const query = text.slice(1).toLowerCase(); // 移除开头的 /
     if (query.includes(" ")) return []; // 如果有空格，不显示菜单
     
+    // 合并内置命令和文件命令
+    const allCommands: SlashCommandDef[] = [
+      ...SLASH_COMMANDS,
+      ...availableCommands.map(cmd => ({
+        command: `/${cmd.name}`,
+        description: cmd.description || "自定义命令",
+        icon: "ti ti-file-text",
+        category: "command" as SlashCommandCategory,
+      }))
+    ];
+    
     // 使用模糊匹配过滤命令
-    return SLASH_COMMANDS.filter(cmd => {
+    return allCommands.filter(cmd => {
       const cmdName = cmd.command.slice(1); // 移除命令开头的 /
       return fuzzyMatch(query, cmdName);
     });
-  }, [text]);
+  }, [text, availableCommands]);
 
   // 获取最近使用的命令
   const recentCommands = useMemo(() => {
@@ -327,7 +341,7 @@ export default function ChatInput({
     items.push(...recentCmds);
     
     const grouped = groupCommandsByCategory(filteredCommands as SlashCommandType[]);
-    const categories: SlashCommandCategory[] = ["format", "style", "visualization", "skill", "todoist"];
+    const categories: SlashCommandCategory[] = ["format", "style", "visualization", "skill", "command", "todoist"];
     for (const category of categories) {
       const cmds = grouped[category];
       for (const cmd of cmds) {
@@ -361,8 +375,16 @@ export default function ChatInput({
 
   // Load chat mode from storage on mount (Requirements: 5.2)
   useEffect(() => {
-    loadFromStorage();
-    loadToolSettings();
+    // Load settings asynchronously
+    Promise.all([
+      loadFromStorage(),
+      loadToolSettings(),
+      getAllCommandsInfo()
+    ]).then(([, , commands]) => {
+      setAvailableCommands(commands);
+    }).catch(error => {
+      console.error('[ChatInput] Failed to load initial settings:', error);
+    });
   }, []);
 
   useEffect(() => {
@@ -800,7 +822,7 @@ export default function ChatInput({
             
             // 按分类分组显示
             const grouped = groupCommandsByCategory(filteredCommands as SlashCommandType[]);
-            const categories: SlashCommandCategory[] = ["format", "style", "visualization", "skill", "todoist"];
+            const categories: SlashCommandCategory[] = ["format", "style", "visualization", "skill", "command", "todoist"];
             
             for (const category of categories) {
               const cmds = grouped[category];

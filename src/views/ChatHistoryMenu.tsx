@@ -357,7 +357,7 @@ export default function ChatHistoryMenu({
                 { style: sessionMetaStyle },
                 createElement("span", null, formatSessionTime(session.updatedAt)),
                 createElement("span", null, "·"),
-                createElement("span", null, `${session.messages.length} 条`)
+                createElement("span", null, `${session.messageCount ?? session.messages.length} 条`)
               )
             )
       ),

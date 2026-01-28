@@ -80,15 +80,33 @@ export const spacingConfig = {
 // ============================================================================
 
 /**
- * Load settings from localStorage
+ * Load settings from storage (prioritizes Orca plugin storage over localStorage)
  */
-function loadSettings(): DisplaySettings {
+async function loadSettings(): Promise<DisplaySettings> {
   // Check if localStorage is available (not in test environment)
   if (typeof localStorage === "undefined") {
     return { ...DEFAULT_SETTINGS };
   }
   try {
-    const stored = localStorage.getItem(DISPLAY_SETTINGS_KEY);
+    let stored: string | null = null;
+
+    // Try to load from Orca plugin storage first
+    if ((window as any).orca?.plugins?.getData) {
+      try {
+        stored = await (window as any).orca.plugins.getData(
+          "ai-chat",
+          "display-settings"
+        );
+      } catch (e) {
+        console.warn('[DisplaySettings] Failed to load from Orca storage:', e);
+      }
+    }
+
+    // Fall back to localStorage if Orca storage fails or is empty
+    if (!stored) {
+      stored = localStorage.getItem(DISPLAY_SETTINGS_KEY);
+    }
+
     if (stored) {
       const parsed = JSON.parse(stored);
       // Validate and merge with defaults
@@ -111,24 +129,43 @@ function loadSettings(): DisplaySettings {
 }
 
 /**
- * Save settings to localStorage
+ * Save settings to storage (both localStorage and Orca plugin storage)
  */
-function saveSettings(settings: DisplaySettings): void {
+async function saveSettings(settings: DisplaySettings): Promise<void> {
   // Check if localStorage is available (not in test environment)
   if (typeof localStorage === "undefined") {
     return;
   }
   try {
-    localStorage.setItem(DISPLAY_SETTINGS_KEY, JSON.stringify(settings));
+    const settingsJson = JSON.stringify(settings);
+
+    // Save to localStorage
+    localStorage.setItem(DISPLAY_SETTINGS_KEY, settingsJson);
+
+    // Also save to Orca plugin storage for better persistence
+    if ((window as any).orca?.plugins?.setData) {
+      await (window as any).orca.plugins.setData(
+        "ai-chat",
+        "display-settings",
+        settingsJson
+      );
+    }
   } catch (e) {
     console.warn("[DisplaySettings] Failed to save settings:", e);
   }
 }
 
-// Create reactive store with initial values from localStorage
-export const displaySettingsStore = proxy<DisplaySettings>(loadSettings());
+// Create reactive store with initial values from storage
+let initialSettings: DisplaySettings = { ...DEFAULT_SETTINGS };
+loadSettings().then(settings => {
+  displaySettingsStore.fontSize = settings.fontSize;
+  displaySettingsStore.compactMode = settings.compactMode;
+  displaySettingsStore.showTimestamps = settings.showTimestamps;
+});
 
-// Auto-save to localStorage when store changes
+export const displaySettingsStore = proxy<DisplaySettings>(initialSettings);
+
+// Auto-save to storage when store changes
 subscribe(displaySettingsStore, () => {
   saveSettings({
     fontSize: displaySettingsStore.fontSize,

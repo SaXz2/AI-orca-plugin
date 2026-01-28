@@ -337,7 +337,7 @@ export function isCurrencyEnabled(): boolean {
 /**
  * 保存工具设置到本地存储
  */
-function saveToolSettings(): void {
+async function saveToolSettings(): Promise<void> {
   try {
     const settings = {
       toolStatus: toolStore.toolStatus,
@@ -349,7 +349,13 @@ function saveToolSettings(): void {
       wikipediaEnabled: toolStore.wikipediaEnabled,
       currencyEnabled: toolStore.currencyEnabled,
     };
-    localStorage.setItem("ai-chat-tool-settings", JSON.stringify(settings));
+    
+    // 同时使用 Orca 插件存储和 localStorage（双重保障）
+    const settingsJson = JSON.stringify(settings);
+    localStorage.setItem("ai-chat-tool-settings", settingsJson);
+    
+    // 使用 Orca 的持久化存储
+    await orca.plugins.setData("ai-chat", "tool-settings", settingsJson);
   } catch (e) {
     console.warn("[ToolStore] Failed to save settings:", e);
   }
@@ -358,9 +364,21 @@ function saveToolSettings(): void {
 /**
  * 从本地存储加载工具设置
  */
-export function loadToolSettings(): void {
+export async function loadToolSettings(): Promise<void> {
   try {
-    const saved = localStorage.getItem("ai-chat-tool-settings");
+    // 优先从 Orca 插件存储加载
+    let saved: string | null = null;
+    try {
+      saved = await orca.plugins.getData("ai-chat", "tool-settings") as string | null;
+    } catch (e) {
+      console.warn("[ToolStore] Failed to load from plugin storage, falling back to localStorage:", e);
+    }
+    
+    // 如果 Orca 存储没有，尝试从 localStorage 加载
+    if (!saved) {
+      saved = localStorage.getItem("ai-chat-tool-settings");
+    }
+    
     if (saved) {
       const parsed = JSON.parse(saved);
       if (typeof parsed === "object" && parsed !== null) {

@@ -45,6 +45,7 @@ import {
 } from "../settings/ai-chat-settings";
 import {
   loadSessions,
+  loadFullSession,
   deleteSession,
   clearAllSessions,
   createNewSession,
@@ -531,10 +532,11 @@ export default function AiChatPanel({ panelId }: PanelProps) {
     const settings = getAiChatSettings(pluginName);
     const defaultModel = settings.selectedModelId;
 
-    loadSessions().then((data) => {
+    loadSessions().then(async (data) => {
       setSessions(data.sessions);
       if (data.activeSessionId) {
-        const active = data.sessions.find((s) => s.id === data.activeSessionId);
+        // 加载完整会话数据（包含消息）
+        const active = await loadFullSession(data.activeSessionId);
         if (active) {
           // 恢复会话（即使没有消息，也可能有闪卡状态）
           setCurrentSession({
@@ -614,9 +616,6 @@ export default function AiChatPanel({ panelId }: PanelProps) {
     const settings = getAiChatSettings(pluginName);
     const defaultModel = settings.selectedModelId;
 
-    const session = sessions.find((s) => s.id === sessionId);
-    if (!session) return;
-
     // 保存当前会话的滚动位置
     if (listRef.current && currentSession.id !== sessionId) {
       setCurrentSession((prev) => ({
@@ -624,6 +623,10 @@ export default function AiChatPanel({ panelId }: PanelProps) {
         scrollPosition: listRef.current?.scrollTop ?? 0,
       }));
     }
+
+    // 加载完整会话数据（包含消息）
+    const session = await loadFullSession(sessionId);
+    if (!session) return;
 
     setCurrentSession({
       ...session,
@@ -671,7 +674,7 @@ export default function AiChatPanel({ panelId }: PanelProps) {
         }
       }
     }, 50);
-  }, [sessions, currentSession.id]);
+  }, [currentSession.id]);
 
   const handleDeleteSession = useCallback(async (sessionId: string) => {
     await deleteSession(sessionId);
@@ -1009,6 +1012,80 @@ export default function AiChatPanel({ panelId }: PanelProps) {
 
 	    // 检测用户指令并追加格式要求
 	    let processedContent = content;
+	    
+	    // Skill 加载逻辑：如果用户输入 #skillname，尝试加载 Skill
+	    if (content.startsWith("#")) {
+	      const spaceIndex = content.indexOf(" ");
+	      const skillName = spaceIndex > 0 ? content.slice(1, spaceIndex) : content.slice(1);
+	      const restText = spaceIndex > 0 ? content.slice(spaceIndex + 1).trim() : "";
+	      
+	      // 尝试加载 Skill
+	      try {
+	        const { listSkills, getSkill } = await import("../services/skills-manager");
+	        const allSkills = await listSkills();
+	        
+	        // 查找匹配的 Skill（名称或 ID）
+	        const skillRef = allSkills.find(s => {
+	          // 这里 skillRef 只有 id 和 isGlobal，需要加载完整 Skill 来获取 name
+	          return s.id === skillName;
+	        });
+	        
+	        // 如果没找到精确匹配，尝试通过 name 匹配
+	        let foundSkill = null;
+	        if (skillRef) {
+	          foundSkill = await getSkill(skillRef.id, skillRef.isGlobal);
+	        } else {
+	          // 遍历所有 Skill 查找 name 匹配
+	          for (const ref of allSkills) {
+	            const skill = await getSkill(ref.id, ref.isGlobal);
+	            if (skill && skill.metadata.name === skillName) {
+	              foundSkill = skill;
+	              break;
+	            }
+	          }
+	        }
+	        
+	        if (foundSkill) {
+	          // 使用现有的 requestSkillConfirm 机制显示确认对话框
+	          const confirmed = await requestSkillConfirm(foundSkill);
+	          
+	          if (!confirmed) {
+	            // 用户取消，不继续执行
+	            return;
+	          }
+	          
+	          // 用户确认，加载 Skill 指令
+	          processedContent = restText ? `${foundSkill.instruction}\n\n## 用户输入\n${restText}` : foundSkill.instruction;
+	        }
+	      } catch (err) {
+	        console.error("[handleSend] Failed to load skill:", err);
+	      }
+	    }
+	    
+	    // Commands 加载逻辑：如果用户输入 /commandname，尝试加载命令文件
+	    if (content.startsWith("/")) {
+	      const spaceIndex = content.indexOf(" ");
+	      const commandName = spaceIndex > 0 ? content.slice(1, spaceIndex) : content.slice(1);
+	      const restText = spaceIndex > 0 ? content.slice(spaceIndex + 1).trim() : "";
+	      
+	      // 检查是否是内置 UI 命令（如 /table, /brief, /localgraph 等）
+	      const builtinCommands = [
+	        "table", "timeline", "compare", "list", "steps", "brief", "detail", "summary", "eli5", "formal", "diagram",
+	        "localgraph", "mindmap", "card", "skill",
+	        "todoist", "todoist-all", "todoist-add", "todoist-done", "todoist-ai"
+	      ];
+	      const isBuiltinCommand = builtinCommands.includes(commandName);
+	      
+	      if (!isBuiltinCommand) {
+	        // 尝试从 Commands 文件夹加载命令
+	        const { loadCommand } = await import("../services/commands-loader");
+	        const commandContent = await loadCommand(commandName);
+	        if (commandContent) {
+	          // 拼接命令内容和用户输入（发送给 AI）
+	          processedContent = restText ? `${commandContent}\n\n${restText}` : commandContent;
+	        }
+	      }
+	    }
 	    
 	    // /timeline - 时间线格式
 	    if (content.includes("/timeline")) {

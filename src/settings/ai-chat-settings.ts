@@ -253,6 +253,7 @@ export const DEFAULT_AI_CHAT_SETTINGS: AiChatSettings = {
 // ═══════════════════════════════════════════════════════════════════════════
 
 const PROVIDERS_STORAGE_KEY = "ai-providers-config";
+const PROVIDERS_LOCALSTORAGE_KEY = "ai-chat-providers-config";
 
 export async function registerAiChatSettingsSchema(
   pluginName: string,
@@ -427,28 +428,62 @@ type StoredConfig = {
 let cachedConfig: StoredConfig | null = null;
 let cachePluginName: string | null = null;
 
-/** 从存储加载配置 */
+/** 从存储加载配置（优先从 Orca 插件存储加载，回退到 localStorage） */
 async function loadStoredConfig(pluginName: string): Promise<StoredConfig | null> {
+  let raw: string | null = null;
+
+  // 首先尝试从 Orca 插件存储加载
   try {
-    const raw = await orca.plugins.getData(pluginName, PROVIDERS_STORAGE_KEY);
-    if (raw) {
+    raw = await orca.plugins.getData(pluginName, PROVIDERS_STORAGE_KEY);
+  } catch (e) {
+    console.warn('[AiChatSettings] Failed to load from Orca storage:', e);
+  }
+
+  // 如果 Orca 存储失败或为空，尝试从 localStorage 加载
+  if (!raw && typeof localStorage !== "undefined") {
+    try {
+      raw = localStorage.getItem(PROVIDERS_LOCALSTORAGE_KEY);
+    } catch (e) {
+      console.warn('[AiChatSettings] Failed to load from localStorage:', e);
+    }
+  }
+
+  if (raw) {
+    try {
       const parsed = JSON.parse(raw);
       return parsed;
+    } catch (e) {
+      console.warn('[AiChatSettings] Failed to parse stored config:', e);
     }
-  } catch (e) {
   }
+
   return null;
 }
 
-/** 保存配置到存储 */
+/** 保存配置到存储（双重保存：Orca 插件存储 + localStorage） */
 async function saveStoredConfig(pluginName: string, config: StoredConfig): Promise<void> {
+  const configJson = JSON.stringify(config);
+
+  // 保存到 Orca 插件存储
   try {
-    await orca.plugins.setData(pluginName, PROVIDERS_STORAGE_KEY, JSON.stringify(config));
-    cachedConfig = config;
-    cachePluginName = pluginName;
+    await orca.plugins.setData(pluginName, PROVIDERS_STORAGE_KEY, configJson);
   } catch (e) {
-    throw e;
+    console.error('[AiChatSettings] Failed to save to Orca storage:', e);
+    // 不抛出异常，继续尝试保存到 localStorage
   }
+
+  // 同时保存到 localStorage 作为备份
+  if (typeof localStorage !== "undefined") {
+    try {
+      localStorage.setItem(PROVIDERS_LOCALSTORAGE_KEY, configJson);
+    } catch (e) {
+      console.warn('[AiChatSettings] Failed to save to localStorage:', e);
+    }
+  }
+
+  // 更新内存缓存
+  cachedConfig = config;
+  cachePluginName = pluginName;
 }
 
 /** 同步获取设置（使用缓存，首次需要先调用 initAiChatSettings） */

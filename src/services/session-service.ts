@@ -100,7 +100,38 @@ export type FlashcardState = {
 };
 
 /**
- * Saved session structure
+ * Session metadata (stored in index)
+ */
+export type SessionMeta = {
+  id: string;
+  title: string;
+  model?: string;
+  createdAt: number;
+  updatedAt: number;
+  pinned?: boolean;
+  favorited?: boolean;
+  messageCount: number; // 消息数量（用于显示）
+};
+
+/**
+ * Session file content (stored in individual files)
+ */
+export type SessionFileData = {
+  id: string;
+  title: string;
+  model?: string;
+  messages: Message[];
+  contexts: ContextRef[];
+  createdAt: number;
+  updatedAt: number;
+  pinned?: boolean;
+  favorited?: boolean;
+  scrollPosition?: number;
+  flashcardState?: FlashcardState;
+};
+
+/**
+ * Saved session structure (in-memory, combines meta + data)
  */
 export type SavedSession = {
   id: string;
@@ -110,23 +141,159 @@ export type SavedSession = {
   contexts: ContextRef[];
   createdAt: number;
   updatedAt: number;
-  pinned?: boolean; // 置顶标记
-  favorited?: boolean; // 收藏标记
-  scrollPosition?: number; // 滚动位置（像素）
-  flashcardState?: FlashcardState; // 闪卡复习状态
+  pinned?: boolean;
+  favorited?: boolean;
+  scrollPosition?: number;
+  flashcardState?: FlashcardState;
+  messageCount?: number; // 消息数量（用于列表显示）
 };
 
 /**
- * Chat sessions data structure
+ * Index file structure
+ */
+export type SessionIndex = {
+  version: 2;
+  activeSessionId: string | null;
+  sessions: SessionMeta[];
+};
+
+/**
+ * Chat sessions data structure (for compatibility with existing code)
  */
 export type ChatSessionsData = {
-  version: 1;
+  version: 1 | 2;
   activeSessionId: string | null;
   sessions: SavedSession[];
 };
 
-const STORAGE_KEY = "chat-sessions";
-const DATA_VERSION = 1;
+// ─────────────────────────────────────────────────────────────────────────────
+// Constants
+// ─────────────────────────────────────────────────────────────────────────────
+
+const SESSIONS_DIR = "Sessions";
+const INDEX_FILE = `${SESSIONS_DIR}/index.json`;
+const OLD_STORAGE_KEY = "chat-sessions"; // 旧版存储 key，用于迁移
+const DATA_VERSION = 2;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// File Operations
+// ─────────────────────────────────────────────────────────────────────────────
+
+function getPluginName(): string {
+  const name = getAiChatPluginName();
+  if (!name) {
+    console.warn("[session-service] Plugin name not set, this may cause storage issues");
+  }
+  return name;
+}
+
+async function readFile(path: string): Promise<string | null> {
+  const pluginName = getPluginName();
+  try {
+    const content = await orca.plugins.readFile(pluginName, path, "string", true);
+    if (!content) return null;
+    return typeof content === "string"
+      ? content
+      : new TextDecoder().decode(new Uint8Array(content as ArrayBuffer));
+  } catch {
+    return null;
+  }
+}
+
+async function writeFile(path: string, content: string): Promise<void> {
+  const pluginName = getPluginName();
+  await orca.plugins.writeFile(pluginName, path, content, true);
+}
+
+async function deleteFile(path: string): Promise<void> {
+  const pluginName = getPluginName();
+  try {
+    await orca.plugins.removeFile(pluginName, path, true);
+  } catch {
+    // Ignore deletion errors
+  }
+}
+
+/** 
+ * 获取会话文件路径（支持任意文件名）
+ * 优先尝试标准命名，找不到则扫描目录
+ */
+async function getSessionFilePath(sessionId: string): Promise<string | null> {
+  const pluginName = getPluginName();
+  
+  // 1. 尝试标准命名（快速路径）
+  const standardPath = `${SESSIONS_DIR}/${sessionId}.json`;
+  try {
+    const exists = await orca.plugins.existsFile(pluginName, standardPath, true);
+    if (exists) return standardPath;
+  } catch {
+    // 继续查找
+  }
+  
+  // 2. 扫描目录，通过 JSON 内容匹配 ID
+  try {
+    const allFiles = await orca.plugins.listFiles(pluginName, true);
+    const sessionFiles = allFiles.filter(f => {
+      const normalized = f.replace(/\\/g, "/");
+      return normalized.startsWith(SESSIONS_DIR + "/") && normalized.endsWith(".json") && !normalized.endsWith("index.json");
+    });
+    
+    for (const file of sessionFiles) {
+      try {
+        const content = await readFile(file);
+        if (content) {
+          const data = JSON.parse(content);
+          if (data.id === sessionId) {
+            return file;
+          }
+        }
+      } catch {
+        // 跳过损坏的文件
+        continue;
+      }
+    }
+  } catch (err) {
+    console.error(`[session-service] Failed to scan for session ${sessionId}:`, err);
+  }
+  
+  return null;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// In-Memory Cache
+// ─────────────────────────────────────────────────────────────────────────────
+
+let indexCache: SessionIndex | null = null;
+const sessionCache = new Map<string, SessionFileData>();
+const pendingWrites = new Map<string, { data: SessionFileData; timer: ReturnType<typeof setTimeout> }>();
+const WRITE_DEBOUNCE_MS = 2000; // 2秒防抖
+
+/** 清除缓存（用于测试或强制刷新） */
+export function clearSessionCache(): void {
+  indexCache = null;
+  sessionCache.clear();
+  // 立即执行所有待写入
+  for (const [sessionId, pending] of pendingWrites) {
+    clearTimeout(pending.timer);
+    flushSessionWrite(sessionId, pending.data);
+  }
+  pendingWrites.clear();
+}
+
+/** 立即写入单个会话 */
+async function flushSessionWrite(sessionId: string, data: SessionFileData): Promise<void> {
+  try {
+    const filePath = await getSessionFilePath(sessionId);
+    if (!filePath) {
+      // 文件不存在，使用标准命名
+      await writeFile(`${SESSIONS_DIR}/${sessionId}.json`, JSON.stringify(data));
+    } else {
+      await writeFile(filePath, JSON.stringify(data));
+    }
+  } catch (err) {
+    console.error(`[session-service] Failed to flush session ${sessionId}:`, err);
+  }
+}
 
 /**
  * Generate a unique ID
@@ -167,100 +334,439 @@ export function createNewSession(): SavedSession {
   };
 }
 
-/**
- * Load all sessions from storage
- */
-export async function loadSessions(): Promise<ChatSessionsData> {
-  const pluginName = getAiChatPluginName();
-  try {
-    const raw = await orca.plugins.getData(pluginName, STORAGE_KEY);
-    if (!raw) {
-      return { version: DATA_VERSION, activeSessionId: null, sessions: [] };
+// ─────────────────────────────────────────────────────────────────────────────
+// Index Operations
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** 加载索引（带缓存） */
+async function loadIndex(): Promise<SessionIndex> {
+  if (indexCache) return indexCache;
+
+  const content = await readFile(INDEX_FILE);
+  if (content) {
+    try {
+      const parsed = JSON.parse(content);
+      if (parsed.version === 2) {
+        indexCache = parsed as SessionIndex;
+        // 自动发现新文件并同步到索引
+        await syncIndexWithFiles(indexCache);
+        return indexCache;
+      }
+    } catch {
+      console.warn("[session-service] Failed to parse index, will recreate");
     }
-    const data = typeof raw === "string" ? JSON.parse(raw) : raw;
-    // Validate version
-    if (data.version !== DATA_VERSION) {
-      console.warn("[session-service] Data version mismatch, returning empty");
-      return { version: DATA_VERSION, activeSessionId: null, sessions: [] };
-    }
-    return data as ChatSessionsData;
-  } catch (err) {
-    console.error("[session-service] Failed to load sessions:", err);
-    return { version: DATA_VERSION, activeSessionId: null, sessions: [] };
   }
+
+  // 尝试从旧版数据迁移
+  const migrated = await migrateFromOldFormat();
+  if (migrated) {
+    indexCache = migrated;
+    return indexCache;
+  }
+
+  // 创建空索引
+  indexCache = { version: 2, activeSessionId: null, sessions: [] };
+  await saveIndex();
+  return indexCache;
+}
+
+/** 保存索引 */
+async function saveIndex(): Promise<void> {
+  if (!indexCache) return;
+  await writeFile(INDEX_FILE, JSON.stringify(indexCache));
 }
 
 /**
- * Save sessions data to storage
+ * 从文件名提取标题
+ * 支持格式：2026-01-29_标题.json 或 标题.json
  */
-async function saveSessions(data: ChatSessionsData): Promise<void> {
-  const pluginName = getAiChatPluginName();
-  try {
-    await orca.plugins.setData(pluginName, STORAGE_KEY, JSON.stringify(data));
-  } catch (err) {
-    console.error("[session-service] Failed to save sessions:", err);
-    throw err;
+function extractTitleFromFilename(filename: string): string | null {
+  // 移除路径和 .json 后缀
+  const basename = filename.replace(/\\/g, "/").split("/").pop()?.replace(/\.json$/, "");
+  if (!basename) return null;
+  
+  // 尝试匹配标准格式：YYYY-MM-DD_标题_xxxx 或 时间戳-随机码
+  // 如果是标准 ID 格式（纯数字-十六进制），返回 null
+  if (/^\d+-[a-f0-9]+$/.test(basename)) {
+    return null; // 标准 ID，不从文件名提取
   }
+  
+  // 匹配日期前缀：YYYY-MM-DD_标题
+  const dateMatch = basename.match(/^\d{4}-\d{2}-\d{2}_(.+)$/);
+  if (dateMatch) {
+    // 移除末尾的随机码（如 _a3f2）
+    return dateMatch[1].replace(/_[a-f0-9]{4}$/, "");
+  }
+  
+  // 其他格式，直接使用文件名
+  return basename;
+}
+
+/** 扫描 Sessions 目录，发现新文件并同步到索引 */
+async function syncIndexWithFiles(index: SessionIndex): Promise<void> {
+  const pluginName = getPluginName();
+  try {
+    const allFiles = await orca.plugins.listFiles(pluginName, true);
+    const sessionFiles = allFiles.filter(f => {
+      const normalized = f.replace(/\\/g, "/");
+      return normalized.startsWith(SESSIONS_DIR + "/") && 
+             normalized.endsWith(".json") && 
+             !normalized.endsWith("index.json");
+    });
+    
+    const existingIds = new Set(index.sessions.map(s => s.id));
+    let hasChanges = false;
+    
+    for (const file of sessionFiles) {
+      try {
+        const content = await readFile(file);
+        if (!content) continue;
+        
+        const data = JSON.parse(content) as SessionFileData;
+        
+        // 尝试从文件名提取标题（非标准命名时）
+        const filenameTitle = extractTitleFromFilename(file);
+        
+        if (!existingIds.has(data.id)) {
+          // 新会话：添加到索引
+          const title = filenameTitle || data.title || generateSessionTitle(data.messages);
+          
+          console.log(`[session-service] Discovered new session: ${data.id} (${title})`);
+          index.sessions.push({
+            id: data.id,
+            title,
+            model: data.model,
+            createdAt: data.createdAt,
+            updatedAt: data.updatedAt,
+            pinned: data.pinned,
+            favorited: data.favorited,
+            messageCount: data.messages.filter(m => !m.localOnly).length,
+          });
+          hasChanges = true;
+        } else if (filenameTitle) {
+          // 已存在会话，但文件名是自定义格式：更新元数据
+          const existingMeta = index.sessions.find(s => s.id === data.id);
+          if (existingMeta) {
+            const needsUpdate = existingMeta.title !== filenameTitle;
+            if (needsUpdate) {
+              console.log(`[session-service] Updated title for ${data.id}: "${existingMeta.title}" -> "${filenameTitle}"`);
+              existingMeta.title = filenameTitle;
+            }
+            // 同时更新其他元数据（防止过时）
+            existingMeta.messageCount = data.messages.filter(m => !m.localOnly).length;
+            existingMeta.model = data.model;
+            existingMeta.updatedAt = data.updatedAt;
+            if (needsUpdate) hasChanges = true;
+          }
+        } else {
+          // 标准命名，但也需要更新元数据（messageCount 可能变了）
+          const existingMeta = index.sessions.find(s => s.id === data.id);
+          if (existingMeta) {
+            const newMessageCount = data.messages.filter(m => !m.localOnly).length;
+            if (existingMeta.messageCount !== newMessageCount) {
+              existingMeta.messageCount = newMessageCount;
+              existingMeta.updatedAt = data.updatedAt;
+              hasChanges = true;
+            }
+          }
+        }
+      } catch (err) {
+        console.warn(`[session-service] Failed to parse session file ${file}:`, err);
+      }
+    }
+    
+    if (hasChanges) {
+      // 重新排序
+      index.sessions.sort((a, b) => {
+        if (a.pinned && !b.pinned) return -1;
+        if (!a.pinned && b.pinned) return 1;
+        return b.updatedAt - a.updatedAt;
+      });
+      
+      // 保存更新后的索引
+      await saveIndex();
+      console.log(`[session-service] Index updated with ${index.sessions.length} sessions`);
+    }
+  } catch (err) {
+    console.error("[session-service] Failed to sync index with files:", err);
+  }
+}
+
+/** 从旧版格式迁移 */
+async function migrateFromOldFormat(): Promise<SessionIndex | null> {
+  const pluginName = getPluginName();
+  try {
+    const raw = await orca.plugins.getData(pluginName, OLD_STORAGE_KEY);
+    if (!raw) return null;
+
+    const oldData = typeof raw === "string" ? JSON.parse(raw) : raw;
+    if (!oldData.sessions || !Array.isArray(oldData.sessions)) return null;
+
+    console.log(`[session-service] Migrating ${oldData.sessions.length} sessions from old format...`);
+
+    const newIndex: SessionIndex = {
+      version: 2,
+      activeSessionId: oldData.activeSessionId || null,
+      sessions: [],
+    };
+
+    // 迁移每个会话到单独文件
+    for (const oldSession of oldData.sessions) {
+      const fileData: SessionFileData = {
+        id: oldSession.id,
+        title: oldSession.title || "",
+        model: oldSession.model,
+        messages: oldSession.messages || [],
+        contexts: oldSession.contexts || [],
+        createdAt: oldSession.createdAt,
+        updatedAt: oldSession.updatedAt,
+        pinned: oldSession.pinned,
+        favorited: oldSession.favorited,
+        scrollPosition: oldSession.scrollPosition,
+        flashcardState: oldSession.flashcardState,
+      };
+
+      // 写入单独文件（使用标准命名）
+      await writeFile(`${SESSIONS_DIR}/${oldSession.id}.json`, JSON.stringify(fileData));
+
+      // 添加到索引
+      newIndex.sessions.push({
+        id: oldSession.id,
+        title: oldSession.title || "",
+        model: oldSession.model,
+        createdAt: oldSession.createdAt,
+        updatedAt: oldSession.updatedAt,
+        pinned: oldSession.pinned,
+        favorited: oldSession.favorited,
+        messageCount: (oldSession.messages || []).filter((m: Message) => !m.localOnly).length,
+      });
+    }
+
+    // 保存新索引
+    await writeFile(INDEX_FILE, JSON.stringify(newIndex));
+
+    // 删除旧数据
+    await orca.plugins.setData(pluginName, OLD_STORAGE_KEY, null);
+    console.log("[session-service] Migration completed successfully");
+
+    return newIndex;
+  } catch (err) {
+    console.error("[session-service] Migration failed:", err);
+    return null;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Session File Operations
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** 加载单个会话文件（带缓存） */
+async function loadSessionFile(sessionId: string): Promise<SessionFileData | null> {
+  // 检查内存缓存
+  const cached = sessionCache.get(sessionId);
+  if (cached) return cached;
+
+  // 检查待写入队列（最新数据）
+  const pending = pendingWrites.get(sessionId);
+  if (pending) return pending.data;
+
+  // 从文件读取
+  const filePath = await getSessionFilePath(sessionId);
+  if (!filePath) return null;
+  
+  const content = await readFile(filePath);
+  if (!content) return null;
+
+  try {
+    const data = JSON.parse(content) as SessionFileData;
+    sessionCache.set(sessionId, data);
+    return data;
+  } catch {
+    console.error(`[session-service] Failed to parse session file: ${sessionId}`);
+    return null;
+  }
+}
+
+/** 保存会话文件（防抖写入） */
+function saveSessionFile(data: SessionFileData, immediate = false): void {
+  const sessionId = data.id;
+
+  // 更新缓存
+  sessionCache.set(sessionId, data);
+
+  // 取消之前的定时器
+  const existing = pendingWrites.get(sessionId);
+  if (existing) {
+    clearTimeout(existing.timer);
+  }
+
+  if (immediate) {
+    // 立即写入
+    pendingWrites.delete(sessionId);
+    flushSessionWrite(sessionId, data);
+  } else {
+    // 防抖写入
+    const timer = setTimeout(() => {
+      pendingWrites.delete(sessionId);
+      flushSessionWrite(sessionId, data);
+    }, WRITE_DEBOUNCE_MS);
+    pendingWrites.set(sessionId, { data, timer });
+  }
+}
+
+/** 更新索引中的元数据 */
+function updateIndexMeta(session: SessionFileData, index: SessionIndex): void {
+  const meta: SessionMeta = {
+    id: session.id,
+    title: session.title,
+    model: session.model,
+    createdAt: session.createdAt,
+    updatedAt: session.updatedAt,
+    pinned: session.pinned,
+    favorited: session.favorited,
+    messageCount: session.messages.filter(m => !m.localOnly).length,
+  };
+
+  const idx = index.sessions.findIndex(s => s.id === session.id);
+  if (idx >= 0) {
+    index.sessions[idx] = meta;
+  } else {
+    index.sessions.push(meta);
+  }
+
+  // 排序：置顶优先，然后按更新时间降序
+  index.sessions.sort((a, b) => {
+    if (a.pinned && !b.pinned) return -1;
+    if (!a.pinned && b.pinned) return 1;
+    return b.updatedAt - a.updatedAt;
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Public API
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Load all sessions (returns metadata only, messages loaded on demand)
+ * For compatibility, returns full SavedSession[] but messages are empty
+ */
+export async function loadSessions(): Promise<ChatSessionsData> {
+  const index = await loadIndex();
+  
+  // 立即同步一次（确保 messageCount 最新）
+  await syncIndexWithFiles(index);
+
+  // 转换为兼容格式（messages 为空数组，需要时再加载）
+  const sessions: SavedSession[] = index.sessions.map(meta => ({
+    id: meta.id,
+    title: meta.title,
+    model: meta.model,
+    messages: [], // 延迟加载
+    contexts: [],
+    createdAt: meta.createdAt,
+    updatedAt: meta.updatedAt,
+    pinned: meta.pinned,
+    favorited: meta.favorited,
+    messageCount: meta.messageCount, // 传递消息数量
+  }));
+
+  return {
+    version: 2,
+    activeSessionId: index.activeSessionId,
+    sessions,
+  };
+}
+
+/**
+ * Load full session data (including messages)
+ */
+export async function loadFullSession(sessionId: string): Promise<SavedSession | null> {
+  const fileData = await loadSessionFile(sessionId);
+  if (!fileData) return null;
+
+  return {
+    id: fileData.id,
+    title: fileData.title,
+    model: fileData.model,
+    messages: fileData.messages,
+    contexts: fileData.contexts,
+    createdAt: fileData.createdAt,
+    updatedAt: fileData.updatedAt,
+    pinned: fileData.pinned,
+    favorited: fileData.favorited,
+    scrollPosition: fileData.scrollPosition,
+    flashcardState: fileData.flashcardState,
+  };
 }
 
 /**
  * Save or update a session
  */
 export async function saveSession(session: SavedSession): Promise<void> {
-  const data = await loadSessions();
+  const filteredMessages = session.messages.filter(m => !m.localOnly);
 
-  // Filter out localOnly messages before saving
-  const filteredMessages = session.messages.filter((m) => !m.localOnly);
-
-  // Don't save empty sessions
   if (filteredMessages.length === 0) {
     console.log("[session-service] Session has no messages, skipping save");
     return;
   }
 
-  // Update session with filtered messages and generate title if empty
-  const sessionToSave: SavedSession = {
-    ...session,
-    messages: filteredMessages,
+  const index = await loadIndex();
+  const now = Date.now();
+
+  const fileData: SessionFileData = {
+    id: session.id,
     title: session.title || generateSessionTitle(filteredMessages),
-    updatedAt: Date.now(),
+    model: session.model,
+    messages: filteredMessages,
+    contexts: session.contexts,
+    createdAt: session.createdAt,
+    updatedAt: now,
+    pinned: session.pinned,
+    favorited: session.favorited,
+    scrollPosition: session.scrollPosition,
+    flashcardState: session.flashcardState,
   };
 
-  // Find existing session or add new
-  const existingIndex = data.sessions.findIndex((s) => s.id === session.id);
-  if (existingIndex >= 0) {
-    data.sessions[existingIndex] = sessionToSave;
-  } else {
-    data.sessions.push(sessionToSave);
-  }
+  // 保存文件（立即写入）
+  saveSessionFile(fileData, true);
 
-  // Sort: pinned first, then by updatedAt descending
-  data.sessions.sort((a, b) => {
-    if (a.pinned && !b.pinned) return -1;
-    if (!a.pinned && b.pinned) return 1;
-    return b.updatedAt - a.updatedAt;
-  });
+  // 更新索引
+  updateIndexMeta(fileData, index);
+  index.activeSessionId = session.id;
+  await saveIndex();
 
-  // Update active session ID
-  data.activeSessionId = session.id;
-
-  await saveSessions(data);
-  console.log("[session-service] Session saved:", sessionToSave.id, sessionToSave.title);
+  console.log("[session-service] Session saved:", fileData.id, fileData.title);
 }
 
 /**
  * Delete a session by ID
  */
 export async function deleteSession(sessionId: string): Promise<void> {
-  const data = await loadSessions();
-  data.sessions = data.sessions.filter((s) => s.id !== sessionId);
+  const index = await loadIndex();
 
-  // Clear active session if it was deleted
-  if (data.activeSessionId === sessionId) {
-    data.activeSessionId = data.sessions.length > 0 ? data.sessions[0].id : null;
+  // 从索引中移除
+  index.sessions = index.sessions.filter(s => s.id !== sessionId);
+
+  // 更新活动会话
+  if (index.activeSessionId === sessionId) {
+    index.activeSessionId = index.sessions.length > 0 ? index.sessions[0].id : null;
   }
 
-  await saveSessions(data);
+  // 删除文件
+  const filePath = await getSessionFilePath(sessionId);
+  if (filePath) {
+    await deleteFile(filePath);
+  }
+
+  // 清除缓存
+  sessionCache.delete(sessionId);
+  const pending = pendingWrites.get(sessionId);
+  if (pending) {
+    clearTimeout(pending.timer);
+    pendingWrites.delete(sessionId);
+  }
+
+  await saveIndex();
   console.log("[session-service] Session deleted:", sessionId);
 }
 
@@ -268,30 +774,44 @@ export async function deleteSession(sessionId: string): Promise<void> {
  * Clear all sessions
  */
 export async function clearAllSessions(): Promise<void> {
-  const data: ChatSessionsData = {
-    version: DATA_VERSION,
-    activeSessionId: null,
-    sessions: [],
-  };
-  await saveSessions(data);
+  const index = await loadIndex();
+
+  // 删除所有会话文件
+  for (const meta of index.sessions) {
+    const filePath = await getSessionFilePath(meta.id);
+    if (filePath) {
+      await deleteFile(filePath);
+    }
+  }
+
+  // 清空索引
+  indexCache = { version: 2, activeSessionId: null, sessions: [] };
+  await saveIndex();
+
+  // 清除所有缓存
+  sessionCache.clear();
+  for (const [, pending] of pendingWrites) {
+    clearTimeout(pending.timer);
+  }
+  pendingWrites.clear();
+
   console.log("[session-service] All sessions cleared");
 }
 
 /**
- * Get a session by ID
+ * Get a session by ID (full data)
  */
 export async function getSession(sessionId: string): Promise<SavedSession | null> {
-  const data = await loadSessions();
-  return data.sessions.find((s) => s.id === sessionId) || null;
+  return loadFullSession(sessionId);
 }
 
 /**
  * Set the active session ID
  */
 export async function setActiveSessionId(sessionId: string | null): Promise<void> {
-  const data = await loadSessions();
-  data.activeSessionId = sessionId;
-  await saveSessions(data);
+  const index = await loadIndex();
+  index.activeSessionId = sessionId;
+  await saveIndex();
 }
 
 /**
@@ -342,108 +862,122 @@ export function formatSessionTime(timestamp: number): string {
  * Toggle session pinned status
  */
 export async function toggleSessionPinned(sessionId: string): Promise<boolean> {
-  const data = await loadSessions();
-  const session = data.sessions.find((s) => s.id === sessionId);
-  if (!session) return false;
+  const index = await loadIndex();
+  const meta = index.sessions.find(s => s.id === sessionId);
+  if (!meta) return false;
 
-  session.pinned = !session.pinned;
+  meta.pinned = !meta.pinned;
 
-  // Re-sort: pinned first, then by updatedAt
-  data.sessions.sort((a, b) => {
+  // 同时更新文件中的 pinned 状态
+  const fileData = await loadSessionFile(sessionId);
+  if (fileData) {
+    fileData.pinned = meta.pinned;
+    saveSessionFile(fileData, true);
+  }
+
+  // 重新排序
+  index.sessions.sort((a, b) => {
     if (a.pinned && !b.pinned) return -1;
     if (!a.pinned && b.pinned) return 1;
     return b.updatedAt - a.updatedAt;
   });
 
-  await saveSessions(data);
-  console.log("[session-service] Session pinned toggled:", sessionId, session.pinned);
-  return session.pinned;
+  await saveIndex();
+  console.log("[session-service] Session pinned toggled:", sessionId, meta.pinned);
+  return meta.pinned;
 }
 
 /**
  * Toggle session favorited status
  */
 export async function toggleSessionFavorited(sessionId: string): Promise<boolean> {
-  const data = await loadSessions();
-  const session = data.sessions.find((s) => s.id === sessionId);
-  if (!session) return false;
+  const index = await loadIndex();
+  const meta = index.sessions.find(s => s.id === sessionId);
+  if (!meta) return false;
 
-  session.favorited = !session.favorited;
+  meta.favorited = !meta.favorited;
 
-  await saveSessions(data);
-  console.log("[session-service] Session favorited toggled:", sessionId, session.favorited);
-  return session.favorited;
+  // 同时更新文件中的 favorited 状态
+  const fileData = await loadSessionFile(sessionId);
+  if (fileData) {
+    fileData.favorited = meta.favorited;
+    saveSessionFile(fileData, true);
+  }
+
+  await saveIndex();
+  console.log("[session-service] Session favorited toggled:", sessionId, meta.favorited);
+  return meta.favorited;
 }
 
 /**
  * Rename a session
  */
 export async function renameSession(sessionId: string, newTitle: string): Promise<void> {
-  const data = await loadSessions();
-  const session = data.sessions.find((s) => s.id === sessionId);
-  if (!session) return;
+  const index = await loadIndex();
+  const meta = index.sessions.find(s => s.id === sessionId);
+  if (!meta) return;
 
-  session.title = newTitle.trim() || generateSessionTitle(session.messages);
-  await saveSessions(data);
-  console.log("[session-service] Session renamed:", sessionId, session.title);
+  // 加载完整数据以获取 messages（用于生成默认标题）
+  const fileData = await loadSessionFile(sessionId);
+  const title = newTitle.trim() || (fileData ? generateSessionTitle(fileData.messages) : meta.title);
+
+  meta.title = title;
+
+  // 同时更新文件
+  if (fileData) {
+    fileData.title = title;
+    saveSessionFile(fileData, true);
+  }
+
+  await saveIndex();
+  console.log("[session-service] Session renamed:", sessionId, title);
 }
 
 /**
  * Auto-cache current session (called on message changes)
- * This saves without requiring manual action
- * Only generates title on first message, preserves existing title afterwards
- * Only updates position (updatedAt) when new messages are added
+ * Uses debounced writes for better performance
  */
 export async function autoCacheSession(session: SavedSession): Promise<void> {
-  const data = await loadSessions();
+  const filteredMessages = session.messages.filter(m => !m.localOnly);
+  const index = await loadIndex();
 
-  // Filter out localOnly messages
-  const filteredMessages = session.messages.filter((m) => !m.localOnly);
+  // 查找现有元数据
+  const existingMeta = index.sessions.find(s => s.id === session.id);
+  const existingFileData = await loadSessionFile(session.id);
 
-  // Find existing session
-  const existingIndex = data.sessions.findIndex((s) => s.id === session.id);
-  const existingSession = existingIndex >= 0 ? data.sessions[existingIndex] : null;
-
-  // Only generate title on first save (when no existing title)
-  // After that, keep the existing title unchanged
+  // 决定标题
   let title = session.title;
-  if (existingSession?.title) {
-    // Keep existing title
-    title = existingSession.title;
+  if (existingMeta?.title) {
+    title = existingMeta.title;
   } else if (!title && filteredMessages.length > 0) {
-    // First time with messages, generate title
     title = generateSessionTitle(filteredMessages);
   }
 
-  // Only update updatedAt when message count changes (new message added)
-  // This prevents reordering when just switching sessions
-  const hasNewMessages = !existingSession || filteredMessages.length > existingSession.messages.length;
-  const updatedAt = hasNewMessages ? Date.now() : (existingSession?.updatedAt || Date.now());
+  // 决定是否更新时间（只有新增消息时才更新）
+  const existingMsgCount = existingFileData?.messages.filter(m => !m.localOnly).length ?? 0;
+  const hasNewMessages = filteredMessages.length > existingMsgCount;
+  const updatedAt = hasNewMessages ? Date.now() : (existingMeta?.updatedAt || Date.now());
 
-  const sessionToSave: SavedSession = {
-    ...session,
-    messages: filteredMessages,
+  // 构建文件数据
+  const fileData: SessionFileData = {
+    id: session.id,
     title: title || "",
+    model: session.model,
+    messages: filteredMessages,
+    contexts: session.contexts,
+    createdAt: session.createdAt,
     updatedAt,
+    pinned: existingMeta?.pinned || session.pinned,
+    favorited: existingMeta?.favorited || session.favorited,
     scrollPosition: session.scrollPosition,
-    flashcardState: session.flashcardState, // 保留闪卡状态
+    flashcardState: session.flashcardState,
   };
 
-  if (existingIndex >= 0) {
-    // Preserve pinned status
-    sessionToSave.pinned = data.sessions[existingIndex].pinned;
-    data.sessions[existingIndex] = sessionToSave;
-  } else {
-    data.sessions.push(sessionToSave);
-  }
+  // 保存文件（防抖写入）
+  saveSessionFile(fileData, false);
 
-  // Sort: pinned first, then by updatedAt
-  data.sessions.sort((a, b) => {
-    if (a.pinned && !b.pinned) return -1;
-    if (!a.pinned && b.pinned) return 1;
-    return b.updatedAt - a.updatedAt;
-  });
-
-  data.activeSessionId = session.id;
-  await saveSessions(data);
+  // 更新索引
+  updateIndexMeta(fileData, index);
+  index.activeSessionId = session.id;
+  await saveIndex();
 }

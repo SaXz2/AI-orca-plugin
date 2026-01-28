@@ -88,15 +88,27 @@ export function getMode(): ChatMode {
 // ============================================================================
 
 /**
- * Save current mode to localStorage
+ * Save current mode to storage (both localStorage and Orca plugin storage)
  */
-export function saveToStorage(): void {
+export async function saveToStorage(): Promise<void> {
   try {
     const settings: StoredModeSettings = {
       mode: chatModeStore.mode,
       updatedAt: Date.now(),
     };
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+    const settingsJson = JSON.stringify(settings);
+
+    // Save to localStorage
+    localStorage.setItem(STORAGE_KEY, settingsJson);
+
+    // Also save to Orca plugin storage for better persistence
+    if ((window as any).orca?.plugins?.setData) {
+      await (window as any).orca.plugins.setData(
+        "ai-chat",
+        "chat-mode",
+        settingsJson
+      );
+    }
   } catch (error) {
     // Silent fail - don't affect runtime state
     console.warn('[ChatModeStore] Failed to save to storage:', error);
@@ -104,12 +116,30 @@ export function saveToStorage(): void {
 }
 
 /**
- * Load mode from localStorage
+ * Load mode from storage (prioritizes Orca plugin storage over localStorage)
  * Defaults to 'agent' mode if no saved setting or invalid data
  */
-export function loadFromStorage(): void {
+export async function loadFromStorage(): Promise<void> {
   try {
-    const stored = localStorage.getItem(STORAGE_KEY);
+    let stored: string | null = null;
+
+    // Try to load from Orca plugin storage first
+    if ((window as any).orca?.plugins?.getData) {
+      try {
+        stored = await (window as any).orca.plugins.getData(
+          "ai-chat",
+          "chat-mode"
+        );
+      } catch (e) {
+        console.warn('[ChatModeStore] Failed to load from Orca storage:', e);
+      }
+    }
+
+    // Fall back to localStorage if Orca storage fails or is empty
+    if (!stored) {
+      stored = localStorage.getItem(STORAGE_KEY);
+    }
+
     if (!stored) {
       chatModeStore.mode = DEFAULT_MODE;
       return;
