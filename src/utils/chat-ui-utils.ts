@@ -201,7 +201,6 @@ export interface GroupedCommands {
   skill: SlashCommand[];
   command: SlashCommand[];
 }
-}
 
 /**
  * 将命令按分类分组
@@ -220,7 +219,6 @@ export function groupCommandsByCategory(commands: SlashCommand[]): GroupedComman
     todoist: [],
     skill: [],
     command: [],
-  };
   };
 
   for (const cmd of commands) {
