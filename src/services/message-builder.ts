@@ -20,12 +20,7 @@ export interface MessageBuildParams {
   customMemory?: string;
   chatMode?: ChatMode;
   // Token 优化参数
-  maxHistoryMessages?: number;       // 0=不限制
-  enableCompression?: boolean;       // 是否启用压缩
-  compressAfterMessages?: number;    // 超过多少条后压缩旧消息
-  // 压缩服务参数
-  sessionId?: string;                // 会话 ID（用于缓存摘要）
-  apiConfig?: { apiUrl: string; apiKey: string; model: string; protocol?: "openai" | "anthropic"; anthropicApiPath?: string }; // API 配置（用于生成摘要）
+  maxHistoryMessages?: number; // 0=不限制
 }
 
 export interface ConversationBuildParams {
@@ -35,12 +30,7 @@ export interface ConversationBuildParams {
   customMemory?: string;
   chatMode?: ChatMode;
   // Token 优化参数
-  maxHistoryMessages?: number;       // 0=不限制
-  enableCompression?: boolean;       // 是否启用压缩
-  compressAfterMessages?: number;    // 超过多少条后压缩旧消息
-  // 压缩服务参数
-  sessionId?: string;                // 会话 ID（用于缓存摘要）
-  apiConfig?: { apiUrl: string; apiKey: string; model: string; protocol?: "openai" | "anthropic"; anthropicApiPath?: string }; // API 配置（用于生成摘要）
+  maxHistoryMessages?: number; // 0=不限制
 }
 
 export interface ToolResultParams extends MessageBuildParams {
@@ -49,25 +39,6 @@ export interface ToolResultParams extends MessageBuildParams {
   toolResults: Message[];
 }
 
-import { getOrCreateSummary } from "./compression-service";
-
-/**
- * 提取不压缩的消息（pinned 或 noCompress 标记）
- */
-function extractPinnedMessages(messages: Message[]): { pinned: Message[]; rest: Message[] } {
-  const pinned: Message[] = [];
-  const rest: Message[] = [];
-  
-  for (const m of messages) {
-    if ((m as any).pinned || (m as any).noCompress) {
-      pinned.push(m);
-    } else {
-      rest.push(m);
-    }
-  }
-  
-  return { pinned, rest };
-}
 
 /**
  * Limit history messages, keeping system context intact
@@ -328,46 +299,10 @@ export async function buildConversationMessages(params: ConversationBuildParams)
   standard: OpenAIChatMessage[];
   fallback: OpenAIChatMessage[];
 }> {
-  const { messages, systemPrompt, contextText, customMemory, chatMode, maxHistoryMessages, enableCompression, compressAfterMessages, sessionId, apiConfig } = params;
+  const { messages, systemPrompt, contextText, customMemory, chatMode, maxHistoryMessages } = params;
 
-  let systemContent = buildSystemContent(systemPrompt, contextText, customMemory, chatMode);
+  const systemContent = buildSystemContent(systemPrompt, contextText, customMemory, chatMode);
   let filteredMessages = messages.filter((m) => !m.localOnly);
-  
-  // 使用 AI 生成摘要压缩旧消息（仅当启用压缩且有 sessionId 和 apiConfig 时）
-  if (enableCompression && compressAfterMessages && compressAfterMessages > 0 && sessionId && apiConfig) {
-    try {
-      const { summary, recentMessages } = await getOrCreateSummary(
-        sessionId,
-        filteredMessages,
-        compressAfterMessages,
-        apiConfig,
-      );
-      
-      if (summary) {
-        // 提取 pinned 消息
-        const oldMessages = filteredMessages.slice(0, -compressAfterMessages);
-        const { pinned } = extractPinnedMessages(oldMessages);
-        
-        // 将摘要添加到系统提示词中
-        const summarySection = `\n\n## 对话历史摘要\n以下是之前对话的摘要，请参考：\n${summary}`;
-        systemContent = (systemContent || "") + summarySection;
-        
-        // 只保留 pinned 消息和最近消息
-        const combinedMessages = [...pinned, ...recentMessages];
-        
-        // 安全检查：确保至少有一些消息
-        if (combinedMessages.length > 0) {
-          filteredMessages = combinedMessages;
-        } else {
-          console.warn("[message-builder] Compression resulted in empty messages, keeping original");
-          // 保留原始消息，不应用压缩
-        }
-      }
-    } catch (error) {
-      console.error("[message-builder] Compression failed:", error);
-      // 压缩失败时保留原始消息
-    }
-  }
   
   // 硬限制历史消息数量（如果设置了）
   if (maxHistoryMessages && maxHistoryMessages > 0) {

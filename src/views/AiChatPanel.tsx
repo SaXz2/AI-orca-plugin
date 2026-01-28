@@ -19,7 +19,7 @@ import ScrollToBottomButton from "../components/ScrollToBottomButton";
 import ErrorMessage from "../components/ErrorMessage";
 import ChatHistoryMenu from "./ChatHistoryMenu";
 import HeaderMenu from "./HeaderMenu";
-import CompressionSettingsModal from "./CompressionSettingsModal";
+import StreamSettingsModal from "./StreamSettingsModal";
 import WebSearchSettingsModal from "./WebSearchSettingsModal";
 import EmptyState from "./EmptyState";
 import TypingIndicator from "../components/TypingIndicator";
@@ -69,7 +69,6 @@ import { buildConversationMessages } from "../services/message-builder";
 import { streamChatWithRetry, type ToolCallInfo } from "../services/chat-stream-handler";
 import type { OpenAIChatMessage } from "../services/openai-client";
 import { executeAgenticRAG, formatRAGSteps, getToolDisplayName } from "../services/agentic-rag-service";
-import { clearSummaryCache } from "../services/compression-service";
 import { normalizeWebSearchResults, type WebSearchSource } from "../utils/source-attribution";
 import {
   panelContainerStyle,
@@ -326,8 +325,8 @@ export default function AiChatPanel({ panelId }: PanelProps) {
   const [multiModelResponses, setMultiModelResponses] = useState<ModelResponse[]>([]);
   const [isMultiModelMode, setIsMultiModelMode] = useState(false);
 
-  // Compression settings modal state
-  const [showCompressionSettings, setShowCompressionSettings] = useState(false);
+  // Stream settings modal state
+  const [showStreamSettings, setShowStreamSettings] = useState(false);
 
   // Web search settings modal state
   const [showWebSearchSettings, setShowWebSearchSettings] = useState(false);
@@ -583,10 +582,6 @@ export default function AiChatPanel({ panelId }: PanelProps) {
     const settings = getAiChatSettings(pluginName);
     const defaultModel = settings.selectedModelId;
 
-    // 清理旧会话的压缩缓存（重要！防止旧对话摘要泄漏到新对话）
-    if (currentSession.id) {
-      clearSummaryCache(currentSession.id);
-    }
 
     // 创建全新的会话，确保 ID 是新的
     const newSession = { ...createNewSession(), model: defaultModel };
@@ -1697,10 +1692,6 @@ graph TD
         customMemory: memoryText,
         chatMode: currentChatMode,
         maxHistoryMessages: settings.maxHistoryMessages,
-        enableCompression: settings.enableCompression,
-        compressAfterMessages: settings.compressAfterMessages,
-        sessionId: currentSession.id,
-      apiConfig: { apiUrl: apiConfig.apiUrl, apiKey: apiConfig.apiKey, model, protocol: apiConfig.protocol, anthropicApiPath: apiConfig.anthropicApiPath },
       });
 
       // 根据是否有拖入的块来选择工具列表
@@ -2304,10 +2295,6 @@ ${userInput}`;
           customMemory: memoryText,
           chatMode: currentChatMode,
           maxHistoryMessages: settings.maxHistoryMessages,
-          enableCompression: settings.enableCompression,
-          compressAfterMessages: settings.compressAfterMessages,
-          sessionId: currentSession.id,
-          apiConfig: { apiUrl: apiConfig.apiUrl, apiKey: apiConfig.apiKey, model, protocol: apiConfig.protocol, anthropicApiPath: apiConfig.anthropicApiPath },
         });
 
         // Stream next response with reasoning support
@@ -3387,7 +3374,7 @@ ${userInput}`;
           }
         },
         onOpenMemoryManager: handleOpenMemoryManager,
-        onOpenCompressionSettings: () => setShowCompressionSettings(true),
+        onOpenStreamSettings: () => setShowStreamSettings(true),
         onOpenWebSearchSettings: () => setShowWebSearchSettings(true),
         onOpenTodoistSettings: () => setShowTodoistSettings(true),
         onStartPythonServer: handleStartPythonServer,
@@ -3481,10 +3468,10 @@ ${userInput}`;
       isOpen: showSkillManager,
       onClose: () => setShowSkillManager(false),
     }),
-    // Compression Settings Modal
-    createElement(CompressionSettingsModal, {
-      isOpen: showCompressionSettings,
-      onClose: () => setShowCompressionSettings(false),
+    // Stream Settings Modal
+    createElement(StreamSettingsModal, {
+      isOpen: showStreamSettings,
+      onClose: () => setShowStreamSettings(false),
     }),
     // Web Search Settings Modal
     createElement(WebSearchSettingsModal, {

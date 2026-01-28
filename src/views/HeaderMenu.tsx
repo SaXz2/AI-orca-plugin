@@ -14,7 +14,7 @@ interface HeaderMenuProps {
   onClearChat: () => void;
   onOpenSettings: () => void;
   onOpenMemoryManager: () => void;
-  onOpenCompressionSettings?: () => void;
+  onOpenStreamSettings?: () => void;
   onOpenWebSearchSettings?: () => void;
   onOpenTodoistSettings?: () => void;
   onStartPythonServer?: () => void;
@@ -35,7 +35,7 @@ export default function HeaderMenu({
   onClearChat,
   onOpenSettings,
   onOpenMemoryManager,
-  onOpenCompressionSettings,
+  onOpenStreamSettings,
   onOpenWebSearchSettings,
   onOpenTodoistSettings,
   onStartPythonServer,
@@ -180,17 +180,17 @@ export default function HeaderMenu({
           createElement("i", { className: "ti ti-brain" }),
           "记忆管理"
         ),
-        // Token Optimization
-        onOpenCompressionSettings && createElement(
+        // Stream Settings
+        onOpenStreamSettings && createElement(
           "div",
           {
             style: menuItemStyle,
-            onClick: () => handleItemClick(onOpenCompressionSettings),
+            onClick: () => handleItemClick(onOpenStreamSettings),
             onMouseEnter: (e: any) => (e.currentTarget.style.background = "var(--orca-color-bg-2)"),
             onMouseLeave: (e: any) => (e.currentTarget.style.background = "transparent"),
           },
-          createElement("i", { className: "ti ti-arrows-minimize" }),
-          "Token 优化"
+          createElement("i", { className: "ti ti-clock" }),
+          "流式设置"
         ),
         // Web Search Settings
         onOpenWebSearchSettings && createElement(

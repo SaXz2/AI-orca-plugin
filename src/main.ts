@@ -2,7 +2,6 @@ import { registerAiChatSettingsSchema, initAiChatSettings } from "./settings/ai-
 import { registerAiChatUI, unregisterAiChatUI } from "./ui/ai-chat-ui";
 import { registerAiChatRenderer, unregisterAiChatRenderer } from "./ui/ai-chat-renderer";
 import { loadMemoryStore } from "./store/memory-store";
-import * as compressionService from "./services/compression-service";
 import { AiChatPluginAPI } from "./services/plugin-api";
 import { ensureBuiltInSkills } from "./services/skills-manager";
 
@@ -91,8 +90,6 @@ export async function load(_name: string) {
   // 初始化内置 Skills（必须在 registerAiChatUI 之后）
   await ensureBuiltInSkills();
 
-  // 挂载调试接口到 window（开发用）
-  (window as any).compressionService = compressionService;
 
   // 挂载 Plugin API 到全局，供外部插件调用
   (window as any).AiChatPluginAPI = AiChatPluginAPI;

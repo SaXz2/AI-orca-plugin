@@ -1,11 +1,6 @@
 // 系统提示词（硬编码，支持模板变量如 {maxToolRounds}）
 export const DEFAULT_SYSTEM_PROMPT = `你是笔记库智能助手。
 
-## 对话管理
-- 长对话会自动压缩历史消息为摘要以节省 token
-- 如果发现早期对话细节缺失，这是正常的压缩行为
-- 重要信息会保留在摘要中，可以继续正常对话
-
 ## 回复原则
 - 结论先行，再展开
 - 一段一事，不混杂
@@ -180,9 +175,6 @@ export type AiChatSettings = {
   maxHistoryMessages: number;        // 最大历史消息数（0=不限制）
   maxToolResultChars: number;        // 工具结果最大字符数（0=不限制）
   maxContextChars: number;           // 上下文最大字符数
-  // 动态压缩设置
-  enableCompression: boolean;        // 是否启用压缩
-  compressAfterMessages: number;     // 超过多少条后开始压缩旧消息（5-20）
   // 流式超时设置
   streamTimeout: number;             // 流式响应超时（毫秒），本地模型建议设置更长
   // 联网搜索设置
@@ -243,9 +235,6 @@ export const DEFAULT_AI_CHAT_SETTINGS: AiChatSettings = {
   maxHistoryMessages: 0,           // 0=不限制（改用动态压缩）
   maxToolResultChars: 0,           // 0=不限制
   maxContextChars: 60000,          // 恢复原来的 60000
-  // 动态压缩设置
-  enableCompression: true,         // 默认启用压缩
-  compressAfterMessages: 10,       // 超过 10 条后开始压缩旧消息
   // 流式超时设置
   streamTimeout: 30000,            // 默认 30 秒，本地模型可设置 120000（2分钟）或更长
   // 联网搜索设置
@@ -428,8 +417,6 @@ type StoredConfig = {
   maxHistoryMessages?: number;
   maxToolResultChars?: number;
   maxContextChars?: number;
-  enableCompression?: boolean;
-  compressAfterMessages?: number;
   // 流式超时设置
   streamTimeout?: number;
   // 联网搜索设置
@@ -538,8 +525,6 @@ export function getAiChatSettings(pluginName: string): AiChatSettings {
     maxHistoryMessages: config?.maxHistoryMessages ?? DEFAULT_AI_CHAT_SETTINGS.maxHistoryMessages,
     maxToolResultChars: config?.maxToolResultChars ?? DEFAULT_AI_CHAT_SETTINGS.maxToolResultChars,
     maxContextChars: config?.maxContextChars ?? DEFAULT_AI_CHAT_SETTINGS.maxContextChars,
-    enableCompression: config?.enableCompression ?? DEFAULT_AI_CHAT_SETTINGS.enableCompression,
-    compressAfterMessages: config?.compressAfterMessages ?? DEFAULT_AI_CHAT_SETTINGS.compressAfterMessages,
     // 流式超时设置
     streamTimeout: config?.streamTimeout ?? DEFAULT_AI_CHAT_SETTINGS.streamTimeout,
     // 联网搜索设置
@@ -553,7 +538,6 @@ export function getAiChatSettings(pluginName: string): AiChatSettings {
   merged.maxHistoryMessages = Math.max(0, Math.floor(merged.maxHistoryMessages));
   merged.maxToolResultChars = Math.max(0, Math.floor(merged.maxToolResultChars));
   merged.maxContextChars = Math.max(5000, Math.floor(merged.maxContextChars));
-  merged.compressAfterMessages = Math.max(5, Math.min(20, Math.floor(merged.compressAfterMessages)));
   merged.streamTimeout = Math.max(10000, Math.floor(merged.streamTimeout)); // 最小 10 秒
 
   return merged;
@@ -589,8 +573,6 @@ export async function updateAiChatSettings(
     maxHistoryMessages: next.maxHistoryMessages,
     maxToolResultChars: next.maxToolResultChars,
     maxContextChars: next.maxContextChars,
-    enableCompression: next.enableCompression,
-    compressAfterMessages: next.compressAfterMessages,
     // 流式超时设置
     streamTimeout: next.streamTimeout,
     // 联网搜索设置

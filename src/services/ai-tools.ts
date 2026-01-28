@@ -262,57 +262,26 @@ const JOURNAL_EXPORT_CACHE_MAX = 5;
 // 全局缓存：存储大型日记导出数据（供前端使用）
 export const journalExportDataCache = new Map<string, JournalExportCacheEntry>();
 
-// 全局缓存：存储搜索结果（供自动增强使用）
-export const searchResultsCache = new Map<string, any[]>();
-
-// 日志去重缓存 - 使用更智能的去重策略
-const loggedMessages = new Map<string, number>();
-const LOG_THROTTLE_MS = 5000; // 5秒内相同消息只输出一次
-
 /**
  * 从工具结果中提取搜索结果
- * 支持两种方式：
- * 1. 从缓存中获取（如果缓存存在）
- * 2. 直接从工具结果内容中解析（作为备选）
+ * 注意：不在 tool 返回内容里注入隐藏标记（保持上下文干净），这里直接解析文本。
  */
 export function extractSearchResultsFromToolResults(
   toolResults?: Map<string, { content: string; name: string }>
 ): any[] {
   if (!toolResults) return [];
-  
+
   const allSearchResults: any[] = [];
-  
-  for (const [toolCallId, result] of toolResults.entries()) {
-    if (result.name === "webSearch") {
-      // 方式1：从缓存中获取
-      const cacheKeyMatch = result.content.match(/<!-- search-cache:([^>]+) -->/);
-      if (cacheKeyMatch) {
-        const cacheKey = cacheKeyMatch[1];
-        const cachedResults = searchResultsCache.get(cacheKey);
-        if (cachedResults && cachedResults.length > 0) {
-          allSearchResults.push(...cachedResults);
-          
-          // 智能日志去重
-          const logKey = `cache-${cacheKey}`;
-          const now = Date.now();
-          const lastLogged = loggedMessages.get(logKey) || 0;
-          
-          if (now - lastLogged > LOG_THROTTLE_MS) {
-            loggedMessages.set(logKey, now);
-          }
-          continue; // 已从缓存获取，跳过解析
-        }
-      }
-      
-      // 方式2：直接从工具结果内容中解析搜索结果
-      // 格式：1. [标题](URL)\n   发布时间: xxx\n   内容摘要
-      const parsedResults = parseSearchResultsFromContent(result.content);
-      if (parsedResults.length > 0) {
-        allSearchResults.push(...parsedResults);
-      }
+
+  for (const [, result] of toolResults.entries()) {
+    if (result.name !== "webSearch") continue;
+
+    const parsedResults = parseSearchResultsFromContent(result.content);
+    if (parsedResults.length > 0) {
+      allSearchResults.push(...parsedResults);
     }
   }
-  
+
   return allSearchResults;
 }
 
@@ -3133,13 +3102,9 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
         // 使用故障转移搜索
         const response = await searchWithFallback(query, instances, maxResults);
         
-        // 存储原始搜索结果供自动增强使用
-        const cacheKey = `websearch-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-        searchResultsCache.set(cacheKey, response.results || []);
-        
-        // 在格式化结果中包含缓存键（隐藏在HTML注释中）
+        // 直接返回格式化结果（不注入隐藏标记）
         const formattedResults = formatSearchResults(response);
-        return `${formattedResults}\n<!-- search-cache:${cacheKey} -->`;
+        return formattedResults;
       } catch (err: any) {
         return `Error searching web: ${err.message}`;
       }
