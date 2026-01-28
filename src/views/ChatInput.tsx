@@ -26,6 +26,8 @@ import { multiModelStore } from "../store/multi-model-store";
 import ToolPanel from "../components/ToolPanel";
 import { loadToolSettings, toolStore, toggleWebSearch, toggleAgenticRAG, toggleScriptAnalysis } from "../store/tool-store";
 import { getAllCommandsInfo } from "../services/commands-loader";
+import { listSkills } from "../services/skills-manager";
+import type { SkillRef } from "../services/skills-manager";
 
 const React = window.React as unknown as {
   createElement: typeof window.React.createElement;
@@ -211,6 +213,13 @@ export default function ChatInput({
   const [isFocused, setIsFocused] = useState(false);
   const [slashMenuOpen, setSlashMenuOpen] = useState(false);
   const [slashMenuIndex, setSlashMenuIndex] = useState(0);
+  const slashMenuRef = useRef<HTMLDivElement | null>(null);
+
+  // Skill 菜单状态
+  const [availableSkills, setAvailableSkills] = useState<SkillRef[]>([]);
+  const [skillMenuOpen, setSkillMenuOpen] = useState(false);
+  const [skillMenuIndex, setSkillMenuIndex] = useState(0);
+  const skillMenuRef = useRef<HTMLDivElement | null>(null);
   const [pendingFiles, setPendingFiles] = useState<FileRef[]>([]);
   const [isUploading, setIsUploading] = useState(false);
   const [clearContextPending, setClearContextPending] = useState(false);
@@ -221,7 +230,6 @@ export default function ChatInput({
   const addContextBtnRef = useRef<HTMLElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const slashMenuRef = useRef<HTMLDivElement | null>(null);
   const leftToolbarRef = useRef<HTMLDivElement | null>(null);
   const contextSnap = useSnapshot(contextStore);
   const toolSnap = useSnapshot(toolStore);
@@ -320,6 +328,18 @@ export default function ChatInput({
     });
   }, [text, availableCommands]);
 
+  // 检测是否显示 Skill 菜单 - 使用模糊匹配
+  const filteredSkills = useMemo(() => {
+    if (!text.startsWith("#")) return [];
+    const query = text.slice(1).toLowerCase(); // 移除开头的 #
+    if (query.includes(" ")) return []; // 如果有空格，不显示菜单
+    
+    // 使用模糊匹配过滤 Skills
+    return availableSkills.filter(skill => 
+      fuzzyMatch(query, skill.id)
+    );
+  }, [text, availableSkills]);
+
   // 获取最近使用的命令
   const recentCommands = useMemo(() => {
     const recent = getRecentCommands();
@@ -363,6 +383,16 @@ export default function ChatInput({
     }
   }, [filteredCommands, text]);
 
+  // Skill 菜单显示逻辑
+  useEffect(() => {
+    if (filteredSkills.length > 0 && text.startsWith("#") && !text.includes(" ")) {
+      setSkillMenuOpen(true);
+      setSkillMenuIndex(0);
+    } else {
+      setSkillMenuOpen(false);
+    }
+  }, [filteredSkills, text]);
+
   // 斜杠菜单键盘导航时自动滚动到选中项
   useEffect(() => {
     if (!slashMenuOpen || !slashMenuRef.current) return;
@@ -373,15 +403,27 @@ export default function ChatInput({
     }
   }, [slashMenuIndex, slashMenuOpen]);
 
+  // Skill 菜单键盘导航时自动滚动到选中项
+  useEffect(() => {
+    if (!skillMenuOpen || !skillMenuRef.current) return;
+    const container = skillMenuRef.current;
+    const selectedItem = container.querySelector(`[data-skill-index="${skillMenuIndex}"]`) as HTMLElement;
+    if (selectedItem) {
+      selectedItem.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    }
+  }, [skillMenuIndex, skillMenuOpen]);
+
   // Load chat mode from storage on mount (Requirements: 5.2)
   useEffect(() => {
     // Load settings asynchronously
     Promise.all([
       loadFromStorage(),
       loadToolSettings(),
-      getAllCommandsInfo()
-    ]).then(([, , commands]) => {
+      getAllCommandsInfo(),
+      listSkills()
+    ]).then(([, , commands, skills]) => {
       setAvailableCommands(commands);
+      setAvailableSkills(skills);
     }).catch(error => {
       console.error('[ChatInput] Failed to load initial settings:', error);
     });
@@ -440,6 +482,37 @@ export default function ChatInput({
 
   const handleKeyDown = useCallback(
     (e: any) => {
+      // Skill 菜单键盘导航
+      if (skillMenuOpen && filteredSkills.length > 0) {
+        if (e.key === "ArrowDown") {
+          e.preventDefault();
+          setSkillMenuIndex(i => (i + 1) % filteredSkills.length);
+          return;
+        }
+        if (e.key === "ArrowUp") {
+          e.preventDefault();
+          setSkillMenuIndex(i => (i - 1 + filteredSkills.length) % filteredSkills.length);
+          return;
+        }
+        if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey)) {
+          e.preventDefault();
+          const skill = filteredSkills[skillMenuIndex];
+          if (skill) {
+            setText(`#${skill.id} `);
+            if (textareaRef.current) {
+              textareaRef.current.value = `#${skill.id} `;
+            }
+          }
+          setSkillMenuOpen(false);
+          return;
+        }
+        if (e.key === "Escape") {
+          e.preventDefault();
+          setSkillMenuOpen(false);
+          return;
+        }
+      }
+
       // 斜杠菜单键盘导航
       if (slashMenuOpen && flatMenuItems.length > 0) {
         if (e.key === "ArrowDown") {
@@ -489,7 +562,7 @@ export default function ChatInput({
         }
       }
     },
-    [handleSend, slashMenuOpen, flatMenuItems, slashMenuIndex]
+    [handleSend, slashMenuOpen, flatMenuItems, slashMenuIndex, skillMenuOpen, filteredSkills, skillMenuIndex]
   );
 
   const handlePickerClose = useCallback(() => {
@@ -931,6 +1004,80 @@ export default function ChatInput({
           
           return elements;
         })()
+      ),
+
+      // Skill Menu
+      skillMenuOpen && filteredSkills.length > 0 && createElement(
+        "div",
+        {
+          ref: skillMenuRef,
+          style: {
+            position: "absolute",
+            bottom: "100%",
+            left: 0,
+            right: 0,
+            marginBottom: "4px",
+            background: "var(--orca-color-bg-1)",
+            border: "1px solid var(--orca-color-border)",
+            borderRadius: "8px",
+            boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+            overflow: "hidden",
+            zIndex: 100,
+            maxHeight: "300px",
+            overflowY: "auto",
+          },
+        },
+        // 标题
+        createElement("div", {
+          style: {
+            padding: "6px 12px",
+            fontSize: "11px",
+            fontWeight: 600,
+            color: "var(--orca-color-text-3)",
+            background: "var(--orca-color-bg-2)",
+            textTransform: "uppercase",
+            letterSpacing: "0.5px",
+          },
+        }, "\u6280\u80fd (Skills)"),
+        // Skill 列表
+        ...filteredSkills.map((skill, index) => 
+          createElement("div", {
+            key: skill.id,
+            "data-skill-index": index,
+            onClick: () => {
+              setText(`#${skill.id} `);
+              if (textareaRef.current) {
+                textareaRef.current.value = `#${skill.id} `;
+                textareaRef.current.focus();
+              }
+              setSkillMenuOpen(false);
+            },
+            style: {
+              padding: "8px 12px",
+              cursor: "pointer",
+              background: index === skillMenuIndex ? "var(--orca-color-bg-3)" : "transparent",
+              display: "flex",
+              alignItems: "center",
+              gap: "8px",
+            },
+          },
+            createElement("i", { 
+              className: "ti ti-wand", 
+              style: { fontSize: "14px", color: "var(--orca-color-success, #10b981)", width: "18px", textAlign: "center" } 
+            }),
+            createElement("span", { style: { fontWeight: 600, color: "var(--orca-color-success, #10b981)" } }, `#${skill.id}`),
+            skill.isGlobal && createElement("span", { 
+              style: { 
+                fontSize: "10px", 
+                color: "var(--orca-color-text-4)",
+                padding: "2px 6px",
+                background: "var(--orca-color-bg-3)",
+                borderRadius: "4px",
+                marginLeft: "auto"
+              } 
+            }, "\u5168\u5c40")
+          )
+        )
       ),
 
       // 文件预览区域
