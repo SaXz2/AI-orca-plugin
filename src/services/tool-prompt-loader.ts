@@ -5,11 +5,21 @@
  * 1. 按需加载工具的详细说明文件
  * 2. 如果用户文件被删除，自动从代码中的默认模板恢复
  * 3. 用户修改的内容不会被覆盖
+ * 
+ * 存储位置（与 Skills 相同的模式）：
+ * 全局存储 (pluginAsRoot: true):
+ *   {plugin-dir}/Tool-Prompt/{tool-name}.md
+ *   - 所有仓库共享
+ * 
+ * 局部存储 (pluginAsRoot: false): [暂不使用]
+ *   {repo}/plugin-data/ai-chat/Tool-Prompt/{tool-name}.md
+ *   - 仅当前仓库可见
  */
 
 import { getDefaultToolPrompt, getDefaultToolNames } from "./tool-prompt-defaults";
+import { getAiChatPluginName } from "../ui/ai-chat-ui";
 
-// 插件根目录下的 Tool-Prompt 目录路径
+// Tool-Prompt 目录名
 const TOOL_PROMPT_DIR = "Tool-Prompt";
 
 /**
@@ -18,26 +28,59 @@ const TOOL_PROMPT_DIR = "Tool-Prompt";
 const promptCache = new Map<string, { content: string; loadedAt: number }>();
 const CACHE_TTL = 5 * 60 * 1000; // 5分钟缓存
 
-/**
- * 获取插件的基础路径
- */
-function getPluginBasePath(): string {
-  // 获取当前插件的路径
-  // 在 Orca 插件环境中，可以通过 orca.state.plugins 获取
-  try {
-    const plugins = (orca.state as any).plugins;
-    if (plugins) {
-      for (const [id, plugin] of Object.entries(plugins)) {
-        if (id.includes("ai-chat") || id.includes("AI-orca")) {
-          return (plugin as any).path || "";
-        }
-      }
-    }
-  } catch (e) {
-    console.warn("[ToolPromptLoader] Failed to get plugin path:", e);
-  }
-  return "";
+// ─────────────────────────────────────────────────────────────────────────────
+// Scope Helpers - 与 skills-manager 相同的存储模式
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** 获取插件名称（动态，与 skills-manager 保持一致） */
+function getPluginName(): string {
+  const name = getAiChatPluginName();
+  return name || "ai-chat";
 }
+
+/** 构建 Tool-Prompt 文件路径 */
+function buildToolPromptPath(toolName: string): string {
+  return `${TOOL_PROMPT_DIR}/${toolName}.md`;
+}
+
+/** 读取文件（全局存储） */
+async function readFileForScope(path: string): Promise<string | null> {
+  const pluginName = getPluginName();
+  const isGlobal = true; // Tool-Prompt 使用全局存储
+  try {
+    const content = await orca.plugins.readFile(pluginName, path, "string", isGlobal);
+    if (!content) return null;
+    return typeof content === 'string'
+      ? content
+      : new TextDecoder().decode(new Uint8Array(content as ArrayBuffer));
+  } catch {
+    return null;
+  }
+}
+
+/** 写入文件（全局存储） */
+async function writeFileForScope(path: string, content: string): Promise<void> {
+  const pluginName = getPluginName();
+  const isGlobal = true;
+  await orca.plugins.writeFile(pluginName, path, content, isGlobal);
+}
+
+/** 列出所有文件（全局存储） */
+async function listFilesForScope(): Promise<string[]> {
+  const pluginName = getPluginName();
+  const isGlobal = true;
+  return orca.plugins.listFiles(pluginName, isGlobal);
+}
+
+/** 检查文件是否存在 */
+async function fileExistsForScope(path: string): Promise<boolean> {
+  const content = await readFileForScope(path);
+  return content !== null;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Public API
+// ─────────────────────────────────────────────────────────────────────────────
 
 /**
  * 读取工具说明文件
@@ -51,17 +94,11 @@ export async function loadToolPrompt(toolName: string): Promise<string | null> {
     return cached.content;
   }
 
-  const basePath = getPluginBasePath();
-  if (!basePath) {
-    console.warn("[ToolPromptLoader] Plugin base path not found");
-    return null;
-  }
-
-  const userFilePath = `${basePath}/${TOOL_PROMPT_DIR}/${toolName}.md`;
+  const filePath = buildToolPromptPath(toolName);
 
   try {
     // 先尝试读取用户文件
-    let content = await tryReadFile(userFilePath);
+    let content = await readFileForScope(filePath);
     
     if (content === null) {
       // 用户文件不存在，从代码中的默认模板恢复
@@ -69,8 +106,7 @@ export async function loadToolPrompt(toolName: string): Promise<string | null> {
       
       if (defaultContent !== null) {
         // 恢复文件到 Tool-Prompt 目录
-        await ensureDir(`${basePath}/${TOOL_PROMPT_DIR}`);
-        await writeFile(userFilePath, defaultContent);
+        await writeFileForScope(filePath, defaultContent);
         content = defaultContent;
         console.log(`[ToolPromptLoader] Restored ${toolName}.md from code defaults`);
       }
@@ -123,16 +159,22 @@ export function clearToolPromptCache(toolName?: string): void {
  * 获取所有可用的工具说明文件列表
  */
 export async function listAvailableToolPrompts(): Promise<string[]> {
-  const basePath = getPluginBasePath();
-  if (!basePath) return [];
-
-  const dirPath = `${basePath}/${TOOL_PROMPT_DIR}`;
-  
   try {
-    const files = await listDir(dirPath);
+    const files = await listFilesForScope();
+    const toolPromptPrefix = `${TOOL_PROMPT_DIR}/`;
+    
     return files
-      .filter(f => f.endsWith(".md") && !f.startsWith("_"))
-      .map(f => f.replace(".md", ""));
+      .filter(f => {
+        const normalized = f.replace(/\\/g, "/");
+        return normalized.startsWith(toolPromptPrefix) && 
+               normalized.endsWith(".md") && 
+               !normalized.includes("/_");
+      })
+      .map(f => {
+        const normalized = f.replace(/\\/g, "/");
+        const fileName = normalized.slice(toolPromptPrefix.length);
+        return fileName.replace(".md", "");
+      });
   } catch (e) {
     console.error("[ToolPromptLoader] Failed to list tool prompts:", e);
     return [];
@@ -144,103 +186,24 @@ export async function listAvailableToolPrompts(): Promise<string[]> {
  * 确保所有默认文件都已复制到用户目录
  */
 export async function initToolPrompts(): Promise<void> {
-  const basePath = getPluginBasePath();
-  if (!basePath) return;
-
-  const userPath = `${basePath}/${TOOL_PROMPT_DIR}`;
-
   try {
-    // 确保目录存在
-    await ensureDir(userPath);
-    
     // 从代码中的默认模板初始化
     const defaultToolNames = getDefaultToolNames();
     
     for (const toolName of defaultToolNames) {
-      const userFilePath = `${userPath}/${toolName}.md`;
-      const exists = await fileExists(userFilePath);
+      const filePath = buildToolPromptPath(toolName);
+      const exists = await fileExistsForScope(filePath);
       
       if (!exists) {
         const defaultContent = getDefaultToolPrompt(toolName);
         if (defaultContent) {
-          await writeFile(userFilePath, defaultContent);
+          await writeFileForScope(filePath, defaultContent);
           console.log(`[ToolPromptLoader] Initialized ${toolName}.md`);
         }
       }
     }
   } catch (e) {
     console.error("[ToolPromptLoader] Failed to init tool prompts:", e);
-  }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// 文件操作辅助函数（适配 Orca 环境）
-// ─────────────────────────────────────────────────────────────────────────────
-
-async function tryReadFile(path: string): Promise<string | null> {
-  try {
-    // 使用 Orca 的文件 API 或 fetch
-    const orcaAny = typeof orca !== "undefined" ? (orca as any) : null;
-    if (orcaAny?.fs?.readTextFile) {
-      return await orcaAny.fs.readTextFile(path);
-    }
-    
-    // 备用：使用 fetch（如果是相对路径）
-    const response = await fetch(path);
-    if (response.ok) {
-      return await response.text();
-    }
-    return null;
-  } catch {
-    return null;
-  }
-}
-
-async function writeFile(path: string, content: string): Promise<void> {
-  try {
-    const orcaAny = typeof orca !== "undefined" ? (orca as any) : null;
-    if (orcaAny?.fs?.writeTextFile) {
-      await orcaAny.fs.writeTextFile(path, content);
-    }
-  } catch (e) {
-    console.error(`[ToolPromptLoader] Failed to write file ${path}:`, e);
-  }
-}
-
-async function fileExists(path: string): Promise<boolean> {
-  try {
-    const orcaAny = typeof orca !== "undefined" ? (orca as any) : null;
-    if (orcaAny?.fs?.exists) {
-      return await orcaAny.fs.exists(path);
-    }
-    const content = await tryReadFile(path);
-    return content !== null;
-  } catch {
-    return false;
-  }
-}
-
-async function listDir(path: string): Promise<string[]> {
-  try {
-    const orcaAny = typeof orca !== "undefined" ? (orca as any) : null;
-    if (orcaAny?.fs?.readDir) {
-      const entries = await orcaAny.fs.readDir(path);
-      return entries.map((e: any) => e.name || e);
-    }
-    return [];
-  } catch {
-    return [];
-  }
-}
-
-async function ensureDir(path: string): Promise<void> {
-  try {
-    const orcaAny = typeof orca !== "undefined" ? (orca as any) : null;
-    if (orcaAny?.fs?.createDir) {
-      await orcaAny.fs.createDir(path, { recursive: true });
-    }
-  } catch {
-    // 目录可能已存在，忽略错误
   }
 }
 
