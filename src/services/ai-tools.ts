@@ -47,6 +47,7 @@ import {
   fetchWebContent,
   formatFetchedContent,
 } from "./web-fetcher";
+import { loadToolPrompt } from "./tool-prompt-loader";
 
 // 获取 Skill 工具列表（新的 SkillsManager 实现）
 function getSkillTools(): OpenAITool[] {
@@ -3535,6 +3536,12 @@ ${skill.instruction}
       return `Unknown tool: ${toolName}`;
     }
   } catch (error: any) {
-    return `Error executing ${toolName}: ${error?.message ?? error}`;
+    // 工具执行出错时，尝试附加详细说明帮助 AI 修正
+    const instruction = await loadToolPrompt(toolName);
+    const errorMsg = `Error executing ${toolName}: ${error?.message ?? error}`;
+    if (instruction) {
+      return `${errorMsg}\n\n---\n**工具使用说明：**\n${instruction}`;
+    }
+    return errorMsg;
   }
 }
