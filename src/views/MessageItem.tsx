@@ -803,10 +803,12 @@ function ToolCallWithResult({
   toolCall,
   result,
   isLoading,
+  index,
 }: {
   toolCall: ToolCallInfo;
   result?: { content: string; name: string };
   isLoading: boolean;
+  index?: number;
 }) {
   // 检测结果是否为错误
   const isError = result?.content?.startsWith("Error:") || 
@@ -814,13 +816,26 @@ function ToolCallWithResult({
                   result?.content?.includes("拒绝");
   const status = isLoading ? "loading" : isError ? "failed" : result ? "success" : "loading";
 
-  return createElement(ToolStatusIndicator, {
-    toolName: toolCall.function.name,
-    status,
-    args: toolCall.function.arguments,
-    result: result?.content,
-    error: isError ? result?.content : undefined,
-  });
+  // 计算动画延迟（stagger 效果）
+  const animationDelay = index !== undefined ? `${index * 0.1}s` : "0s";
+
+  return createElement(
+    "div",
+    {
+      style: {
+        animation: "messageFadeSlideIn 0.3s ease-out forwards",
+        animationDelay,
+        opacity: 0,
+      },
+    },
+    createElement(ToolStatusIndicator, {
+      toolName: toolCall.function.name,
+      status,
+      args: toolCall.function.arguments,
+      result: result?.content,
+      error: isError ? result?.content : undefined,
+    })
+  );
 }
 
 /**
@@ -1040,13 +1055,14 @@ function CollapsibleToolCalls({
     })
   );
 
-  // 工具调用列表
-  const toolList = toolCalls.map((tc) =>
+  // 工具调用列表 - 使用 stagger 动画
+  const toolList = toolCalls.map((tc, index) =>
     createElement(ToolCallWithResult, {
       key: tc.id,
       toolCall: tc,
       result: toolResults?.get(tc.id),
       isLoading: isStreaming || !toolResults?.has(tc.id),
+      index,
     })
   );
 

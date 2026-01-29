@@ -2763,12 +2763,21 @@ ${userInput}`;
 
   const handleCreateBranch = useCallback((messageId: string) => {
     try {
+      console.log("[Branch] Creating branch at message:", messageId);
+      console.log("[Branch] Current messages:", messages.length);
       // createBranch(messages, messageId, branchName?) -> { messages: Message[]; branchId: string }
       const result = createBranch(messages, messageId);
+      console.log("[Branch] Result:", {
+        branchId: result.branchId,
+        messagesCount: result.messages.length,
+        lastMessage: result.messages[result.messages.length - 1],
+        hasBranches: result.messages[result.messages.length - 1]?.branches?.length,
+      });
       setCurrentBranchId(result.branchId);
       setMessages(result.messages);
-      orca.notify("success", "已创建新分支");
+      orca.notify("success", `已创建新分支，当前在分支: ${result.branchId.slice(0, 10)}...`);
     } catch (err: any) {
+      console.error("[Branch] Create failed:", err);
       orca.notify("error", err?.message || "创建分支失败");
     }
   }, [messages]);
