@@ -6,6 +6,7 @@ import { AiChatPluginAPI } from "./services/plugin-api";
 import { ensureBuiltInSkills } from "./services/skills-manager";
 import { initToolPrompts } from "./services/tool-prompt-loader";
 import { initCommands } from "./services/commands-loader";
+import { loadVisionModelConfig } from "./services/vision-model-service";
 
 let pluginName: string;
 let hideableObserver: MutationObserver | null = null;
@@ -88,6 +89,9 @@ export async function load(_name: string) {
 
   // Load persisted memory data
   await loadMemoryStore();
+
+  // 加载视觉模型配置
+  await loadVisionModelConfig(pluginName);
 
   // 初始化内置 Skills（必须在 registerAiChatUI 之后）
   await ensureBuiltInSkills();

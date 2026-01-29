@@ -16,6 +16,7 @@ interface HeaderMenuProps {
   onOpenMemoryManager: () => void;
   onOpenStreamSettings?: () => void;
   onOpenWebSearchSettings?: () => void;
+  onOpenVisionModelSettings?: () => void;
   onOpenTodoistSettings?: () => void;
   onStartPythonServer?: () => void;
   onStopPythonServer?: () => void;
@@ -37,6 +38,7 @@ export default function HeaderMenu({
   onOpenMemoryManager,
   onOpenStreamSettings,
   onOpenWebSearchSettings,
+  onOpenVisionModelSettings,
   onOpenTodoistSettings,
   onStartPythonServer,
   onStopPythonServer,
@@ -203,6 +205,18 @@ export default function HeaderMenu({
           },
           createElement("i", { className: "ti ti-world" }),
           "联网搜索"
+        ),
+        // Vision Model Settings
+        onOpenVisionModelSettings && createElement(
+          "div",
+          {
+            style: menuItemStyle,
+            onClick: () => handleItemClick(onOpenVisionModelSettings),
+            onMouseEnter: (e: any) => (e.currentTarget.style.background = "var(--orca-color-bg-2)"),
+            onMouseLeave: (e: any) => (e.currentTarget.style.background = "transparent"),
+          },
+          createElement("i", { className: "ti ti-eye" }),
+          "视觉模型"
         ),
         // Todoist Settings
         onOpenTodoistSettings && createElement(

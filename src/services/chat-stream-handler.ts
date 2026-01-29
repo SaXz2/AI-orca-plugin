@@ -10,6 +10,11 @@ import {
   type OpenAITool,
 } from "./openai-client";
 import { nowId } from "../utils/text-utils";
+import {
+  compressMessages,
+  estimateTotalTokens,
+  type ManagedContext,
+} from "./context-manager";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // <tool_call> XML 标签适配层 (Qwen3/Llama/DeepSeek/GLM 等模型)
@@ -232,6 +237,12 @@ export interface StreamOptions {
   anthropicApiPath?: string;
   /** 模型上下文长度限制（tokens），超出时自动截断 */
   maxContextTokens?: number;
+  /** Enable automatic context compression for long conversations (default: true) */
+  enableContextCompression?: boolean;
+  /** Token threshold to trigger compression (default: maxContextTokens * 0.8) */
+  compressionThreshold?: number;
+  /** Number of recent messages to always preserve during compression (default: 6) */
+  preserveRecentMessages?: number;
 }
 
 export interface StreamResult {
@@ -419,10 +430,41 @@ export async function* streamChatWithRetry(
   onRetry?: () => void
 ): AsyncGenerator<StreamChunk, void, unknown> {
   const timeoutMs = options.timeoutMs ?? 30000;
+  const enableContextCompression = options.enableContextCompression ?? true;
+  const maxContextTokens = options.maxContextTokens ?? 128000;
+  const compressionThreshold = options.compressionThreshold ?? Math.floor(maxContextTokens * 0.8);
+  const preserveRecentMessages = options.preserveRecentMessages ?? 6;
+  
   let content = "";
   let reasoning = "";
   let toolCalls: ToolCallInfo[] = [];
   let usedFallback = false;
+
+  // Apply context compression if enabled and messages exceed threshold
+  const maybeCompressMessages = async (messages: OpenAIChatMessage[]): Promise<OpenAIChatMessage[]> => {
+    if (!enableContextCompression) return messages;
+    
+    const currentTokens = estimateTotalTokens(messages);
+    if (currentTokens <= compressionThreshold) return messages;
+    
+    console.log(`[streamChatWithRetry] Context compression triggered: ${currentTokens} tokens > ${compressionThreshold} threshold`);
+    
+    const { messages: compressedMessages, stats, wasCompressed } = await compressMessages(
+      messages,
+      compressionThreshold,
+      {
+        preserveRecentCount: preserveRecentMessages,
+        preserveSystemMessages: true,
+      }
+    );
+    
+    if (wasCompressed) {
+      console.log(`[streamChatWithRetry] Context compressed: ${stats.totalMessages} -> ${stats.compressedMessages} messages, ` +
+        `${currentTokens} -> ${stats.estimatedTokens} tokens (ratio: ${stats.compressionRatio.toFixed(2)}x)`);
+    }
+    
+    return compressedMessages;
+  };
 
   const doStream = async function* (
     messages: OpenAIChatMessage[]
@@ -486,19 +528,23 @@ export async function* streamChatWithRetry(
     }
   };
 
+  // Apply context compression to messages before streaming
+  const compressedStandardMessages = await maybeCompressMessages(standardMessages);
+  const compressedFallbackMessages = await maybeCompressMessages(fallbackMessages);
+
   try {
-    yield* doStream(standardMessages);
+    yield* doStream(compressedStandardMessages);
   } catch (err: any) {
     const isAbort = String(err?.name) === "AbortError";
     if (isAbort) throw err;
 
-        usedFallback = true;
+    usedFallback = true;
     content = "";
     reasoning = ""; // 重置 reasoning
     toolCalls = [];
     onRetry?.();
 
-    yield* doStream(fallbackMessages);
+    yield* doStream(compressedFallbackMessages);
   }
 
   // Only retry with fallback if response is truly empty (no content AND no tool calls)
@@ -510,7 +556,7 @@ export async function* streamChatWithRetry(
     onRetry?.();
 
     try {
-      yield* doStream(fallbackMessages);
+      yield* doStream(compressedFallbackMessages);
     } catch (fallbackErr: any) {
     }
   }

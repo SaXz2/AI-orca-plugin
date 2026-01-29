@@ -21,6 +21,7 @@ import ChatHistoryMenu from "./ChatHistoryMenu";
 import HeaderMenu from "./HeaderMenu";
 import StreamSettingsModal from "./StreamSettingsModal";
 import WebSearchSettingsModal from "./WebSearchSettingsModal";
+import VisionModelSettingsModal from "./VisionModelSettingsModal";
 import EmptyState from "./EmptyState";
 import TypingIndicator from "../components/TypingIndicator";
 import MemoryManager from "./MemoryManager";
@@ -338,6 +339,9 @@ export default function AiChatPanel({ panelId }: PanelProps) {
 
   // Web search settings modal state
   const [showWebSearchSettings, setShowWebSearchSettings] = useState(false);
+
+  // Vision model settings modal state
+  const [showVisionModelSettings, setShowVisionModelSettings] = useState(false);
 
   // Skill manager modal state
   const [showSkillManager, setShowSkillManager] = useState(false);
@@ -1465,12 +1469,13 @@ graph TD
 	      } catch {}
 	      
 	      // 使用专用的闪卡工具（不在普通 TOOLS 列表中）
-	      const { standard: apiMessages, fallback: apiMessagesFallback } = await buildConversationMessages({
+      const { standard: apiMessages, fallback: apiMessagesFallback } = await buildConversationMessages({
 	        messages: conversationForFlashcard,
 	        systemPrompt: flashcardSystemPrompt,
 	        contextText,
 	        customMemory: memoryText,
 	        chatMode: "agent", // 使用工具模式
+	        modelId: model,
 	      });
 	      
 	      // 获取模型特定的 API 配置
@@ -1662,6 +1667,7 @@ graph TD
           contextText,
           customMemory: memoryText,
           chatMode: "ask", // 多模型模式下不使用工具
+          // 多模型模式不传 modelId，因为每个模型都不同
         });
         
         // 并行流式请求所有模型
@@ -1780,6 +1786,7 @@ graph TD
         customMemory: memoryText,
         chatMode: currentChatMode,
         maxHistoryMessages: settings.maxHistoryMessages,
+        modelId: model,
       });
 
       // 根据是否有拖入的块来选择工具列表
@@ -1862,6 +1869,7 @@ graph TD
               contextText: "",
               customMemory: "",
               chatMode: "agent", // 使用 agent 模式，避免 Ask 模式限制
+              modelId: model,
             });
             
             let result = "";
@@ -2383,6 +2391,7 @@ ${userInput}`;
           customMemory: memoryText,
           chatMode: currentChatMode,
           maxHistoryMessages: settings.maxHistoryMessages,
+          modelId: model,
         });
 
         // Stream next response with reasoning support
@@ -3532,6 +3541,7 @@ ${userInput}`;
         onOpenMemoryManager: handleOpenMemoryManager,
         onOpenStreamSettings: () => setShowStreamSettings(true),
         onOpenWebSearchSettings: () => setShowWebSearchSettings(true),
+        onOpenVisionModelSettings: () => setShowVisionModelSettings(true),
         onOpenTodoistSettings: () => setShowTodoistSettings(true),
         onStartPythonServer: handleStartPythonServer,
         onStopPythonServer: handleStopPythonServer,
@@ -3633,6 +3643,11 @@ ${userInput}`;
     createElement(WebSearchSettingsModal, {
       isOpen: showWebSearchSettings,
       onClose: () => setShowWebSearchSettings(false),
+    }),
+    // Vision Model Settings Modal
+    createElement(VisionModelSettingsModal, {
+      isOpen: showVisionModelSettings,
+      onClose: () => setShowVisionModelSettings(false),
     }),
     // Todoist Settings Modal
     createElement(TodoistSettingsModal, {

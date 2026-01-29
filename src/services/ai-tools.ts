@@ -9,6 +9,7 @@ import type { OpenAITool } from "./openai-client";
 import {
   searchBlocksByTag,
   searchBlocksByText,
+  searchBlocksByMultipleTexts,
   queryBlocksByTag,
   queryBlocksAdvanced,
   getTagSchema,
@@ -442,22 +443,54 @@ export const TOOLS: OpenAITool[] = [
     type: "function",
     function: {
       name: "searchNotes",
-      description: `全文搜索笔记内容。
+      description: `全文搜索笔记内容，支持多关键词查询。
 
-【示例】query="会议记录"`,
+【参数说明】
+- queries: 搜索关键词，支持字符串或数组。字符串会按空格/逗号自动分词
+- combineMode: 组合模式，"or"匹配任一关键词(默认)，"and"匹配所有关键词
+- topic: 聚焦主题，优先返回包含该主题的结果
+- maxResults: 最大结果数，默认50，最大100
+- sortBy: 排序方式，"relevance"(相关性,默认)/"modified"/"created"
+
+【示例】
+- 单词搜索: queries="会议记录"
+- 多词OR搜索: queries=["项目A", "进度", "deadline"]
+- 多词AND搜索: queries=["项目A", "进度"], combineMode="and"
+- 带主题聚焦: queries=["任务", "完成"], topic="本周工作"`,
       parameters: {
         type: "object",
         properties: {
+          queries: {
+            oneOf: [
+              { type: "string" },
+              { type: "array", items: { type: "string" } }
+            ],
+            description: "搜索关键词，字符串或数组。字符串会按空格/逗号分词",
+          },
           query: {
             type: "string",
-            description: "搜索关键词",
+            description: "(兼容旧参数) 搜索关键词",
+          },
+          combineMode: {
+            type: "string",
+            enum: ["and", "or"],
+            description: "组合模式: or=匹配任一(默认), and=匹配所有",
+          },
+          topic: {
+            type: "string",
+            description: "聚焦主题，优先返回包含该主题的结果",
           },
           maxResults: {
             type: "number",
-            description: "最大结果数，默认20",
+            description: "最大结果数，默认50，最大100",
+          },
+          sortBy: {
+            type: "string",
+            enum: ["relevance", "modified", "created"],
+            description: "排序方式，默认relevance",
           },
         },
-        required: ["query"],
+        required: [],
       },
     },
   },
@@ -1964,25 +1997,59 @@ function formatToolInstructions(tool: OpenAITool): string {
  */
 export async function executeTool(toolName: string, args: any): Promise<string> {
   try {
-    // searchNotes - 全文搜索
+    // searchNotes - 全文搜索（支持多词查询）
     if (toolName === "searchNotes") {
       try {
-        const query = String(args.query || "").trim();
-        if (!query) {
-          return "Error: 请提供搜索关键词 (query)。";
+        // 支持新参数 queries 和旧参数 query
+        const queries = args.queries || args.query;
+        if (!queries) {
+          return "Error: 请提供搜索关键词 (queries 或 query)。";
         }
         
-        const maxResults = Math.min(args.maxResults || 20, 50);
-        const results = await searchBlocksByText(query, maxResults);
+        const combineMode = args.combineMode || "or";
+        const topic = args.topic;
+        const maxResults = Math.min(args.maxResults || 50, 100);
+        const sortBy = args.sortBy || "relevance";
+        
+        // 使用新的多词搜索函数
+        const results = await searchBlocksByMultipleTexts({
+          queries,
+          combineMode,
+          topic,
+          maxResults,
+          sortBy,
+        });
+        
+        // 获取搜索关键词用于显示
+        const keywordsDisplay = Array.isArray(queries) 
+          ? queries.join(", ") 
+          : queries;
         
         if (results.length === 0) {
-          return `未找到包含 "${query}" 的笔记。`;
+          return `未找到包含 "${keywordsDisplay}" 的笔记。`;
         }
         
         const preservationNote = addLinkPreservationNote(results.length);
-        const summary = results.map((r: any, i: number) => formatBlockResult(r, i)).join("\n\n");
         
-        return `${preservationNote}✅ 找到 ${results.length} 条笔记：\n${summary}`;
+        // 格式化结果，包含相关性分数和匹配关键词
+        const summary = results.map((r: any, i: number) => {
+          const base = formatBlockResult(r, i);
+          const extras: string[] = [];
+          if (r.relevanceScore !== undefined) {
+            extras.push(`相关性: ${r.relevanceScore}`);
+          }
+          if (r.matchedKeywords?.length) {
+            extras.push(`匹配: ${r.matchedKeywords.join(", ")}`);
+          }
+          return extras.length ? `${base}\n   ℹ️ ${extras.join(" | ")}` : base;
+        }).join("\n\n");
+        
+        // 生成搜索摘要
+        const modeDesc = combineMode === "and" ? "AND" : "OR";
+        const topicDesc = topic ? `，主题: "${topic}"` : "";
+        const header = `✅ 找到 ${results.length} 条笔记 (关键词: "${keywordsDisplay}", 模式: ${modeDesc}${topicDesc})`;
+        
+        return `${preservationNote}${header}\n${summary}`;
       } catch (err: any) {
         return `搜索出错: ${err.message}`;
       }

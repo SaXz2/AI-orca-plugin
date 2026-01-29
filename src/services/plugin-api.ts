@@ -205,6 +205,7 @@ export const AiChatPluginAPI = {
       systemPrompt,
       contextText,
       chatMode: enableTools ? "agent" : "ask",
+      modelId: model,
     });
 
     // 创建 abort controller
@@ -305,6 +306,7 @@ export const AiChatPluginAPI = {
           systemPrompt,
           contextText,
           chatMode: enableTools ? "agent" : "ask",
+          modelId: model,
         });
 
         // 下一轮流式响应

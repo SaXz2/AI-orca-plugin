@@ -6,11 +6,16 @@
  */
 
 import type { OpenAIChatMessage, OpenAITool } from "./openai-client";
-import type { Message } from "./session-service";
+import type { Message, ImageRef } from "./session-service";
 import type { ChatMode } from "../store/chat-mode-store";
-import { buildImageContent } from "./image-service";
+import { buildImageContent, imageToBase64 } from "./image-service";
 import { buildFileContentsForApi } from "./file-service";
 import { extractOrcaImagesFromText, hasOrcaImageLinks } from "../utils/orca-image-extractor";
+import {
+  shouldUseVisionProxy,
+  describeImages,
+  getVisionModelConfig,
+} from "./vision-model-service";
 
 export interface MessageBuildParams {
   messages: Message[];
@@ -21,6 +26,8 @@ export interface MessageBuildParams {
   chatMode?: ChatMode;
   // Token 优化参数
   maxHistoryMessages?: number; // 0=不限制
+  // 模型 ID（用于判断是否需要视觉模型代理）
+  modelId?: string;
 }
 
 export interface ConversationBuildParams {
@@ -31,6 +38,8 @@ export interface ConversationBuildParams {
   chatMode?: ChatMode;
   // Token 优化参数
   maxHistoryMessages?: number; // 0=不限制
+  // 模型 ID（用于判断是否需要视觉模型代理）
+  modelId?: string;
 }
 
 export interface ToolResultParams extends MessageBuildParams {
@@ -154,16 +163,91 @@ function messageToApi(m: Message): OpenAIChatMessage {
 }
 
 /**
+ * 将图片转换为文字描述（用于不支持视觉的模型）
+ */
+async function convertImagesToDescriptions(
+  images: Array<ImageRef | { base64: string; mimeType: string; name?: string }>
+): Promise<string> {
+  if (images.length === 0) return "";
+
+  const visionConfig = getVisionModelConfig();
+  if (!visionConfig.enabled) {
+    return images.map((img, i) => `[用户发送的图片 ${i + 1}: ${(img as any).name || "未命名"}，视觉模型未启用]`).join("\n");
+  }
+
+  try {
+    const result = await describeImages(images);
+    if (result.success && result.descriptions.length > 0) {
+      const header = images.length === 1
+        ? "[用户发送了一张图片，以下是图片内容的详细描述]"
+        : `[用户发送了 ${images.length} 张图片，以下是图片内容的详细描述]`;
+      const descriptions = result.descriptions
+        .map((desc, i) => {
+          const imgName = (images[i] as any)?.name || `图片 ${i + 1}`;
+          return images.length === 1
+            ? desc.description
+            : `【${imgName}】\n${desc.description}`;
+        })
+        .join("\n\n");
+      return `${header}\n\n${descriptions}`;
+    }
+    // 部分成功或失败
+    const header = "[用户发送的图片描述]";
+    const descriptions = result.descriptions
+      .map((desc, i) => {
+        const imgName = (images[i] as any)?.name || `图片 ${i + 1}`;
+        return `【${imgName}】\n${desc.description}`;
+      })
+      .join("\n\n");
+    return `${header}\n\n${descriptions}` + (result.error ? `\n\n[部分图片处理失败: ${result.error}]` : "");
+  } catch (error: any) {
+    console.error("[message-builder] Failed to convert images to descriptions:", error);
+    return images.map((img, i) => `[用户发送的图片 ${i + 1}: ${(img as any).name || "未命名"} - 视觉处理失败]`).join("\n");
+  }
+}
+
+/**
  * Convert internal Message to OpenAI API format with image support (async)
  * 
  * 支持的图片来源：
  * 1. m.images - 直接附加的图片（legacy）
  * 2. m.files - 文件附件（包括图片、视频等）
  * 3. Orca 图片链接 - [!image(...)](orca-block:xxx) 格式
+ * 
+ * @param m - 消息对象
+ * @param useVisionProxy - 是否使用视觉模型代理（当前模型不支持视觉时为 true）
  */
-async function messageToApiWithImages(m: Message): Promise<OpenAIChatMessage> {
+async function messageToApiWithImages(m: Message, useVisionProxy: boolean = false): Promise<OpenAIChatMessage> {
   // Handle messages with images (multimodal) - legacy support
   if (m.images && m.images.length > 0 && m.role === "user") {
+    // 如果需要使用视觉模型代理，将图片转换为文字描述
+    if (useVisionProxy) {
+      const imagesWithBase64: Array<{ base64: string; mimeType: string; name?: string }> = [];
+      for (const img of m.images) {
+        try {
+          const base64 = await imageToBase64(img);
+          if (base64) {
+            imagesWithBase64.push({
+              base64,
+              mimeType: img.mimeType || "image/png",
+              name: img.name,
+            });
+          }
+        } catch (error) {
+          console.warn("[message-builder] Failed to read image:", img.name);
+        }
+      }
+      const imageDescriptions = await convertImagesToDescriptions(imagesWithBase64);
+      const textContent = m.content
+        ? `${m.content}\n\n${imageDescriptions}`
+        : imageDescriptions;
+      return {
+        role: "user",
+        content: textContent,
+      };
+    }
+
+    // 模型支持视觉，直接发送图片
     const contentParts: any[] = [];
     
     // Add text content if present
@@ -196,6 +280,64 @@ async function messageToApiWithImages(m: Message): Promise<OpenAIChatMessage> {
 
   // Handle messages with files (new format - supports all file types including video)
   if (m.files && m.files.length > 0 && m.role === "user") {
+    // 分离图片文件和其他文件
+    const imageFiles = m.files.filter(f => f.mimeType?.startsWith("image/"));
+    const otherFiles = m.files.filter(f => !f.mimeType?.startsWith("image/"));
+
+    // 如果需要使用视觉模型代理且有图片文件
+    if (useVisionProxy && imageFiles.length > 0) {
+      const imagesWithBase64: Array<{ base64: string; mimeType: string; name?: string }> = [];
+      for (const file of imageFiles) {
+        try {
+          const base64 = await imageToBase64({ path: file.path, name: file.name, mimeType: file.mimeType });
+          if (base64) {
+            imagesWithBase64.push({
+              base64,
+              mimeType: file.mimeType || "image/png",
+              name: file.name,
+            });
+          }
+        } catch (error) {
+          console.warn("[message-builder] Failed to read image file:", file.name);
+        }
+      }
+      const imageDescriptions = await convertImagesToDescriptions(imagesWithBase64);
+      
+      // 处理其他文件
+      const otherContentParts: any[] = [];
+      for (const file of otherFiles) {
+        try {
+          const fileContents = await buildFileContentsForApi(file);
+          if (fileContents && fileContents.length > 0) {
+            // 过滤掉 image_url 类型，只保留文本
+            for (const content of fileContents) {
+              if (content.type === "text") {
+                otherContentParts.push(content);
+              }
+            }
+          }
+        } catch (error) {
+          console.warn("[message-builder] Failed to process file:", file.name);
+        }
+      }
+
+      let textContent = m.content || "";
+      if (imageDescriptions) {
+        textContent = textContent ? `${textContent}\n\n${imageDescriptions}` : imageDescriptions;
+      }
+      for (const part of otherContentParts) {
+        if (part.text) {
+          textContent = textContent ? `${textContent}\n\n${part.text}` : part.text;
+        }
+      }
+
+      return {
+        role: "user",
+        content: textContent,
+      };
+    }
+
+    // 模型支持视觉或没有图片文件，正常处理
     const contentParts: any[] = [];
 
     // Add text content if present
@@ -232,6 +374,26 @@ async function messageToApiWithImages(m: Message): Promise<OpenAIChatMessage> {
       const { images, cleanedText } = await extractOrcaImagesFromText(m.content);
       
       if (images.length > 0) {
+        // 如果需要使用视觉模型代理，将图片转换为文字描述
+        if (useVisionProxy) {
+          const imagesWithBase64 = images
+            .filter(img => img.base64)
+            .map(img => ({
+              base64: img.base64!,
+              mimeType: img.mimeType,
+              name: img.blockId ? `block-${img.blockId}` : undefined,
+            }));
+          const imageDescriptions = await convertImagesToDescriptions(imagesWithBase64);
+          const textContent = cleanedText.trim()
+            ? `${cleanedText.trim()}\n\n${imageDescriptions}`
+            : imageDescriptions;
+          return {
+            role: "user",
+            content: textContent,
+          };
+        }
+
+        // 模型支持视觉，直接发送图片
         const contentParts: any[] = [];
         
         // Add cleaned text content
@@ -299,7 +461,20 @@ export async function buildConversationMessages(params: ConversationBuildParams)
   standard: OpenAIChatMessage[];
   fallback: OpenAIChatMessage[];
 }> {
-  const { messages, systemPrompt, contextText, customMemory, chatMode, maxHistoryMessages } = params;
+  const { messages, systemPrompt, contextText, customMemory, chatMode, maxHistoryMessages, modelId } = params;
+
+  // 检查是否需要使用视觉模型代理
+  // 检查消息中是否包含图片
+  const hasImages = messages.some(m => 
+    (m.images && m.images.length > 0) ||
+    (m.files && m.files.some(f => f.mimeType?.startsWith("image/"))) ||
+    (m.content && hasOrcaImageLinks(m.content))
+  );
+  const useVisionProxy = modelId ? shouldUseVisionProxy(modelId, hasImages) : false;
+  
+  if (useVisionProxy && hasImages) {
+    console.log("[message-builder] 使用视觉模型代理处理图片");
+  }
 
   const systemContent = buildSystemContent(systemPrompt, contextText, customMemory, chatMode);
   let filteredMessages = messages.filter((m) => !m.localOnly);
@@ -342,7 +517,7 @@ export async function buildConversationMessages(params: ConversationBuildParams)
   });
   
   // Build standard format with async image conversion
-  const history = await Promise.all(validMessages.map(messageToApiWithImages));
+  const history = await Promise.all(validMessages.map(m => messageToApiWithImages(m, useVisionProxy)));
   
   // 过滤掉转换后仍然无效的 assistant 消息
   const filteredHistory = history.filter((m) => {
@@ -360,7 +535,7 @@ export async function buildConversationMessages(params: ConversationBuildParams)
     console.warn("[message-builder] All messages filtered out, keeping last user message");
     const lastUserMessage = messages.filter(m => m.role === "user").pop();
     if (lastUserMessage) {
-      const apiMessage = await messageToApiWithImages(lastUserMessage);
+      const apiMessage = await messageToApiWithImages(lastUserMessage, useVisionProxy);
       filteredHistory.push(apiMessage);
     }
   }
@@ -411,11 +586,19 @@ export async function buildConversationMessages(params: ConversationBuildParams)
  * Now async to support file content extraction
  */
 export async function buildChatMessages(params: MessageBuildParams): Promise<OpenAIChatMessage[]> {
-  const { messages, userContent, systemPrompt, contextText, customMemory, chatMode } = params;
+  const { messages, userContent, systemPrompt, contextText, customMemory, chatMode, modelId } = params;
+
+  // 检查是否需要使用视觉模型代理
+  const hasImages = messages.some(m => 
+    (m.images && m.images.length > 0) ||
+    (m.files && m.files.some(f => f.mimeType?.startsWith("image/"))) ||
+    (m.content && hasOrcaImageLinks(m.content))
+  );
+  const useVisionProxy = modelId ? shouldUseVisionProxy(modelId, hasImages) : false;
 
   const systemContent = buildSystemContent(systemPrompt, contextText, customMemory, chatMode);
   const filteredMessages = messages.filter((m) => !m.localOnly);
-  const history = await Promise.all(filteredMessages.map(messageToApiWithImages));
+  const history = await Promise.all(filteredMessages.map(m => messageToApiWithImages(m, useVisionProxy)));
 
   return [
     ...(systemContent ? [{ role: "system" as const, content: systemContent }] : []),
@@ -445,11 +628,20 @@ export async function buildMessagesWithToolResults(params: ToolResultParams): Pr
     assistantContent,
     toolCalls,
     toolResults,
-  } = params;
+    modelId,
+  } = params as ToolResultParams & { modelId?: string };
+
+  // 检查是否需要使用视觉模型代理
+  const hasImages = messages.some(m => 
+    (m.images && m.images.length > 0) ||
+    (m.files && m.files.some(f => f.mimeType?.startsWith("image/"))) ||
+    (m.content && hasOrcaImageLinks(m.content))
+  );
+  const useVisionProxy = modelId ? shouldUseVisionProxy(modelId, hasImages) : false;
 
   const systemContent = buildSystemContent(systemPrompt, contextText, customMemory, chatMode);
   const filteredMessages = messages.filter((m) => !m.localOnly);
-  const history = await Promise.all(filteredMessages.map(messageToApiWithImages));
+  const history = await Promise.all(filteredMessages.map(m => messageToApiWithImages(m, useVisionProxy)));
 
   // Standard OpenAI format with tool role
   const standard: OpenAIChatMessage[] = [
