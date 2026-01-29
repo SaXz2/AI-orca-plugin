@@ -231,6 +231,7 @@ export default function ChatInput({
   const [isUploading, setIsUploading] = useState(false);
   const [clearContextPending, setClearContextPending] = useState(false);
   const [isSending, setIsSending] = useState(false);
+  const [sendSuccess, setSendSuccess] = useState(false);
   const [isDraggingFile, setIsDraggingFile] = useState(false);
   const [toolbarWidth, setToolbarWidth] = useState(0);
   const [availableCommands, setAvailableCommands] = useState<{ name: string; description: string }[]>([]);
@@ -501,6 +502,9 @@ export default function ChatInput({
       if (textareaRef.current) {
         textareaRef.current.value = "";
       }
+      // 显示发送成功动画
+      setSendSuccess(true);
+      setTimeout(() => setSendSuccess(false), 800);
     } finally {
       setIsSending(false);
     }
@@ -1871,15 +1875,16 @@ export default function ChatInput({
                 )
               )
             : withTooltip(
-                isSending ? "正在加载内容..." : "发送消息",
+                isSending ? "正在发送..." : sendSuccess ? "发送成功" : "发送消息",
                 createElement(
                   Button,
                   {
                     variant: "solid",
                     disabled: !canSend,
                     onClick: handleSend,
+                    className: isSending ? "send-btn-sending" : sendSuccess ? "send-btn-success" : "",
                     style: {
-                      ...sendButtonStyle(canSend),
+                      ...sendButtonStyle(canSend || sendSuccess),
                       borderRadius: "50%",
                       width: "32px",
                       height: "32px",
@@ -1887,14 +1892,22 @@ export default function ChatInput({
                       display: "flex",
                       alignItems: "center",
                       justifyContent: "center",
-                      opacity: isSending ? 0.7 : 1,
+                      background: sendSuccess 
+                        ? "var(--orca-color-success, #10b981)" 
+                        : undefined,
+                      transition: "all 0.2s ease",
                     },
                   },
                   createElement("i", {
-                    className: isSending ? "ti ti-loader" : "ti ti-arrow-up",
-                    style: isSending ? {
-                      animation: "spin 1s linear infinite",
-                    } : undefined,
+                    className: sendSuccess 
+                      ? "ti ti-check" 
+                      : isSending 
+                        ? "ti ti-loader" 
+                        : "ti ti-arrow-up",
+                    style: {
+                      ...(isSending ? { animation: "spin 1s linear infinite" } : {}),
+                      ...(sendSuccess ? { animation: "sendSuccess 0.4s ease-out" } : {}),
+                    },
                   })
                 )
               )

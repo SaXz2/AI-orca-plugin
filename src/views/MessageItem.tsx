@@ -2123,14 +2123,15 @@ export default function MessageItem({
           },
         }),
 
-      // Action Bar
-      createElement(
+      // Action Bar - with slide-in animation
+      showActionBar && createElement(
         "div",
         {
+          className: "action-bar-enter",
           style: {
             ...actionBarStyle,
-            opacity: showActionBar ? 1 : 0,
-            pointerEvents: showActionBar ? "auto" : "none",
+            opacity: 1,
+            pointerEvents: "auto",
           },
         },
         // Copy Button
@@ -2139,6 +2140,7 @@ export default function MessageItem({
           createElement(
             "button",
             {
+              className: "action-bar-btn",
               style: actionButtonStyle,
               onClick: handleCopy,
             },
@@ -2153,6 +2155,7 @@ export default function MessageItem({
             createElement(
               "button",
               {
+                className: "action-bar-btn",
                 style: {
                   ...actionButtonStyle,
                   color: isPinned ? "var(--orca-color-warning)" : undefined,
@@ -2170,6 +2173,7 @@ export default function MessageItem({
             createElement(
               "button",
               {
+                className: "action-bar-btn",
                 style: actionButtonStyle,
                 onClick: onDelete,
               },
@@ -2184,6 +2188,7 @@ export default function MessageItem({
             createElement(
               "button",
               {
+                className: "action-bar-btn",
                 style: actionButtonStyle,
                 onClick: onRollback,
               },
@@ -2198,6 +2203,7 @@ export default function MessageItem({
             createElement(
               "button",
               {
+                className: "action-bar-btn",
                 style: actionButtonStyle,
                 onClick: async () => {
                   const result = await saveSingleMessageToJournal(message, message.model);
@@ -2231,6 +2237,7 @@ export default function MessageItem({
             createElement(
               "button",
               {
+                className: "action-bar-btn",
                 style: actionButtonStyle,
                 onClick: onRegenerate,
               },
@@ -2246,6 +2253,7 @@ export default function MessageItem({
             createElement(
               "button",
               {
+                className: "action-bar-btn",
                 style: actionButtonStyle,
                 onClick: () => onCreateBranch(message.id),
               },
