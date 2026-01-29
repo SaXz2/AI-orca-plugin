@@ -41,6 +41,14 @@ export type OpenAIChatStreamArgs = {
   anthropicApiPath?: string;
   /** 模型上下文长度限制（tokens），超出时自动截断 */
   maxContextTokens?: number;
+  /** 请求超时时间（毫秒），默认 60000 (60秒) */
+  timeout?: number;
+  /** 最大重试次数，默认 2 */
+  maxRetries?: number;
+  /** 重试延迟基数（毫秒），默认 1000，实际延迟 = base * 2^attempt */
+  retryDelayBase?: number;
+  /** 是否返回 usage 统计信息 */
+  includeUsage?: boolean;
 };
 
 function joinUrl(base: string, path: string): string {
@@ -118,7 +126,7 @@ async function readErrorMessage(res: Response): Promise<string> {
 }
 
 type StreamChunk = {
-  type: "content" | "tool_calls" | "reasoning";
+  type: "content" | "tool_calls" | "reasoning" | "usage";
   content?: string;
   reasoning?: string;
   tool_calls?: Array<{
@@ -129,6 +137,12 @@ type StreamChunk = {
       arguments: string;
     };
   }>;
+  /** Token 使用统计 */
+  usage?: {
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_tokens: number;
+  };
 };
 
 function parseDataUrl(url: string): { mediaType: string; base64: string } | null {
@@ -426,20 +440,30 @@ function extractAnthropicToolCalls(json: any): StreamChunk["tool_calls"] {
 }
 
 /**
- * 估算内容的 token 数（简单方法：字符数/3.5 for 中文，/4 for 英文）
- * base64 图片大约每 3 字符 = 1 token
+ * 估算文本内容的 token 数
+ * 
+ * 基于 OpenAI 的 tokenizer 特性：
+ * - 中文字符：约 1.5-2 字符/token（每个汉字通常是 1-2 个 token）
+ * - 英文单词：约 4 字符/token（平均一个单词 1 个 token）
+ * - 数字：约 2-3 数字/token
+ * - 标点符号：通常 1 个符号 = 1 个 token
+ * - base64 图片：约 3 字符/token
+ * 
+ * 此函数根据内容的实际组成动态计算更准确的估算值
  */
 function estimateTokens(content: any): number {
   if (!content) return 0;
+  
   if (typeof content === "string") {
     // 检测是否是 base64 图片数据
     if (content.startsWith("data:image")) {
       // base64 图片：大约每 3 个字符 = 1 token
       return Math.ceil(content.length / 3);
     }
-    // 普通文本：中英文混合，用 3.5 作为平均值
-    return Math.ceil(content.length / 3.5);
+    
+    return estimateTextTokens(content);
   }
+  
   if (Array.isArray(content)) {
     return content.reduce((sum, part) => {
       if (part?.type === "text") return sum + estimateTokens(part.text);
@@ -447,7 +471,89 @@ function estimateTokens(content: any): number {
       return sum + estimateTokens(JSON.stringify(part));
     }, 0);
   }
+  
   return Math.ceil(JSON.stringify(content).length / 4);
+}
+
+/**
+ * 根据文本内容的语言组成估算 token 数
+ * 使用更精确的分类计算
+ */
+function estimateTextTokens(text: string): number {
+  if (!text) return 0;
+  
+  // 统计各类字符数量
+  let chineseChars = 0;      // 中日韩字符
+  let englishChars = 0;      // 英文字母
+  let numberChars = 0;       // 数字
+  let punctuationChars = 0;  // 标点符号
+  let whitespaceChars = 0;   // 空白字符
+  let otherChars = 0;        // 其他字符
+  
+  for (const char of text) {
+    const code = char.charCodeAt(0);
+    
+    // 中日韩统一表意文字 (CJK Unified Ideographs)
+    if (
+      (code >= 0x4E00 && code <= 0x9FFF) ||   // CJK 基本
+      (code >= 0x3400 && code <= 0x4DBF) ||   // CJK 扩展 A
+      (code >= 0x20000 && code <= 0x2A6DF) || // CJK 扩展 B
+      (code >= 0x3000 && code <= 0x303F) ||   // CJK 标点
+      (code >= 0xFF00 && code <= 0xFFEF)      // 全角字符
+    ) {
+      chineseChars++;
+    }
+    // 日文假名
+    else if (
+      (code >= 0x3040 && code <= 0x309F) ||   // 平假名
+      (code >= 0x30A0 && code <= 0x30FF)      // 片假名
+    ) {
+      chineseChars++; // 日文假名与中文类似处理
+    }
+    // 英文字母
+    else if (
+      (code >= 0x41 && code <= 0x5A) ||  // A-Z
+      (code >= 0x61 && code <= 0x7A)     // a-z
+    ) {
+      englishChars++;
+    }
+    // 数字
+    else if (code >= 0x30 && code <= 0x39) { // 0-9
+      numberChars++;
+    }
+    // 空白字符
+    else if (char === ' ' || char === '\t' || char === '\n' || char === '\r') {
+      whitespaceChars++;
+    }
+    // ASCII 标点符号
+    else if (
+      (code >= 0x21 && code <= 0x2F) ||  // ! " # $ % & ' ( ) * + , - . /
+      (code >= 0x3A && code <= 0x40) ||  // : ; < = > ? @
+      (code >= 0x5B && code <= 0x60) ||  // [ \ ] ^ _ `
+      (code >= 0x7B && code <= 0x7E)     // { | } ~
+    ) {
+      punctuationChars++;
+    }
+    // 其他字符（如表情符号、特殊符号等）
+    else {
+      otherChars++;
+    }
+  }
+  
+  // 根据各类字符的 token 比率计算估算值
+  // 这些比率基于 OpenAI cl100k_base tokenizer 的经验值
+  const tokens = 
+    chineseChars * 0.6 +        // 中文：约 1.5-2 字符/token → 0.5-0.67 token/字符
+    englishChars / 4.5 +        // 英文：约 4-5 字符/token（单词平均长度）
+    numberChars / 2.5 +         // 数字：约 2-3 数字/token
+    punctuationChars * 0.5 +    // 标点：约 2 个标点/token（很多标点会合并）
+    whitespaceChars * 0.25 +    // 空白：通常与相邻 token 合并
+    otherChars * 0.7;           // 其他：保守估计
+  
+  // 添加一些基础开销（BPE 分词的边界效应）
+  const baseOverhead = Math.ceil(text.length / 100); // 每 100 字符约 1 token 的边界开销
+  
+  return Math.max(1, Math.ceil(tokens + baseOverhead));
 }
 
 /**
@@ -529,6 +635,51 @@ function truncateOlderMessages(
   return [...systemMessages, ...result];
 }
 
+/**
+ * 延迟函数
+ */
+function delay(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+/**
+ * 判断错误是否可重试
+ */
+function isRetryableError(status: number): boolean {
+  // 429: Rate limit, 500+: Server errors (except 501 Not Implemented)
+  return status === 429 || (status >= 500 && status !== 501);
+}
+
+/**
+ * 创建带超时的 AbortSignal
+ */
+function createTimeoutSignal(timeoutMs: number, existingSignal?: AbortSignal): { signal: AbortSignal; cleanup: () => void } {
+  const controller = new AbortController();
+  
+  const timeoutId = setTimeout(() => {
+    controller.abort(new Error(`Request timeout after ${timeoutMs}ms`));
+  }, timeoutMs);
+  
+  // 如果有外部 signal，监听它的 abort 事件
+  const onExternalAbort = () => {
+    clearTimeout(timeoutId);
+    controller.abort(existingSignal?.reason);
+  };
+  
+  if (existingSignal) {
+    existingSignal.addEventListener('abort', onExternalAbort);
+  }
+  
+  const cleanup = () => {
+    clearTimeout(timeoutId);
+    if (existingSignal) {
+      existingSignal.removeEventListener('abort', onExternalAbort);
+    }
+  };
+  
+  return { signal: controller.signal, cleanup };
+}
+
 export async function* openAIChatCompletionsStream(
   args: OpenAIChatStreamArgs,
 ): AsyncGenerator<StreamChunk, void, unknown> {
@@ -538,6 +689,12 @@ export async function* openAIChatCompletionsStream(
     protocol === "anthropic"
       ? getAnthropicMessagesUrlCandidates(args.apiUrl, args.anthropicApiPath)
       : getChatCompletionsUrlCandidates(args.apiUrl);
+  
+  // 配置参数
+  const timeout = args.timeout ?? 60000; // 默认 60 秒
+  const maxRetries = args.maxRetries ?? 2;
+  const retryDelayBase = args.retryDelayBase ?? 1000;
+  const includeUsage = args.includeUsage ?? true;
 
   let requestBody: any;
 
@@ -561,9 +718,9 @@ export async function* openAIChatCompletionsStream(
       temperature: args.temperature,
       max_tokens: args.maxTokens,
       stream: true,
-      // 启用推理内容返回（DeepSeek/OpenAI-compatible APIs）
+      // 启用推理内容和 usage 统计返回
       stream_options: {
-        include_usage: true,
+        include_usage: includeUsage,
       },
     };
   }
@@ -672,48 +829,109 @@ export async function* openAIChatCompletionsStream(
 
   const body = JSON.stringify(requestBody);
   let res: Response | null = null;
-  for (let i = 0; i < urlCandidates.length; i++) {
-    const url = urlCandidates[i];
-    try {
-      res = await fetch(url, {
-        method: "POST",
-        headers: {
-          Accept: "text/event-stream",
-          "Content-Type": "application/json",
-          ...(protocol === "anthropic"
-            ? {
-                "x-api-key": args.apiKey,
-                "anthropic-version": "2023-06-01",
-                Authorization: `Bearer ${args.apiKey}`,
-              }
-            : { Authorization: `Bearer ${args.apiKey}` }),
-        },
-        body,
-        signal: args.signal,
-      });
-    } catch (fetchErr: any) {
-      console.error(`${logPrefix} Fetch error:`, fetchErr);
-      throw fetchErr;
+  let lastError: Error | null = null;
+  
+  // 带重试的请求循环
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    // 如果是重试，先等待
+    if (attempt > 0) {
+      const retryDelay = retryDelayBase * Math.pow(2, attempt - 1);
+      console.log(`${logPrefix} 🔄 重试 ${attempt}/${maxRetries}，等待 ${retryDelay}ms...`);
+      await delay(retryDelay);
     }
-
-    if (res.ok) break;
-    if (res.status === 404 && i < urlCandidates.length - 1) {
-      console.warn(`${logPrefix} 404 at ${url}, trying fallback...`);
-      continue;
+    
+    // 尝试所有 URL 候选
+    for (let i = 0; i < urlCandidates.length; i++) {
+      const url = urlCandidates[i];
+      
+      // 创建带超时的 signal
+      const { signal: timeoutSignal, cleanup } = createTimeoutSignal(timeout, args.signal);
+      
+      try {
+        res = await fetch(url, {
+          method: "POST",
+          headers: {
+            Accept: "text/event-stream",
+            "Content-Type": "application/json",
+            ...(protocol === "anthropic"
+              ? {
+                  "x-api-key": args.apiKey,
+                  "anthropic-version": "2023-06-01",
+                  Authorization: `Bearer ${args.apiKey}`,
+                }
+              : { Authorization: `Bearer ${args.apiKey}` }),
+          },
+          body,
+          signal: timeoutSignal,
+        });
+        
+        cleanup(); // 清理超时定时器
+        
+        if (res.ok) break;
+        
+        // 404 尝试下一个 URL
+        if (res.status === 404 && i < urlCandidates.length - 1) {
+          console.warn(`${logPrefix} 404 at ${url}, trying fallback...`);
+          continue;
+        }
+        
+        // 读取错误信息
+        const msg = await readErrorMessage(res);
+        lastError = new Error(msg);
+        
+        console.error(`${logPrefix} ❌ Error response:`, {
+          status: res.status,
+          statusText: res.statusText,
+          url: url,
+          message: msg,
+          headers: Object.fromEntries(res.headers.entries())
+        });
+        
+        // 判断是否可重试
+        if (isRetryableError(res.status) && attempt < maxRetries) {
+          console.log(`${logPrefix} 可重试错误 (${res.status})，将进行重试...`);
+          res = null; // 重置以便重试
+          break; // 跳出 URL 循环，进入重试
+        }
+        
+        // 不可重试的错误，直接抛出
+        throw lastError;
+        
+      } catch (fetchErr: any) {
+        cleanup(); // 确保清理
+        
+        // 检查是否是超时或取消
+        if (fetchErr.name === 'AbortError') {
+          if (args.signal?.aborted) {
+            // 用户主动取消，不重试
+            throw new Error('Request cancelled by user');
+          }
+          // 超时错误
+          lastError = new Error(`Request timeout after ${timeout}ms`);
+          console.warn(`${logPrefix} ⏱️ 请求超时`);
+        } else {
+          lastError = fetchErr;
+          console.error(`${logPrefix} Fetch error:`, fetchErr);
+        }
+        
+        // 网络错误可以重试
+        if (attempt < maxRetries) {
+          console.log(`${logPrefix} 网络错误，将进行重试...`);
+          res = null;
+          break; // 跳出 URL 循环，进入重试
+        }
+        
+        throw lastError;
+      }
     }
-
-    const msg = await readErrorMessage(res);
-    console.error(`${logPrefix} ❌ Error response:`, {
-      status: res.status,
-      statusText: res.statusText,
-      url: url,
-      message: msg,
-      headers: Object.fromEntries(res.headers.entries())
-    });
-    throw new Error(msg);
+    
+    // 如果请求成功，跳出重试循环
+    if (res?.ok) break;
   }
 
-  if (!res) throw new Error("Failed to fetch");
+  if (!res) {
+    throw lastError || new Error("Failed to fetch after all retries");
+  }
 
   const contentType = (res.headers.get("content-type") ?? "").toLowerCase();
 
@@ -844,6 +1062,18 @@ export async function* openAIChatCompletionsStream(
         continue;
       }
 
+      // 检查 usage 信息（通常在最后一个 chunk）
+      if (obj?.usage && includeUsage) {
+        yield {
+          type: "usage",
+          usage: {
+            prompt_tokens: obj.usage.prompt_tokens || 0,
+            completion_tokens: obj.usage.completion_tokens || 0,
+            total_tokens: obj.usage.total_tokens || 0,
+          },
+        };
+      }
+      
       const chunk = safeDeltaFromEvent(obj);
       if (chunk.content || chunk.tool_calls || chunk.reasoning) yield chunk;
     }
