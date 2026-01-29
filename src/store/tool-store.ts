@@ -37,22 +37,22 @@ export const TOOL_CATEGORIES: ToolCategory[] = [
   {
     name: "search",
     label: "搜索",
-    tools: ["searchBlocksByTag", "searchBlocksByText", "query_blocks_by_tag", "query_blocks", "searchBlocksByReference"],
+    tools: ["searchNotes", "queryByTagProperty", "query_blocks", "searchBlocksByReference"],
   },
   {
     name: "read",
     label: "读取",
-    tools: ["getPage", "getBlock", "getBlockMeta", "getBlockLinks", "get_tag_schema"],
+    tools: ["getPage", "getBlocksText", "getBlockMeta", "getBlockLinks"],
   },
   {
     name: "journal",
     label: "日记",
-    tools: ["getRecentJournals", "getTodayJournal", "getJournalByDate", "getJournalsByDateRange"],
+    tools: ["getTodayJournal", "getJournalByDate", "getJournals"],
   },
   {
     name: "write",
     label: "写入",
-    tools: ["createBlock", "createPage", "insertTag"],
+    tools: ["createBlock", "createPage", "insertTag", "updateTagProperties"],
   },
   {
     name: "other",
@@ -65,23 +65,21 @@ export const TOOL_CATEGORIES: ToolCategory[] = [
  * 工具显示名称映射
  */
 export const TOOL_DISPLAY_NAMES: Record<string, string> = {
-  searchBlocksByTag: "标签搜索",
-  searchBlocksByText: "全文搜索",
-  query_blocks_by_tag: "标签属性查询",
-  query_blocks: "组合查询",
+  searchNotes: "全文搜索",
+  queryByTagProperty: "标签属性查询",
+  query_blocks: "高级查询",
   searchBlocksByReference: "反链搜索",
   getPage: "读取页面",
-  getBlock: "读取块",
+  getBlocksText: "读取块内容",
   getBlockMeta: "获取元数据",
   getBlockLinks: "获取链接",
-  get_tag_schema: "获取标签架构",
-  getRecentJournals: "最近日记",
   getTodayJournal: "今日日记",
   getJournalByDate: "指定日期日记",
-  getJournalsByDateRange: "日期范围日记",
+  getJournals: "日记范围查询",
   createBlock: "创建块",
   createPage: "创建页面",
   insertTag: "添加标签",
+  updateTagProperties: "更新标签属性",
   getSavedAiConversations: "已保存对话",
 };
 
@@ -337,7 +335,7 @@ export function isCurrencyEnabled(): boolean {
 /**
  * 保存工具设置到本地存储
  */
-function saveToolSettings(): void {
+async function saveToolSettings(): Promise<void> {
   try {
     const settings = {
       toolStatus: toolStore.toolStatus,
@@ -349,7 +347,13 @@ function saveToolSettings(): void {
       wikipediaEnabled: toolStore.wikipediaEnabled,
       currencyEnabled: toolStore.currencyEnabled,
     };
-    localStorage.setItem("ai-chat-tool-settings", JSON.stringify(settings));
+    
+    // 同时使用 Orca 插件存储和 localStorage（双重保障）
+    const settingsJson = JSON.stringify(settings);
+    localStorage.setItem("ai-chat-tool-settings", settingsJson);
+    
+    // 使用 Orca 的持久化存储
+    await orca.plugins.setData("ai-chat", "tool-settings", settingsJson);
   } catch (e) {
     console.warn("[ToolStore] Failed to save settings:", e);
   }
@@ -358,9 +362,21 @@ function saveToolSettings(): void {
 /**
  * 从本地存储加载工具设置
  */
-export function loadToolSettings(): void {
+export async function loadToolSettings(): Promise<void> {
   try {
-    const saved = localStorage.getItem("ai-chat-tool-settings");
+    // 优先从 Orca 插件存储加载
+    let saved: string | null = null;
+    try {
+      saved = await orca.plugins.getData("ai-chat", "tool-settings") as string | null;
+    } catch (e) {
+      console.warn("[ToolStore] Failed to load from plugin storage, falling back to localStorage:", e);
+    }
+    
+    // 如果 Orca 存储没有，尝试从 localStorage 加载
+    if (!saved) {
+      saved = localStorage.getItem("ai-chat-tool-settings");
+    }
+    
     if (saved) {
       const parsed = JSON.parse(saved);
       if (typeof parsed === "object" && parsed !== null) {

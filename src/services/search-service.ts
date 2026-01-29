@@ -35,6 +35,11 @@ import {
   expandBlockRefProperties,
   batchFetchBlocks,
 } from "../utils/property-utils";
+import {
+  rerankResults,
+  type RerankStrategy,
+  type RerankResult,
+} from "./reranking-service";
 
 export interface SearchResult {
   id: number;
@@ -46,6 +51,30 @@ export interface SearchResult {
   tags?: string[];
   propertyValues?: Record<string, any>;
   rawTree?: any;  // 原始块树数据（用于导出时提取子块信息）
+  matchedKeywords?: string[];  // 匹配的关键词
+  relevanceScore?: number;     // 相关性分数 (0-100)
+}
+
+/**
+ * Options for multi-keyword search (inspired by Context7 API design)
+ */
+export interface MultiSearchOptions {
+  /** Multiple keywords to search for */
+  queries: string | string[];
+  /** How to combine multiple keywords: "or" matches any, "and" matches all */
+  combineMode?: "and" | "or";
+  /** Focus topic for relevance ranking (like Context7's topic parameter) */
+  topic?: string;
+  /** Maximum results (default 50, max 100) */
+  maxResults?: number;
+  /** Sort order */
+  sortBy?: "relevance" | "modified" | "created";
+  /** Include context (parent/child blocks) */
+  includeContext?: boolean;
+  /** Enable advanced reranking (default: true) */
+  enableReranking?: boolean;
+  /** Reranking strategy (default: "hybrid") */
+  rerankStrategy?: RerankStrategy;
 }
 
 interface TransformOptions {
@@ -372,6 +401,245 @@ export async function searchBlocksByText(
     console.error(`Failed to search blocks by text "${searchText}":`, error);
     throw new Error(
       `Text search failed: ${error?.message ?? error ?? "unknown error"}`
+    );
+  }
+}
+
+/**
+ * Calculate relevance score for a search result based on keyword matches and topic
+ */
+function calculateRelevanceScore(
+  content: string,
+  keywords: string[],
+  topic?: string
+): { score: number; matchedKeywords: string[] } {
+  const lowerContent = content.toLowerCase();
+  const matchedKeywords: string[] = [];
+  let score = 0;
+
+  // Check each keyword
+  for (const keyword of keywords) {
+    const lowerKeyword = keyword.toLowerCase();
+    if (lowerContent.includes(lowerKeyword)) {
+      matchedKeywords.push(keyword);
+      // Base score per match
+      score += 20;
+      // Bonus for title match (first 100 chars)
+      if (lowerContent.slice(0, 100).includes(lowerKeyword)) {
+        score += 15;
+      }
+      // Bonus for multiple occurrences
+      const occurrences = (lowerContent.match(new RegExp(lowerKeyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi')) || []).length;
+      score += Math.min(occurrences - 1, 5) * 5;
+    }
+  }
+
+  // Topic bonus
+  if (topic && lowerContent.includes(topic.toLowerCase())) {
+    score += 25;
+  }
+
+  // Normalize to 0-100
+  return {
+    score: Math.min(100, score),
+    matchedKeywords,
+  };
+}
+
+/**
+ * Search blocks by multiple text keywords with relevance scoring
+ * Inspired by Context7's topic-based filtering and token limits
+ * @param options - Multi-search options
+ * @returns Array of search results with relevance scores
+ */
+export async function searchBlocksByMultipleTexts(
+  options: MultiSearchOptions
+): Promise<SearchResult[]> {
+  const {
+    queries,
+    combineMode = "or",
+    topic,
+    maxResults = 50,
+    sortBy = "relevance",
+    includeContext = true,
+    enableReranking = true,
+    rerankStrategy = "hybrid",
+  } = options;
+
+  // Normalize queries to array
+  let keywords: string[];
+  if (typeof queries === "string") {
+    // Split by space, comma, or Chinese comma
+    keywords = queries.split(/[\s,，]+/).filter((k) => k.trim().length > 0);
+  } else {
+    keywords = queries.filter((k) => k && k.trim().length > 0);
+  }
+
+  if (keywords.length === 0) {
+    console.error("[searchBlocksByMultipleTexts] No valid keywords provided");
+    return [];
+  }
+
+  console.log("[searchBlocksByMultipleTexts] Called with:", {
+    keywords,
+    combineMode,
+    topic,
+    maxResults,
+    sortBy,
+  });
+
+  const safeMaxResults = Math.min(Math.max(1, maxResults), 100);
+
+  try {
+    // Build query conditions for each keyword
+    const textConditions = keywords.map((keyword) => ({
+      type: "text" as const,
+      text: keyword,
+    }));
+
+    // For OR mode, we need to query each keyword separately and merge
+    // For AND mode, we can use a single query with all conditions
+    let allBlocks: any[] = [];
+    const blockIdSet = new Set<number>();
+
+    if (combineMode === "and") {
+      // Single query with all conditions (AND)
+      const description = buildAdvancedQuery({
+        conditions: textConditions,
+        combineMode: "and",
+        sort: [["_modified", "DESC"]],
+        pageSize: safeMaxResults * 2, // Fetch more for filtering
+      });
+      const result = await orca.invokeBackend("query", description);
+      const payload = unwrapBackendResult<any>(result);
+      throwIfBackendError(payload, "query");
+      const blocks = unwrapBlocks(payload);
+      if (Array.isArray(blocks)) {
+        allBlocks = blocks;
+      }
+    } else {
+      // OR mode: query each keyword and merge results
+      const queryPromises = keywords.map(async (keyword) => {
+        try {
+          const description = buildAdvancedQuery({
+            conditions: [{ type: "text", text: keyword }],
+            combineMode: "and",
+            sort: [["_modified", "DESC"]],
+            pageSize: Math.ceil(safeMaxResults * 1.5), // Fetch extra per keyword
+          });
+          const result = await orca.invokeBackend("query", description);
+          const payload = unwrapBackendResult<any>(result);
+          throwIfBackendError(payload, "query");
+          return unwrapBlocks(payload) || [];
+        } catch (err) {
+          console.warn(`[searchBlocksByMultipleTexts] Query for "${keyword}" failed:`, err);
+          return [];
+        }
+      });
+
+      const results = await Promise.all(queryPromises);
+      
+      // Merge and deduplicate
+      for (const blocks of results) {
+        if (Array.isArray(blocks)) {
+          for (const block of blocks) {
+            if (block?.id && !blockIdSet.has(block.id)) {
+              blockIdSet.add(block.id);
+              allBlocks.push(block);
+            }
+          }
+        }
+      }
+    }
+
+    if (!allBlocks.length) {
+      console.log("[searchBlocksByMultipleTexts] No results found");
+      return [];
+    }
+
+    // Fetch block trees
+    const limitedBlocks = allBlocks.slice(0, safeMaxResults * 2);
+    const trees = await fetchBlockTrees(limitedBlocks);
+    
+    // Transform to search results
+    let results = await transformToSearchResults(trees, {
+      includeProperties: false,
+      expandBlockRefs: false,
+    });
+
+    // Apply reranking if enabled and sorting by relevance
+    if (enableReranking && sortBy === "relevance") {
+      console.log(`[searchBlocksByMultipleTexts] Applying ${rerankStrategy} reranking...`);
+      
+      const { results: rerankedResults, stats } = await rerankResults({
+        query: keywords,
+        documents: results,
+        topK: safeMaxResults,
+        strategy: rerankStrategy,
+        topic,
+        minScore: 0,
+      });
+      
+      console.log(`[searchBlocksByMultipleTexts] Reranking stats:`, stats);
+      
+      // Map reranked results back to SearchResult format with updated scores
+      return rerankedResults.map((r: RerankResult) => ({
+        ...r,
+        relevanceScore: Math.round(r.rerankScore * 100),
+        matchedKeywords: r.matchedKeywords || keywords.filter((k) => {
+          const text = `${r.title} ${r.content}`.toLowerCase();
+          return text.includes(k.toLowerCase());
+        }),
+      }));
+    }
+    
+    // Fallback: Calculate basic relevance scores without reranking
+    results = results.map((r) => {
+      const textToScore = `${r.title} ${r.content} ${r.fullContent || ""}`;
+      const { score, matchedKeywords } = calculateRelevanceScore(textToScore, keywords, topic);
+      return {
+        ...r,
+        relevanceScore: score,
+        matchedKeywords,
+      };
+    });
+
+    // Filter by topic if specified (must contain topic keyword)
+    if (topic) {
+      const topicLower = topic.toLowerCase();
+      results = results.filter((r) => {
+        const text = `${r.title} ${r.content} ${r.fullContent || ""}`.toLowerCase();
+        return text.includes(topicLower);
+      });
+    }
+
+    // Sort results
+    switch (sortBy) {
+      case "relevance":
+        results.sort((a, b) => (b.relevanceScore || 0) - (a.relevanceScore || 0));
+        break;
+      case "modified":
+        results.sort((a, b) => {
+          const aTime = a.modified?.getTime() || 0;
+          const bTime = b.modified?.getTime() || 0;
+          return bTime - aTime;
+        });
+        break;
+      case "created":
+        results.sort((a, b) => {
+          const aTime = a.created?.getTime() || 0;
+          const bTime = b.created?.getTime() || 0;
+          return bTime - aTime;
+        });
+        break;
+    }
+
+    // Limit to maxResults
+    return results.slice(0, safeMaxResults);
+  } catch (error: any) {
+    console.error(`Failed to search blocks by multiple texts:`, error);
+    throw new Error(
+      `Multi-text search failed: ${error?.message ?? error ?? "unknown error"}`
     );
   }
 }

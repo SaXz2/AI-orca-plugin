@@ -12,7 +12,7 @@ export const panelContainerStyle: React.CSSProperties = {
   width: "100%",
   display: "flex",
   flexDirection: "column",
-  background: "var(--orca-color-bg-1)",
+  background: "transparent",
   color: "var(--orca-color-text-1)",
   animation: "panelEnter 240ms ease-out",
   transformOrigin: "left center",
@@ -24,7 +24,7 @@ export const headerStyle: React.CSSProperties = {
   alignItems: "center",
   gap: 8,
   borderBottom: "none",
-  background: "var(--orca-color-bg-1)",
+  background: "transparent",
   zIndex: 10,
 };
 
@@ -169,7 +169,8 @@ export const codeBlockPreStyle: React.CSSProperties = {
   overflowX: "auto",
   userSelect: "text", // 允许选择/复制 Markdown 内容
   fontFamily: 'var(--orca-fontfamily-code)',
-  fontSize: "13px",
+  // Use em units to scale with base font size from display settings
+  fontSize: "0.875em",
   lineHeight: "1.5",
   color: "var(--orca-color-text-1)",
 };
@@ -188,7 +189,7 @@ export const markdownContainerStyle = (role: string): React.CSSProperties => ({
   fontFamily: role === "assistant"
     ? 'var(--orca-fontfamily-editor)'
     : 'var(--orca-fontfamily-ui)',
-  fontSize: "16px",
+  // fontSize removed - inherit from parent bubble (controlled by display settings)
   color: role === "user" ? "var(--orca-color-text-inverse)" : "var(--orca-color-text-1)",
   lineHeight: "1.6",
   userSelect: "text", // 允许选择/复制 Markdown 内容
@@ -210,7 +211,8 @@ export const headingStyle = (level: number): React.CSSProperties => ({
   marginTop: level === 1 ? "24px" : "20px",
   marginBottom: "12px",
   fontWeight: "bold",
-  fontSize: level === 1 ? "24px" : level === 2 ? "20px" : "18px",
+  // Use em units to scale with base font size from display settings
+  fontSize: level === 1 ? "1.5em" : level === 2 ? "1.25em" : "1.125em",
   lineHeight: "1.4",
   borderLeft: "4px solid var(--orca-color-primary)",
   paddingLeft: "12px",
@@ -250,8 +252,9 @@ export const blockLinkArrowStyle: React.CSSProperties = {
   width: "18px",
   height: "18px",
   borderRadius: "3px",
-  background: "var(--orca-color-primary, #007bff)",
-  color: "var(--orca-color-text-inverse, #fff)",
+  background: "var(--orca-color-bg-3)",
+  border: "1px solid var(--orca-color-border)",
+  color: "var(--orca-color-text-1)",
   fontSize: "11px",
   flexShrink: 0,
   transition: "transform 0.2s ease",
@@ -448,27 +451,33 @@ type ToolStatus = "loading" | "success" | "failed" | "cancelled";
 
 /**
  * Tool status pill - inline status indicator
- * Gemini UX Review: Pill shape + subtle background + secondary text color
+ * Modern card-style design with status-based styling
  */
-export const toolStatusPillStyle = (status: ToolStatus): React.CSSProperties => ({
-  display: "flex",
-  alignItems: "center",
-  gap: "8px",
-  padding: "6px 12px",
-  borderRadius: "16px", // Pill shape
-  fontSize: "13px",
-  background:
-    status === "failed"
-      ? "var(--orca-color-bg-danger, rgba(255, 0, 0, 0.08))"
-      : "var(--orca-color-bg-3)",
-  color:
-    status === "failed"
-      ? "var(--orca-color-danger, #dc3545)"
-      : "var(--orca-color-text-2)",
-  transition: "all 0.2s ease",
-  maxWidth: "100%",
-  overflow: "hidden",
-});
+export const toolStatusPillStyle = (status: ToolStatus): React.CSSProperties => {
+  // 状态颜色配置
+  const statusColors = {
+    loading: { bg: "rgba(59, 130, 246, 0.08)", border: "rgba(59, 130, 246, 0.2)", text: "#3b82f6" },
+    success: { bg: "rgba(34, 197, 94, 0.08)", border: "rgba(34, 197, 94, 0.2)", text: "#22c55e" },
+    failed: { bg: "rgba(239, 68, 68, 0.08)", border: "rgba(239, 68, 68, 0.2)", text: "#ef4444" },
+    cancelled: { bg: "rgba(107, 114, 128, 0.08)", border: "rgba(107, 114, 128, 0.2)", text: "#6b7280" },
+  };
+  const colors = statusColors[status];
+  
+  return {
+    display: "flex",
+    alignItems: "center",
+    gap: "10px",
+    padding: "10px 14px",
+    borderRadius: "10px",
+    fontSize: "13px",
+    background: colors.bg,
+    border: `1px solid ${colors.border}`,
+    color: "var(--orca-color-text-2)",
+    transition: "all 0.2s ease",
+    maxWidth: "100%",
+    overflow: "hidden",
+  };
+};
 
 /**
  * Tool status icon - animated icon container
@@ -477,8 +486,12 @@ export const toolStatusIconStyle: React.CSSProperties = {
   display: "inline-flex",
   alignItems: "center",
   justifyContent: "center",
-  fontSize: "14px",
+  fontSize: "16px",
   flexShrink: 0,
+  width: "24px",
+  height: "24px",
+  borderRadius: "6px",
+  background: "rgba(255, 255, 255, 0.5)",
 };
 
 /**
@@ -489,6 +502,8 @@ export const toolStatusTextStyle: React.CSSProperties = {
   overflow: "hidden",
   textOverflow: "ellipsis",
   whiteSpace: "nowrap",
+  fontWeight: 500,
+  fontSize: "13px",
 };
 
 /**
@@ -516,13 +531,14 @@ export const toolStatusExpandButtonStyle: React.CSSProperties = {
  * Tool status details - expandable details panel
  */
 export const toolStatusDetailsStyle: React.CSSProperties = {
-  marginTop: "8px",
-  padding: "12px",
+  marginTop: "10px",
+  padding: "14px",
   background: "var(--orca-color-bg-2)",
   border: "1px solid var(--orca-color-border)",
-  borderRadius: "8px",
+  borderRadius: "10px",
   fontSize: "12px",
   color: "var(--orca-color-text-2)",
+  animation: "messageFadeSlideIn 0.2s ease-out",
 };
 
 /**

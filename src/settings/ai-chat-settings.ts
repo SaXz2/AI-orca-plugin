@@ -11,9 +11,9 @@ export const DEFAULT_SYSTEM_PROMPT = `你是笔记库智能助手。
 - 工具返回"✅ Search complete"后立即展示结果，不再调用其他工具
 - 搜索结果已含完整内容，禁止对其调用 getPage
 - 一次成功即停止，避免重复查询
-- 属性查询：先 get_tag_schema 获取定义 → 再 query_blocks_by_tag 过滤
+- 属性查询：queryByTagProperty 按标签+属性过滤
 - 无结果时尝试替代方案（最多 {maxToolRounds} 轮）：标签变体 → 搜索降级 → 条件放宽
-- 总结今天用 getTodayJournal，总结近期用 getRecentJournals
+- 总结今天用 getTodayJournal，总结近期用 getJournals
 
 ## 写入操作
 - 仅在用户明确要求「创建/添加/写入」时才写入
@@ -25,10 +25,11 @@ export const DEFAULT_SYSTEM_PROMPT = `你是笔记库智能助手。
 - 无结果就说"没有找到"，不脑补
 - 明确区分"笔记库内容"和"AI 一般知识"
 
-## 引用格式
+## 引用格式（红线）
 - **句中提及**：[标题](orca-block:id) — 作为句子一部分
 - **句末来源**：直接写 orca-block:数字 — 渲染为彩色圆点
-- ❌ 绝对禁止：[1]、[2]、^1、^2 等脚注格式，这些毫无意义
+- ❌ 绝对禁止：[1]、[2]、^1、^2 等脚注格式
+- ⚠️ **blockid 必须从工具返回中复制**，绝对禁止编造数字
 
 ## 特殊格式
 - 时间线事件用 \`\`\`timeline 代码块
@@ -69,6 +70,7 @@ export type ProviderModel = {
   maxTokens?: number;      // 最大输出 token
   maxToolRounds?: number;  // 工具调用最大轮数
   currency?: CurrencyType; // 价格币种
+  contextLength?: number;  // 模型上下文长度（tokens），用于本地模型防溢出
 };
 
 /** AI 平台/提供商配置 */
@@ -77,6 +79,8 @@ export type AiProvider = {
   name: string;            // 平台显示名称
   apiUrl: string;          // API 地址
   apiKey: string;          // API 密钥
+  protocol?: "openai" | "anthropic"; // API 协议类型，默认 openai
+  anthropicApiPath?: string; // Anthropic 请求路径（可选；留空则自动拼接 /v1/messages 并回退 /messages）
   models: ProviderModel[]; // 该平台下的模型列表
   enabled: boolean;        // 是否启用
   isBuiltin?: boolean;     // 是否为内置平台（不可删除）
@@ -171,9 +175,8 @@ export type AiChatSettings = {
   maxHistoryMessages: number;        // 最大历史消息数（0=不限制）
   maxToolResultChars: number;        // 工具结果最大字符数（0=不限制）
   maxContextChars: number;           // 上下文最大字符数
-  // 动态压缩设置
-  enableCompression: boolean;        // 是否启用压缩
-  compressAfterMessages: number;     // 超过多少条后开始压缩旧消息（5-20）
+  // 流式超时设置
+  streamTimeout: number;             // 流式响应超时（毫秒），本地模型建议设置更长
   // 联网搜索设置
   webSearch: WebSearchConfig;
   // 兼容旧版本的字段（迁移用）
@@ -194,6 +197,7 @@ const DEFAULT_PROVIDERS: AiProvider[] = [
     name: "OpenAI",
     apiUrl: "https://api.openai.com/v1",
     apiKey: "",
+    protocol: "openai",
     enabled: true,
     isBuiltin: true,
     models: [
@@ -208,6 +212,7 @@ const DEFAULT_PROVIDERS: AiProvider[] = [
     name: "DeepSeek",
     apiUrl: "https://api.deepseek.com/v1",
     apiKey: "",
+    protocol: "openai",
     enabled: true,
     isBuiltin: true,
     models: [
@@ -230,9 +235,8 @@ export const DEFAULT_AI_CHAT_SETTINGS: AiChatSettings = {
   maxHistoryMessages: 0,           // 0=不限制（改用动态压缩）
   maxToolResultChars: 0,           // 0=不限制
   maxContextChars: 60000,          // 恢复原来的 60000
-  // 动态压缩设置
-  enableCompression: true,         // 默认启用压缩
-  compressAfterMessages: 10,       // 超过 10 条后开始压缩旧消息
+  // 流式超时设置
+  streamTimeout: 30000,            // 默认 30 秒，本地模型可设置 120000（2分钟）或更长
   // 联网搜索设置
   webSearch: {
     enabled: false,
@@ -249,6 +253,7 @@ export const DEFAULT_AI_CHAT_SETTINGS: AiChatSettings = {
 // ═══════════════════════════════════════════════════════════════════════════
 
 const PROVIDERS_STORAGE_KEY = "ai-providers-config";
+const PROVIDERS_LOCALSTORAGE_KEY = "ai-chat-providers-config";
 
 export async function registerAiChatSettingsSchema(
   pluginName: string,
@@ -282,6 +287,120 @@ function toCurrency(value: unknown, fallback: CurrencyType): CurrencyType {
   return fallback;
 }
 
+function isCurrency(value: unknown): value is CurrencyType {
+  return value === "USD" || value === "CNY" || value === "EUR" || value === "JPY";
+}
+
+function isModelCapability(value: unknown): value is ModelCapability {
+  return value === "vision"
+    || value === "web"
+    || value === "reasoning"
+    || value === "tools"
+    || value === "rerank"
+    || value === "embedding";
+}
+
+function normalizeProviderModels(
+  models: unknown,
+  fallbackModels?: ProviderModel[],
+): ProviderModel[] {
+  // 兼容旧配置：models 可能是逗号/换行分隔的字符串
+  if (typeof models === "string") {
+    const text = models.trim();
+    if (!text) {
+      return fallbackModels ? JSON.parse(JSON.stringify(fallbackModels)) : [];
+    }
+
+    // 兼容：如果用户手动存成了 JSON 数组字符串
+    if (text.startsWith("[") && text.endsWith("]")) {
+      try {
+        const parsed = JSON.parse(text);
+        return normalizeProviderModels(parsed, fallbackModels);
+      } catch {
+        // fallback to plain split
+      }
+    }
+
+    const parts = text.split(/[,，;\r\n]+/);
+    const normalized: ProviderModel[] = [];
+    const seen = new Set<string>();
+    for (const part of parts) {
+      const id = part.trim();
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      normalized.push({ id, label: id });
+    }
+    if (normalized.length > 0) return normalized;
+    return fallbackModels ? JSON.parse(JSON.stringify(fallbackModels)) : [];
+  }
+
+  if (!Array.isArray(models) || models.length === 0) {
+    return fallbackModels ? JSON.parse(JSON.stringify(fallbackModels)) : [];
+  }
+
+  const normalized: ProviderModel[] = [];
+  for (const model of models) {
+    if (typeof model === "string") {
+      // 兼容：数组里可能出现 "a, b, c" 这种老格式
+      const parts = model.split(/[,，;\r\n]+/);
+      for (const part of parts) {
+        const id = part.trim();
+        if (id) normalized.push({ id, label: id });
+      }
+      continue;
+    }
+
+    if (!model || typeof model !== "object") continue;
+
+    const raw = model as Record<string, any>;
+    const idSource = typeof raw.id === "string"
+      ? raw.id
+      : typeof raw.value === "string"
+      ? raw.value
+      : typeof raw.name === "string"
+      ? raw.name
+      : "";
+    const id = typeof idSource === "string" ? idSource.trim() : "";
+    if (!id) continue;
+
+    const labelSource = typeof raw.label === "string"
+      ? raw.label
+      : typeof raw.name === "string"
+      ? raw.name
+      : undefined;
+    const capabilities = Array.isArray(raw.capabilities)
+      ? raw.capabilities.filter((cap) => isModelCapability(cap))
+      : undefined;
+
+    normalized.push({
+      id,
+      label: labelSource?.trim() || undefined,
+      inputPrice: typeof raw.inputPrice === "number" ? raw.inputPrice : undefined,
+      outputPrice: typeof raw.outputPrice === "number" ? raw.outputPrice : undefined,
+      capabilities: capabilities && capabilities.length > 0 ? capabilities : undefined,
+      temperature: typeof raw.temperature === "number" ? raw.temperature : undefined,
+      maxTokens: typeof raw.maxTokens === "number" ? raw.maxTokens : undefined,
+      maxToolRounds: typeof raw.maxToolRounds === "number" ? raw.maxToolRounds : undefined,
+      currency: isCurrency(raw.currency) ? raw.currency : undefined,
+    });
+  }
+
+  const deduped: ProviderModel[] = [];
+  const seen = new Set<string>();
+  for (const m of normalized) {
+    if (!m?.id) continue;
+    if (seen.has(m.id)) continue;
+    seen.add(m.id);
+    deduped.push(m);
+  }
+
+  if (deduped.length === 0 && fallbackModels?.length) {
+    return JSON.parse(JSON.stringify(fallbackModels));
+  }
+
+  return deduped;
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // 获取和更新设置
 // ═══════════════════════════════════════════════════════════════════════════
@@ -299,8 +418,8 @@ type StoredConfig = {
   maxHistoryMessages?: number;
   maxToolResultChars?: number;
   maxContextChars?: number;
-  enableCompression?: boolean;
-  compressAfterMessages?: number;
+  // 流式超时设置
+  streamTimeout?: number;
   // 联网搜索设置
   webSearch?: WebSearchConfig;
 };
@@ -309,28 +428,62 @@ type StoredConfig = {
 let cachedConfig: StoredConfig | null = null;
 let cachePluginName: string | null = null;
 
-/** 从存储加载配置 */
+/** 从存储加载配置（优先从 Orca 插件存储加载，回退到 localStorage） */
 async function loadStoredConfig(pluginName: string): Promise<StoredConfig | null> {
+  let raw: string | null = null;
+
+  // 首先尝试从 Orca 插件存储加载
   try {
-    const raw = await orca.plugins.getData(pluginName, PROVIDERS_STORAGE_KEY);
-    if (raw) {
+    raw = await orca.plugins.getData(pluginName, PROVIDERS_STORAGE_KEY);
+  } catch (e) {
+    console.warn('[AiChatSettings] Failed to load from Orca storage:', e);
+  }
+
+  // 如果 Orca 存储失败或为空，尝试从 localStorage 加载
+  if (!raw && typeof localStorage !== "undefined") {
+    try {
+      raw = localStorage.getItem(PROVIDERS_LOCALSTORAGE_KEY);
+    } catch (e) {
+      console.warn('[AiChatSettings] Failed to load from localStorage:', e);
+    }
+  }
+
+  if (raw) {
+    try {
       const parsed = JSON.parse(raw);
       return parsed;
+    } catch (e) {
+      console.warn('[AiChatSettings] Failed to parse stored config:', e);
     }
-  } catch (e) {
   }
+
   return null;
 }
 
-/** 保存配置到存储 */
+/** 保存配置到存储（双重保存：Orca 插件存储 + localStorage） */
 async function saveStoredConfig(pluginName: string, config: StoredConfig): Promise<void> {
+  const configJson = JSON.stringify(config);
+
+  // 保存到 Orca 插件存储
   try {
-    await orca.plugins.setData(pluginName, PROVIDERS_STORAGE_KEY, JSON.stringify(config));
-    cachedConfig = config;
-    cachePluginName = pluginName;
+    await orca.plugins.setData(pluginName, PROVIDERS_STORAGE_KEY, configJson);
   } catch (e) {
-    throw e;
+    console.error('[AiChatSettings] Failed to save to Orca storage:', e);
+    // 不抛出异常，继续尝试保存到 localStorage
   }
+
+  // 同时保存到 localStorage 作为备份
+  if (typeof localStorage !== "undefined") {
+    try {
+      localStorage.setItem(PROVIDERS_LOCALSTORAGE_KEY, configJson);
+    } catch (e) {
+      console.warn('[AiChatSettings] Failed to save to localStorage:', e);
+    }
+  }
+
+  // 更新内存缓存
+  cachedConfig = config;
+  cachePluginName = pluginName;
 }
 
 /** 同步获取设置（使用缓存，首次需要先调用 initAiChatSettings） */
@@ -340,8 +493,51 @@ export function getAiChatSettings(pluginName: string): AiChatSettings {
   // 使用缓存的配置
   const config = (cachePluginName === pluginName && cachedConfig) ? cachedConfig : null;
   
-  // 如果有缓存，使用缓存的 providers
-  const providers = config?.providers || JSON.parse(JSON.stringify(DEFAULT_PROVIDERS));
+  // 如果有缓存，使用缓存的 providers；为空时回退到默认值
+  const fallbackProviders: AiProvider[] = JSON.parse(JSON.stringify(DEFAULT_PROVIDERS));
+  const rawProviders = config?.providers;
+  let providers = Array.isArray(rawProviders) && rawProviders.length > 0
+    ? rawProviders
+    : fallbackProviders;
+
+  // 修复旧配置：缺失字段/模型时补默认值
+  if (providers.length > 0) {
+    for (const provider of providers) {
+      const fallback = fallbackProviders.find((p) => p.id === provider.id);
+      if (provider.enabled === undefined) {
+        provider.enabled = fallback?.enabled ?? true;
+      }
+      if (!provider.name) {
+        provider.name = fallback?.name ?? provider.id;
+      }
+      if (!provider.apiUrl) {
+        provider.apiUrl = fallback?.apiUrl ?? provider.apiUrl;
+      }
+      if (!provider.protocol) {
+        provider.protocol = fallback?.protocol ?? "openai";
+      }
+      if (typeof (provider as any).anthropicApiPath !== "string") {
+        (provider as any).anthropicApiPath = undefined;
+      } else {
+        const trimmed = String((provider as any).anthropicApiPath).trim();
+        (provider as any).anthropicApiPath = trimmed ? trimmed : undefined;
+      }
+      if (provider.isBuiltin === undefined && fallback?.isBuiltin !== undefined) {
+        provider.isBuiltin = fallback.isBuiltin;
+      }
+      provider.models = normalizeProviderModels(provider.models, fallback?.models);
+    }
+  }
+
+  const totalModels = providers.reduce((sum, provider) => sum + provider.models.length, 0);
+  if (totalModels === 0 && fallbackProviders.length > 0) {
+    const existingIds = new Set(providers.map((provider) => provider.id));
+    for (const fallback of fallbackProviders) {
+      if (!existingIds.has(fallback.id)) {
+        providers.push(JSON.parse(JSON.stringify(fallback)));
+      }
+    }
+  }
   
   // 兼容旧版迁移
   if (!config && raw.apiKey) {
@@ -364,8 +560,8 @@ export function getAiChatSettings(pluginName: string): AiChatSettings {
     maxHistoryMessages: config?.maxHistoryMessages ?? DEFAULT_AI_CHAT_SETTINGS.maxHistoryMessages,
     maxToolResultChars: config?.maxToolResultChars ?? DEFAULT_AI_CHAT_SETTINGS.maxToolResultChars,
     maxContextChars: config?.maxContextChars ?? DEFAULT_AI_CHAT_SETTINGS.maxContextChars,
-    enableCompression: config?.enableCompression ?? DEFAULT_AI_CHAT_SETTINGS.enableCompression,
-    compressAfterMessages: config?.compressAfterMessages ?? DEFAULT_AI_CHAT_SETTINGS.compressAfterMessages,
+    // 流式超时设置
+    streamTimeout: config?.streamTimeout ?? DEFAULT_AI_CHAT_SETTINGS.streamTimeout,
     // 联网搜索设置
     webSearch: config?.webSearch ?? DEFAULT_AI_CHAT_SETTINGS.webSearch,
   };
@@ -377,7 +573,7 @@ export function getAiChatSettings(pluginName: string): AiChatSettings {
   merged.maxHistoryMessages = Math.max(0, Math.floor(merged.maxHistoryMessages));
   merged.maxToolResultChars = Math.max(0, Math.floor(merged.maxToolResultChars));
   merged.maxContextChars = Math.max(5000, Math.floor(merged.maxContextChars));
-  merged.compressAfterMessages = Math.max(5, Math.min(20, Math.floor(merged.compressAfterMessages)));
+  merged.streamTimeout = Math.max(10000, Math.floor(merged.streamTimeout)); // 最小 10 秒
 
   return merged;
 }
@@ -412,8 +608,8 @@ export async function updateAiChatSettings(
     maxHistoryMessages: next.maxHistoryMessages,
     maxToolResultChars: next.maxToolResultChars,
     maxContextChars: next.maxContextChars,
-    enableCompression: next.enableCompression,
-    compressAfterMessages: next.compressAfterMessages,
+    // 流式超时设置
+    streamTimeout: next.streamTimeout,
     // 联网搜索设置
     webSearch: next.webSearch,
   };
@@ -438,12 +634,20 @@ export function getSelectedModel(settings: AiChatSettings): ProviderModel | unde
 }
 
 /** 获取当前 API 配置 */
-export function getCurrentApiConfig(settings: AiChatSettings): { apiUrl: string; apiKey: string; model: string } {
+export function getCurrentApiConfig(settings: AiChatSettings): {
+  apiUrl: string;
+  apiKey: string;
+  model: string;
+  protocol: "openai" | "anthropic";
+  anthropicApiPath?: string;
+} {
   const provider = getSelectedProvider(settings);
   return {
     apiUrl: provider?.apiUrl || "",
     apiKey: provider?.apiKey || "",
     model: settings.selectedModelId,
+    protocol: provider?.protocol === "anthropic" ? "anthropic" : "openai",
+    anthropicApiPath: typeof provider?.anthropicApiPath === "string" ? provider.anthropicApiPath : undefined,
   };
 }
 
@@ -485,6 +689,28 @@ export function validateCurrentConfig(settings: AiChatSettings): string | null {
   return null;
 }
 
+/** 检查模型是否支持 function calling (tools) */
+export function modelSupportsTools(settings: AiChatSettings, modelId?: string): boolean {
+  const targetModelId = modelId || settings.selectedModelId;
+  
+  // 查找模型
+  for (const provider of settings.providers) {
+    const model = provider.models.find(m => m.id === targetModelId);
+    if (model) {
+      // 如果模型明确配置了 capabilities，检查是否包含 "tools"
+      if (model.capabilities && model.capabilities.length > 0) {
+        return model.capabilities.includes("tools");
+      }
+      // 没有配置 capabilities，默认支持
+      // 即使模型输出 XML 格式的 <tool_call>，适配层也能解析
+      return true;
+    }
+  }
+  
+  // 未找到模型，默认支持（依赖适配层）
+  return true;
+}
+
 /** 创建新平台 */
 export function createProvider(name: string): AiProvider {
   return {
@@ -492,6 +718,8 @@ export function createProvider(name: string): AiProvider {
     name: name || "新平台",
     apiUrl: "https://api.openai.com/v1",
     apiKey: "",
+    protocol: "openai",
+    anthropicApiPath: undefined,
     enabled: true,
     models: [],
   };
@@ -515,19 +743,61 @@ export function addModelToProvider(provider: AiProvider, modelId: string, label?
 export function getModelApiConfig(
   settings: AiChatSettings,
   modelName: string,
-): { apiUrl: string; apiKey: string } {
-  // 查找包含该模型的平台
-  for (const provider of settings.providers) {
-    if (provider.models.find(m => m.id === modelName)) {
+  providerId?: string,
+): { apiUrl: string; apiKey: string; protocol: "openai" | "anthropic"; anthropicApiPath?: string } {
+  // 如果指定了 providerId，直接查找该 provider
+  if (providerId) {
+    const provider = settings.providers.find(p => p.id === providerId);
+    if (provider && provider.apiUrl?.trim() && provider.apiKey?.trim()) {
       return {
         apiUrl: provider.apiUrl,
         apiKey: provider.apiKey,
+        protocol: provider.protocol === "anthropic" ? "anthropic" : "openai",
+        anthropicApiPath: typeof provider.anthropicApiPath === "string" ? provider.anthropicApiPath : undefined,
       };
     }
   }
+
+  // 优先选择已配置 API 的提供商，避免重名模型命中未配置的内置项
+  const matchedProviders = settings.providers.filter((provider) =>
+    provider.models.some((m) => m.id === modelName)
+  );
+
+  // 1) 如果当前选中 provider 含该模型且配置完整，优先使用
+  const selectedProvider = matchedProviders.find(
+    (p) => p.id === settings.selectedProviderId,
+  );
+  if (selectedProvider && selectedProvider.apiUrl?.trim() && selectedProvider.apiKey?.trim()) {
+    return {
+      apiUrl: selectedProvider.apiUrl,
+      apiKey: selectedProvider.apiKey,
+      protocol: selectedProvider.protocol === "anthropic" ? "anthropic" : "openai",
+      anthropicApiPath: typeof selectedProvider.anthropicApiPath === "string" ? selectedProvider.anthropicApiPath : undefined,
+    };
+  }
+
+  // 2) 其它 provider 按“配置完整+启用”优先级选择
+  const scored = matchedProviders
+    .map((p) => {
+      const hasApi = !!p.apiUrl?.trim() && !!p.apiKey?.trim();
+      const enabled = p.enabled !== false;
+      const score = (hasApi ? 2 : 0) + (enabled ? 1 : 0);
+      return { p, score };
+    })
+    .sort((a, b) => b.score - a.score);
+
+  if (scored.length > 0 && scored[0].score > 0) {
+    const best = scored[0].p;
+    return {
+      apiUrl: best.apiUrl,
+      apiKey: best.apiKey,
+      protocol: best.protocol === "anthropic" ? "anthropic" : "openai",
+      anthropicApiPath: typeof best.anthropicApiPath === "string" ? best.anthropicApiPath : undefined,
+    };
+  }
   // 回退到当前选中的平台
   const current = getCurrentApiConfig(settings);
-  return { apiUrl: current.apiUrl, apiKey: current.apiKey };
+  return { apiUrl: current.apiUrl, apiKey: current.apiKey, protocol: current.protocol, anthropicApiPath: current.anthropicApiPath };
 }
 
 /** @deprecated 使用 validateCurrentConfig */

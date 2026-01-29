@@ -15,6 +15,7 @@ import MessageList from "./MessageList";
 import ChatNavigation from "./ChatNavigation";
 import type { Message } from "../services/session-service";
 import { estimateTokens } from "../utils/token-utils";
+import { withTooltip } from "../utils/orca-tooltip";
 
 const React = window.React as unknown as {
   createElement: typeof window.React.createElement;
@@ -54,28 +55,30 @@ function ToolbarButton({ icon, label, onClick, disabled }: {
   onClick: () => void;
   disabled?: boolean;
 }) {
-  return createElement(
-    "button",
-    {
-      onClick,
-      disabled,
-      title: label,
-      style: {
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        padding: "6px",
-        fontSize: "14px",
-        background: "transparent",
-        border: "1px solid var(--orca-color-border)",
-        borderRadius: "6px",
-        color: disabled ? "var(--orca-color-text-3)" : "var(--orca-color-text-2)",
-        cursor: disabled ? "not-allowed" : "pointer",
-        transition: "all 0.2s",
-        userSelect: "none",
+  return withTooltip(
+    label,
+    createElement(
+      "button",
+      {
+        onClick,
+        disabled,
+        style: {
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          padding: "6px",
+          fontSize: "14px",
+          background: "transparent",
+          border: "1px solid var(--orca-color-border)",
+          borderRadius: "6px",
+          color: disabled ? "var(--orca-color-text-3)" : "var(--orca-color-text-2)",
+          cursor: disabled ? "not-allowed" : "pointer",
+          transition: "all 0.2s",
+          userSelect: "none",
+        },
       },
-    },
-    createElement("i", { className: `ti ti-${icon}` })
+      createElement("i", { className: `ti ti-${icon}` })
+    )
   );
 }
 
@@ -110,6 +113,19 @@ export default function AiChatBlockRenderer({
   const model = propModel || repr.model || "";
   const createdAt = propCreatedAt || repr.createdAt;
   const targetBlockId = mirrorId ?? blockId;
+
+  // Debug: 检查消息中的 contextRefs
+  useEffect(() => {
+    if (messages.length > 0) {
+      const msgsWithRefs = messages.filter(m => m.contextRefs && m.contextRefs.length > 0);
+      if (msgsWithRefs.length > 0) {
+        console.log("[AiChatBlockRenderer] Messages with contextRefs:", msgsWithRefs.map(m => ({
+          role: m.role,
+          contextRefs: m.contextRefs,
+        })));
+      }
+    }
+  }, [messages]);
 
   // 备注标题状态
   const [note, setNote] = useState("");
@@ -195,6 +211,9 @@ export default function AiChatBlockRenderer({
   }, [messages, filteredMessages, expanded, showSearch]);
 
   const hasMore = messages && messages.length > 3 && !showSearch;
+  
+  // 消息数量 <= 4 时不限制高度
+  const shouldLimitHeight = messages && messages.length > 4;
 
 
   // 继续对话
@@ -582,9 +601,9 @@ export default function AiChatBlockRenderer({
         {
           ref: listRef as any,
           style: {
-            maxHeight: isFullscreen ? "100%" : (expanded || showSearch ? "800px" : "400px"),
+            maxHeight: isFullscreen ? "100%" : (shouldLimitHeight ? (expanded || showSearch ? "800px" : "400px") : "none"),
             height: isFullscreen ? "100%" : undefined,
-            overflow: "auto",
+            overflow: shouldLimitHeight ? "auto" : "visible",
           },
         },
         // 搜索无结果提示

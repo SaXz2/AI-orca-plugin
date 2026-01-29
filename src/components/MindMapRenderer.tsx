@@ -3,6 +3,8 @@
  * 思维导图渲染组件，支持拖拽平移、缩放、折叠/展开、全屏
  */
 
+import { withTooltip } from "../utils/orca-tooltip";
+
 const React = window.React as typeof import("react");
 const { createElement, useState, useEffect, useRef, useCallback } = React;
 
@@ -465,26 +467,34 @@ export default function MindMapRenderer({ blockId }: MindMapRendererProps) {
       createElement("span", { style: { fontSize: 13, fontWeight: 500 } }, "思维导图"),
       createElement("span", { style: { fontSize: 11, color: "var(--orca-color-text-3)" } }, `(${positions.length} 个节点)`),
       createElement("div", { style: { flex: 1 } }),
-      createElement("button", {
-        onClick: expandAll,
-        style: { padding: "4px 8px", fontSize: 11, border: "1px solid var(--orca-color-border)", borderRadius: 4, background: "var(--orca-color-bg-2)", color: "var(--orca-color-text-2)", cursor: "pointer" },
-        title: "全部展开",
-      }, "展开"),
-      createElement("button", {
-        onClick: collapseAll,
-        style: { padding: "4px 8px", fontSize: 11, border: "1px solid var(--orca-color-border)", borderRadius: 4, background: "var(--orca-color-bg-2)", color: "var(--orca-color-text-2)", cursor: "pointer" },
-        title: "全部折叠",
-      }, "折叠"),
-      createElement("button", {
-        onClick: resetView,
-        style: { padding: "4px 8px", fontSize: 11, border: "none", borderRadius: 4, background: "transparent", color: "var(--orca-color-text-2)", cursor: "pointer" },
-        title: "重置视图",
-      }, createElement("i", { className: "ti ti-refresh" })),
-      createElement("button", {
-        onClick: toggleFullscreen,
-        style: { padding: "4px 8px", fontSize: 11, border: "none", borderRadius: 4, background: "transparent", color: "var(--orca-color-text-2)", cursor: "pointer" },
-        title: isFullscreen ? "退出全屏" : "全屏",
-      }, createElement("i", { className: isFullscreen ? "ti ti-minimize" : "ti ti-maximize" }))
+      withTooltip(
+        "全部展开",
+        createElement("button", {
+          onClick: expandAll,
+          style: { padding: "4px 8px", fontSize: 11, border: "1px solid var(--orca-color-border)", borderRadius: 4, background: "var(--orca-color-bg-2)", color: "var(--orca-color-text-2)", cursor: "pointer" },
+        }, "展开")
+      ),
+      withTooltip(
+        "全部折叠",
+        createElement("button", {
+          onClick: collapseAll,
+          style: { padding: "4px 8px", fontSize: 11, border: "1px solid var(--orca-color-border)", borderRadius: 4, background: "var(--orca-color-bg-2)", color: "var(--orca-color-text-2)", cursor: "pointer" },
+        }, "折叠")
+      ),
+      withTooltip(
+        "重置视图",
+        createElement("button", {
+          onClick: resetView,
+          style: { padding: "4px 8px", fontSize: 11, border: "none", borderRadius: 4, background: "transparent", color: "var(--orca-color-text-2)", cursor: "pointer" },
+        }, createElement("i", { className: "ti ti-refresh" }))
+      ),
+      withTooltip(
+        isFullscreen ? "退出全屏" : "全屏",
+        createElement("button", {
+          onClick: toggleFullscreen,
+          style: { padding: "4px 8px", fontSize: 11, border: "none", borderRadius: 4, background: "transparent", color: "var(--orca-color-text-2)", cursor: "pointer" },
+        }, createElement("i", { className: isFullscreen ? "ti ti-minimize" : "ti ti-maximize" }))
+      )
     ),
     // SVG 容器
     createElement(

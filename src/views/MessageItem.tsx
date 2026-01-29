@@ -30,6 +30,7 @@ import {
 import type { Message } from "../services/session-service";
 import type { ToolCallInfo } from "../services/chat-stream-handler";
 import { formatTokenCount } from "../utils/token-utils";
+import { tooltipText, withTooltip } from "../utils/orca-tooltip";
 import { groupSourcesByDomain, normalizeWebSearchResults, type SourceGroup, type WebSearchSource } from "../utils/source-attribution";
 import {
   displaySettingsStore,
@@ -234,21 +235,23 @@ function SourceCardPanel({
           marginBottom: 8,
         },
       },
-      createElement(
-        "div",
-        {
-          style: {
-            fontSize: "12px",
-            fontWeight: 600,
-            color: "var(--orca-color-text-2)",
-            flex: 1,
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
+      withTooltip(
+        activeSource?.domain || group.label,
+        createElement(
+          "div",
+          {
+            style: {
+              fontSize: "12px",
+              fontWeight: 600,
+              color: "var(--orca-color-text-2)",
+              flex: 1,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            },
           },
-          title: activeSource?.domain || group.label,
-        },
-        activeSource?.domain || group.label
+          activeSource?.domain || group.label
+        )
       ),
       canNavigate &&
         createElement(
@@ -262,58 +265,64 @@ function SourceCardPanel({
               fontSize: "11px",
             },
           },
-          createElement(
-            "button",
-            {
-              style: {
-                background: "transparent",
-                border: "none",
-                color: "var(--orca-color-text-3)",
-                cursor: "pointer",
-                padding: 2,
+          withTooltip(
+            "Previous",
+            createElement(
+              "button",
+              {
+                style: {
+                  background: "transparent",
+                  border: "none",
+                  color: "var(--orca-color-text-3)",
+                  cursor: "pointer",
+                  padding: 2,
+                },
+                onClick: (e: any) => {
+                  e.stopPropagation();
+                  setActiveIndex((prev) => (prev - 1 + totalSources) % totalSources);
+                },
               },
-              onClick: (e: any) => {
-                e.stopPropagation();
-                setActiveIndex((prev) => (prev - 1 + totalSources) % totalSources);
-              },
-              title: "Previous",
-            },
-            createElement("i", { className: "ti ti-chevron-left", style: { fontSize: "13px" } })
+              createElement("i", { className: "ti ti-chevron-left", style: { fontSize: "13px" } })
+            )
           ),
           createElement("span", null, `${clampedIndex + 1}/${totalSources}`),
-          createElement(
-            "button",
-            {
-              style: {
-                background: "transparent",
-                border: "none",
-                color: "var(--orca-color-text-3)",
-                cursor: "pointer",
-                padding: 2,
+          withTooltip(
+            "Next",
+            createElement(
+              "button",
+              {
+                style: {
+                  background: "transparent",
+                  border: "none",
+                  color: "var(--orca-color-text-3)",
+                  cursor: "pointer",
+                  padding: 2,
+                },
+                onClick: (e: any) => {
+                  e.stopPropagation();
+                  setActiveIndex((prev) => (prev + 1) % totalSources);
+                },
               },
-              onClick: (e: any) => {
-                e.stopPropagation();
-                setActiveIndex((prev) => (prev + 1) % totalSources);
-              },
-              title: "Next",
-            },
-            createElement("i", { className: "ti ti-chevron-right", style: { fontSize: "13px" } })
+              createElement("i", { className: "ti ti-chevron-right", style: { fontSize: "13px" } })
+            )
           )
         ),
-      createElement(
-        "button",
-        {
-          style: {
-            background: "transparent",
-            border: "none",
-            color: "var(--orca-color-text-3)",
-            cursor: "pointer",
-            padding: 2,
+      withTooltip(
+        "Close",
+        createElement(
+          "button",
+          {
+            style: {
+              background: "transparent",
+              border: "none",
+              color: "var(--orca-color-text-3)",
+              cursor: "pointer",
+              padding: 2,
+            },
+            onClick: onClose,
           },
-          onClick: onClose,
-          title: "Close",
-        },
-        createElement("i", { className: "ti ti-x", style: { fontSize: "14px" } })
+          createElement("i", { className: "ti ti-x", style: { fontSize: "14px" } })
+        )
       )
     ),
     activeSource &&
@@ -355,23 +364,25 @@ function SourceCardPanel({
             },
             activeSource.title
           ),
-          createElement(
-            "button",
-            {
-              style: {
-                background: "transparent",
-                border: "none",
-                color: "var(--orca-color-text-3)",
-                cursor: "pointer",
-                padding: 2,
+          withTooltip(
+            "Open source",
+            createElement(
+              "button",
+              {
+                style: {
+                  background: "transparent",
+                  border: "none",
+                  color: "var(--orca-color-text-3)",
+                  cursor: "pointer",
+                  padding: 2,
+                },
+                onClick: (e: any) => {
+                  e.stopPropagation();
+                  openExternalUrl(activeSource.url);
+                },
               },
-              onClick: (e: any) => {
-                e.stopPropagation();
-                openExternalUrl(activeSource.url);
-              },
-              title: "Open source",
-            },
-            createElement("i", { className: "ti ti-external-link", style: { fontSize: "13px" } })
+              createElement("i", { className: "ti ti-external-link", style: { fontSize: "13px" } })
+            )
           )
         ),
         createElement(
@@ -404,7 +415,7 @@ function SourceCardPanel({
               },
             },
             activeSource.snippet
-          ),
+          )
       )
   );
 }
@@ -608,29 +619,31 @@ function ReasoningBlock({ reasoning, isStreaming }: { reasoning: string; isStrea
           onClick: (e: any) => e.stopPropagation(), // 防止触发折叠
         },
         // 复制按钮
-        createElement(
-          "button",
-          {
-            onClick: handleCopy,
-            style: {
-              padding: "4px 8px",
-              border: "none",
-              borderRadius: "4px",
-              background: "var(--orca-color-bg-4)",
-              color: "var(--orca-color-text-2)",
-              cursor: "pointer",
-              fontSize: "12px",
-              display: "flex",
-              alignItems: "center",
-              gap: "4px",
-              transition: "all 0.2s",
+        withTooltip(
+          "复制推理内容",
+          createElement(
+            "button",
+            {
+              onClick: handleCopy,
+              style: {
+                padding: "4px 8px",
+                border: "none",
+                borderRadius: "4px",
+                background: "var(--orca-color-bg-4)",
+                color: "var(--orca-color-text-2)",
+                cursor: "pointer",
+                fontSize: "12px",
+                display: "flex",
+                alignItems: "center",
+                gap: "4px",
+                transition: "all 0.2s",
+              },
             },
-            title: "复制推理内容",
-          },
-          createElement("i", {
-            className: "ti ti-copy",
-            style: { fontSize: "14px" },
-          })
+            createElement("i", {
+              className: "ti ti-copy",
+              style: { fontSize: "14px" },
+            })
+          )
         )
       ),
       createElement("i", {
@@ -679,8 +692,9 @@ function ReasoningBlock({ reasoning, isStreaming }: { reasoning: string; isStrea
                 width: "16px",
                 height: "16px",
                 borderRadius: "50%",
-                background: "var(--orca-color-primary)",
-                color: "white",
+                background: "var(--orca-color-bg-3)",
+                border: "1px solid var(--orca-color-border)",
+                color: "var(--orca-color-text-1)",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
@@ -754,6 +768,10 @@ interface MessageItemProps {
   onSuggestedReply?: (text: string) => void;
   // Callback to generate AI-powered suggestions
   onGenerateSuggestions?: () => Promise<string[]>;
+  // Skill confirm actions (inline)
+  onSkillConfirmAction?: (messageId: string, approved: boolean) => void;
+  // Skill draft actions (save/discard)
+  onSkillDraftAction?: (messageId: string, action: "save" | "discard") => void;
   // Token statistics for this message
   tokenStats?: {
     messageTokens: number;      // 当前消息的 token 数
@@ -768,37 +786,66 @@ interface MessageItemProps {
     totalOutputCost?: number;   // 总输出费用
     isLastMessage?: boolean;    // 是否是最后一条消息
   };
+  // Branch management (对话分支功能)
+  currentBranchId?: string | null;
+  onCreateBranch?: (messageId: string) => void;
+  onSwitchBranch?: (messageId: string, branchId: string) => void;
+  onDeleteBranch?: (messageId: string, branchId: string) => void;
+  onRenameBranch?: (messageId: string, branchId: string, newName: string) => void;
 }
 
 /**
  * Render a tool call with its result using ToolStatusIndicator
  * Gemini UX Review: Unified tool call + result display
+ * Enhanced: Detect error state from result content
  */
 function ToolCallWithResult({
   toolCall,
   result,
   isLoading,
+  index,
 }: {
   toolCall: ToolCallInfo;
   result?: { content: string; name: string };
   isLoading: boolean;
+  index?: number;
 }) {
-  const status = isLoading ? "loading" : result ? "success" : "loading";
+  // 检测结果是否为错误
+  const isError = result?.content?.startsWith("Error:") || 
+                  result?.content?.includes("失败") ||
+                  result?.content?.includes("拒绝");
+  const status = isLoading ? "loading" : isError ? "failed" : result ? "success" : "loading";
 
-  return createElement(ToolStatusIndicator, {
-    toolName: toolCall.function.name,
-    status,
-    args: toolCall.function.arguments,
-    result: result?.content,
-  });
+  // 计算动画延迟（stagger 效果）
+  const animationDelay = index !== undefined ? `${index * 0.1}s` : "0s";
+
+  return createElement(
+    "div",
+    {
+      style: {
+        animation: "messageFadeSlideIn 0.3s ease-out forwards",
+        animationDelay,
+        opacity: 0,
+      },
+    },
+    createElement(ToolStatusIndicator, {
+      toolName: toolCall.function.name,
+      status,
+      args: toolCall.function.arguments,
+      result: result?.content,
+      error: isError ? result?.content : undefined,
+    })
+  );
 }
 
 /**
  * CollapsibleToolCalls - 可折叠的工具调用列表
  * 流式传输时展开，完成后自动折叠
  * 
- * Enhanced features (Requirements 10.3):
+ * Enhanced features:
  * - Shows parallel progress indicator (x/y 完成)
+ * - Shows success/error counts
+ * - Displays error tools with red indicators
  */
 function CollapsibleToolCalls({
   toolCalls,
@@ -817,6 +864,27 @@ function CollapsibleToolCalls({
     return toolCalls.every((tc) => toolResults.has(tc.id));
   }, [toolCalls, toolResults]);
 
+  // 统计成功/失败数量
+  const { successCount, errorCount } = useMemo(() => {
+    if (!toolResults) return { successCount: 0, errorCount: 0 };
+    let success = 0;
+    let errors = 0;
+    toolCalls.forEach((tc) => {
+      const result = toolResults.get(tc.id);
+      if (result) {
+        const isError = result.content?.startsWith("Error:") || 
+                       result.content?.includes("失败") ||
+                       result.content?.includes("拒绝");
+        if (isError) {
+          errors++;
+        } else {
+          success++;
+        }
+      }
+    });
+    return { successCount: success, errorCount: errors };
+  }, [toolCalls, toolResults]);
+
   // 流式传输时展开，完成后自动折叠
   useEffect(() => {
     if (!isStreaming && allCompleted) {
@@ -830,8 +898,62 @@ function CollapsibleToolCalls({
     ? toolCalls.filter((tc) => toolResults.has(tc.id)).length
     : 0;
 
-  // Format progress string (Requirements 10.3)
-  const progressText = `${completedCount}/${toolCount} 完成`;
+  // 格式化进度字符串 - 显示成功/失败数
+  const progressText = allCompleted
+    ? (errorCount > 0 
+        ? `${successCount} 成功, ${errorCount} 失败`
+        : `${toolCount} 完成`)
+    : `${completedCount}/${toolCount} 完成`;
+
+  // 获取每个工具的状态信息
+  const getToolStatus = (index: number): { color: string; status: "pending" | "running" | "success" | "error" } => {
+    const tc = toolCalls[index];
+    const result = toolResults?.get(tc.id);
+    if (!result) {
+      return isStreaming 
+        ? { color: "#f59e0b", status: "running" } 
+        : { color: "#6b7280", status: "pending" };
+    }
+    const isError = result.content?.startsWith("Error:") || 
+                   result.content?.includes("失败") ||
+                   result.content?.includes("拒绝");
+    return isError 
+      ? { color: "#ef4444", status: "error" } 
+      : { color: "#22c55e", status: "success" };
+  };
+
+  // 进度条组件 - 显示每个工具的状态
+  const renderProgressBar = () => {
+    return createElement(
+      "div",
+      {
+        style: {
+          display: "flex",
+          alignItems: "center",
+          gap: "3px",
+          marginLeft: "8px",
+          padding: "2px 6px",
+          background: "var(--orca-color-bg-3)",
+          borderRadius: "10px",
+        },
+      },
+      ...toolCalls.map((_, i) => {
+        const { color, status } = getToolStatus(i);
+        return createElement("span", {
+          key: i,
+          style: {
+            width: "8px",
+            height: "8px",
+            borderRadius: "50%",
+            background: color,
+            transition: "all 0.3s ease",
+            boxShadow: status === "running" ? `0 0 6px ${color}` : "none",
+            animation: status === "running" ? "pulse 1.5s ease-in-out infinite" : "none",
+          },
+        });
+      })
+    );
+  };
 
   // 折叠状态的摘要头部
   const collapsedHeader = createElement(
@@ -841,61 +963,41 @@ function CollapsibleToolCalls({
       style: {
         display: "flex",
         alignItems: "center",
-        gap: "6px",
-        padding: "6px 10px",
-        borderRadius: "6px",
-        background: "var(--orca-color-bg-2)",
-        border: "1px solid var(--orca-color-border)",
+        gap: "8px",
+        padding: "8px 12px",
+        borderRadius: "8px",
+        background: errorCount > 0 
+          ? "rgba(239, 68, 68, 0.06)" 
+          : "var(--orca-color-bg-2)",
+        border: errorCount > 0 
+          ? "1px solid rgba(239, 68, 68, 0.15)" 
+          : "1px solid var(--orca-color-border)",
         cursor: "pointer",
-        fontSize: "12px",
+        fontSize: "13px",
         color: "var(--orca-color-text-2)",
+        transition: "all 0.2s ease",
       },
     },
+    // 工具图标
     createElement("i", {
-      className: "ti ti-tools",
-      style: { fontSize: "14px", color: "var(--orca-color-primary)" },
+      className: errorCount > 0 ? "ti ti-alert-circle" : "ti ti-tools",
+      style: { 
+        fontSize: "15px", 
+        color: errorCount > 0 ? "#ef4444" : "var(--orca-color-primary)",
+      },
     }),
-    // Progress indicator (Requirements 10.3)
+    // 状态文字
     createElement(
       "span",
-      {
-        style: {
-          display: "inline-flex",
-          alignItems: "center",
-          gap: "4px",
-        },
-      },
-      `已执行 ${progressText}`,
-      // Progress bar
-      toolCount > 1 && createElement(
-        "span",
-        {
-          style: {
-            display: "inline-flex",
-            alignItems: "center",
-            gap: "2px",
-            marginLeft: "4px",
-          },
-        },
-        ...Array.from({ length: toolCount }, (_, i) =>
-          createElement("span", {
-            key: i,
-            style: {
-              width: "6px",
-              height: "6px",
-              borderRadius: "50%",
-              background: i < completedCount
-                ? "var(--orca-color-success)"
-                : "var(--orca-color-border)",
-              transition: "background 0.3s",
-            },
-          })
-        )
-      )
+      { style: { fontWeight: 500 } },
+      `已执行 ${progressText}`
     ),
+    // 进度条
+    renderProgressBar(),
+    // 展开箭头
     createElement("i", {
       className: "ti ti-chevron-down",
-      style: { fontSize: "12px", marginLeft: "auto" },
+      style: { fontSize: "14px", marginLeft: "auto", opacity: 0.6 },
     })
   );
 
@@ -907,80 +1009,60 @@ function CollapsibleToolCalls({
       style: {
         display: "flex",
         alignItems: "center",
-        gap: "6px",
-        padding: "6px 10px",
-        marginBottom: "8px",
-        borderRadius: "6px",
-        background: "var(--orca-color-bg-2)",
-        border: "1px solid var(--orca-color-border)",
+        gap: "8px",
+        padding: "8px 12px",
+        marginBottom: "10px",
+        borderRadius: "8px",
+        background: errorCount > 0 
+          ? "rgba(239, 68, 68, 0.06)" 
+          : "var(--orca-color-bg-2)",
+        border: errorCount > 0 
+          ? "1px solid rgba(239, 68, 68, 0.15)" 
+          : "1px solid var(--orca-color-border)",
         cursor: "pointer",
-        fontSize: "12px",
+        fontSize: "13px",
         color: "var(--orca-color-text-2)",
+        transition: "all 0.2s ease",
       },
     },
+    // 动态图标
     createElement("i", {
-      className: isStreaming && !allCompleted ? "ti ti-loader" : "ti ti-tools",
+      className: isStreaming && !allCompleted 
+        ? "ti ti-loader-2" 
+        : errorCount > 0 
+          ? "ti ti-alert-circle" 
+          : "ti ti-tools",
       style: {
-        fontSize: "14px",
-        color: "var(--orca-color-primary)",
+        fontSize: "15px",
+        color: errorCount > 0 ? "#ef4444" : "var(--orca-color-primary)",
         animation: isStreaming && !allCompleted ? "spin 1s linear infinite" : undefined,
       },
     }),
-    // Progress indicator (Requirements 10.3)
+    // 状态文字
     createElement(
       "span",
-      {
-        style: {
-          display: "inline-flex",
-          alignItems: "center",
-          gap: "4px",
-        },
-      },
+      { style: { fontWeight: 500 } },
       isStreaming && !allCompleted
-        ? `工具执行中 ${progressText}`
-        : `${toolCount} 个工具调用 (${progressText})`,
-      // Progress dots for multiple tools
-      toolCount > 1 && createElement(
-        "span",
-        {
-          style: {
-            display: "inline-flex",
-            alignItems: "center",
-            gap: "2px",
-            marginLeft: "4px",
-          },
-        },
-        ...Array.from({ length: toolCount }, (_, i) =>
-          createElement("span", {
-            key: i,
-            style: {
-              width: "6px",
-              height: "6px",
-              borderRadius: "50%",
-              background: i < completedCount
-                ? "var(--orca-color-success)"
-                : isStreaming
-                  ? "var(--orca-color-warning)"
-                  : "var(--orca-color-border)",
-              transition: "background 0.3s",
-            },
-          })
-        )
-      )
+        ? `执行中 ${progressText}`
+        : `${toolCount} 个工具调用 (${progressText})`
     ),
+    // 进度条
+    renderProgressBar(),
+    // 折叠箭头
     createElement("i", {
       className: "ti ti-chevron-up",
-      style: { fontSize: "12px", marginLeft: "auto" },
+      style: { fontSize: "14px", marginLeft: "auto", opacity: 0.6 },
     })
   );
 
-  // 工具调用列表
-  const toolList = toolCalls.map((tc) =>
+  // 工具调用列表 - 使用 stagger 动画
+  const toolList = toolCalls.map((tc, index) =>
     createElement(ToolCallWithResult, {
       key: tc.id,
       toolCall: tc,
       result: toolResults?.get(tc.id),
       isLoading: isStreaming || !toolResults?.has(tc.id),
+      index,
     })
   );
 
@@ -1055,7 +1137,15 @@ export default function MessageItem({
   onExtractMemory,
   onSuggestedReply,
   onGenerateSuggestions,
+  onSkillConfirmAction,
+  onSkillDraftAction,
   tokenStats,
+  // Branch management
+  currentBranchId,
+  onCreateBranch,
+  onSwitchBranch,
+  onDeleteBranch,
+  onRenameBranch,
 }: MessageItemProps) {
   const [isHovered, setIsHovered] = useState(false);
   const [isExtractDropdownOpen, setIsExtractDropdownOpen] = useState(false);
@@ -1066,6 +1156,26 @@ export default function MessageItem({
   const isTool = message.role === "tool";
   const isAssistant = message.role === "assistant";
   const isPinned = (message as any).pinned === true;
+  const skillConfirm = message.skillConfirm;
+  const skillDraft = message.skillDraft;
+
+  const handleSkillConfirm = useCallback(
+    (approved: boolean) => {
+      if (onSkillConfirmAction) {
+        onSkillConfirmAction(message.id, approved);
+      }
+    },
+    [message.id, onSkillConfirmAction]
+  );
+
+  const handleSkillDraft = useCallback(
+    (action: "save" | "discard") => {
+      if (onSkillDraftAction) {
+        onSkillDraftAction(message.id, action);
+      }
+    },
+    [message.id, onSkillDraftAction]
+  );
 
   // Display settings from store
   const displaySettings = useSnapshot(displaySettingsStore);
@@ -1073,6 +1183,25 @@ export default function MessageItem({
 
   // Keep action bar visible when dropdown is open
   const showActionBar = isHovered || isExtractDropdownOpen;
+
+  const skillDraftStatusLabel = useMemo(() => {
+    switch (skillDraft?.status) {
+      case "generating":
+        return "生成中";
+      case "saving":
+        return "保存中";
+      case "draft":
+        return "待确认";
+      case "saved":
+        return "已保存";
+      case "discarded":
+        return "已放弃";
+      case "error":
+        return "保存失败";
+      default:
+        return "";
+    }
+  }, [skillDraft?.status]);
 
   const handleCopy = useCallback(() => {
     if (message.content) {
@@ -1328,27 +1457,28 @@ export default function MessageItem({
           },
           ...message.files.map((file, index) => {
             const isImage = file.category === "image";
-            return createElement(
-              "div",
-              {
-                key: `${file.path}-${index}`,
-                style: {
-                  borderRadius: "8px",
-                  overflow: "hidden",
-                  maxWidth: isImage ? "200px" : "180px",
-                  cursor: "pointer",
-                  border: isImage ? undefined : "1px solid var(--orca-color-border)",
-                  background: isImage ? undefined : "var(--orca-color-bg-2)",
-                  padding: isImage ? undefined : "8px 12px",
-                  display: isImage ? undefined : "flex",
-                  alignItems: isImage ? undefined : "center",
-                  gap: isImage ? undefined : "8px",
+            return withTooltip(
+              file.name,
+              createElement(
+                "div",
+                {
+                  key: `${file.path}-${index}`,
+                  style: {
+                    borderRadius: "8px",
+                    overflow: "hidden",
+                    maxWidth: isImage ? "200px" : "180px",
+                    cursor: "pointer",
+                    border: isImage ? undefined : "1px solid var(--orca-color-border)",
+                    background: isImage ? undefined : "var(--orca-color-bg-2)",
+                    padding: isImage ? undefined : "8px 12px",
+                    display: isImage ? undefined : "flex",
+                    alignItems: isImage ? undefined : "center",
+                    gap: isImage ? undefined : "8px",
+                  },
+                  onClick: () => {
+                    orca.invokeBackend("shell-open", getFileFullPath(file));
+                  },
                 },
-                onClick: () => {
-                  orca.invokeBackend("shell-open", getFileFullPath(file));
-                },
-                title: file.name,
-              },
               isImage
                 ? createElement("img", {
                     src: getFileDisplayUrl(file),
@@ -1380,6 +1510,7 @@ export default function MessageItem({
                       },
                     }, file.name),
                   ]
+              )
             );
           })
         ),
@@ -1398,34 +1529,36 @@ export default function MessageItem({
             },
           },
           ...message.images.map((img, index) =>
-            createElement(
-              "div",
-              {
-                key: `${img.path}-${index}`,
-                style: {
-                  borderRadius: "8px",
-                  overflow: "hidden",
-                  maxWidth: "200px",
-                  cursor: "pointer",
+            withTooltip(
+              img.name,
+              createElement(
+                "div",
+                {
+                  key: `${img.path}-${index}`,
+                  style: {
+                    borderRadius: "8px",
+                    overflow: "hidden",
+                    maxWidth: "200px",
+                    cursor: "pointer",
+                  },
+                  onClick: () => {
+                    orca.invokeBackend("shell-open", getFileFullPath(img));
+                  },
                 },
-                onClick: () => {
-                  orca.invokeBackend("shell-open", getFileFullPath(img));
-                },
-                title: img.name,
-              },
-              createElement("img", {
-                src: getFileDisplayUrl(img),
-                alt: img.name,
-                style: {
-                  maxWidth: "100%",
-                  maxHeight: "200px",
-                  objectFit: "contain",
-                  display: "block",
-                },
-                onError: (e: any) => {
-                  e.target.style.display = "none";
-                },
-              })
+                createElement("img", {
+                  src: getFileDisplayUrl(img),
+                  alt: img.name,
+                  style: {
+                    maxWidth: "100%",
+                    maxHeight: "200px",
+                    objectFit: "contain",
+                    display: "block",
+                  },
+                  onError: (e: any) => {
+                    e.target.style.display = "none";
+                  },
+                })
+              )
             )
           )
         ),
@@ -1446,9 +1579,11 @@ export default function MessageItem({
             marginBottom: "8px",
           },
         },
-        ...message.contextRefs.map((ref, idx) => createElement(
-          "span",
-          {
+        ...message.contextRefs.map((ref, idx) => withTooltip(
+          ref.blockId ? "点击跳转到页面" : undefined,
+          createElement(
+            "span",
+            {
             key: idx,
             style: {
               display: "inline-flex",
@@ -1472,17 +1607,252 @@ export default function MessageItem({
                 console.error("[MessageItem] Navigation failed:", error);
               }
             } : undefined,
-            title: ref.blockId ? "点击跳转到页面" : undefined,
-          },
-          createElement("i", {
-            className: ref.kind === "page" ? "ti ti-file-text" : "ti ti-hash",
-            style: { fontSize: "12px" },
-          }),
-          ref.title
+            },
+            createElement("i", {
+              className: ref.kind === "page" ? "ti ti-file-text" : "ti ti-hash",
+              style: { fontSize: "12px" },
+            }),
+            ref.title
+          )
         ))
       ),
 
+      // Skill Confirm (inline)
+      skillConfirm &&
+        createElement(
+          "div",
+          {
+            style: {
+              padding: "12px 16px",
+              background: "var(--orca-color-bg-2)",
+              borderRadius: 8,
+              border: "1px solid var(--orca-color-warning, #ffc107)",
+              marginBottom: 8,
+            },
+          },
+          createElement(
+            "div",
+            {
+              style: {
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                marginBottom: 8,
+                color: "var(--orca-color-warning, #ffc107)",
+                fontWeight: 500,
+                fontSize: 13,
+              },
+            },
+            createElement("i", { className: "ti ti-alert-triangle", style: { fontSize: 16 } }),
+            `AI 请求执行技能: ${skillConfirm.skillName}`
+          ),
+          createElement(
+            "pre",
+            {
+              style: {
+                margin: "8px 0",
+                padding: 8,
+                background: "var(--orca-color-bg-1)",
+                borderRadius: 4,
+                fontSize: 11,
+                fontFamily: "monospace",
+                color: "var(--orca-color-text-2)",
+                whiteSpace: "pre-wrap",
+                wordBreak: "break-all",
+                maxHeight: 120,
+                overflow: "auto",
+              },
+            },
+            skillConfirm.steps.join("\n")
+          ),
+          skillConfirm.status === "pending"
+            ? createElement(
+                "div",
+                {
+                  style: {
+                    display: "flex",
+                    gap: 8,
+                    justifyContent: "flex-end",
+                    marginTop: 8,
+                  },
+                },
+                createElement(
+                  "button",
+                  {
+                    onClick: () => handleSkillConfirm(false),
+                    style: {
+                      padding: "6px 12px",
+                      borderRadius: 4,
+                      border: "1px solid var(--orca-color-border)",
+                      background: "var(--orca-color-bg-1)",
+                      color: "var(--orca-color-text-2)",
+                      cursor: "pointer",
+                      fontSize: 12,
+                    },
+                  },
+                  "拒绝"
+                ),
+                createElement(
+                  "button",
+                  {
+                    onClick: () => handleSkillConfirm(true),
+                    style: {
+                      padding: "6px 12px",
+                      borderRadius: 4,
+                      border: "1px solid var(--orca-color-border)",
+                      background: "var(--orca-color-bg-3)",
+                      color: "var(--orca-color-text-1)",
+                      cursor: "pointer",
+                      fontSize: 12,
+                    },
+                  },
+                  "允许"
+                )
+              )
+            : createElement(
+                "div",
+                {
+                  style: {
+                    display: "flex",
+                    justifyContent: "flex-end",
+                    marginTop: 8,
+                    fontSize: 12,
+                    color:
+                      skillConfirm.status === "approved"
+                        ? "var(--orca-color-success)"
+                        : "var(--orca-color-danger)",
+                  },
+                },
+                skillConfirm.status === "approved" ? "已允许" : "已拒绝"
+              )
+        ),
+
+      // Skill Draft (inline)
+      skillDraft &&
+        createElement(
+          "div",
+          {
+            style: {
+              padding: "12px 16px",
+              background: "var(--orca-color-bg-2)",
+              borderRadius: 8,
+              border: "1px solid var(--orca-color-border)",
+              marginBottom: 8,
+            },
+          },
+          createElement(
+            "div",
+            {
+              style: {
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                marginBottom: 8,
+                fontWeight: 500,
+                fontSize: 13,
+                color: "var(--orca-color-text-1)",
+              },
+            },
+            createElement(
+              "div",
+              { style: { display: "flex", alignItems: "center", gap: 8 } },
+              createElement("i", { className: "ti ti-wand", style: { fontSize: 16 } }),
+              "技能草稿"
+            ),
+            skillDraftStatusLabel &&
+              createElement(
+                "span",
+                {
+                  style: {
+                    fontSize: 11,
+                    padding: "2px 6px",
+                    borderRadius: 10,
+                    background: "var(--orca-color-bg-1)",
+                    color: "var(--orca-color-text-3)",
+                  },
+                },
+                skillDraftStatusLabel
+              )
+          ),
+          createElement(
+            "pre",
+            {
+              style: {
+                margin: "8px 0",
+                padding: 8,
+                background: "var(--orca-color-bg-1)",
+                borderRadius: 4,
+                fontSize: 11,
+                fontFamily: "monospace",
+                color: "var(--orca-color-text-2)",
+                whiteSpace: "pre-wrap",
+                wordBreak: "break-word",
+                maxHeight: 260,
+                overflow: "auto",
+              },
+            },
+            message.content || ""
+          ),
+          skillDraft.error &&
+            createElement(
+              "div",
+              { style: { color: "var(--orca-color-danger)", fontSize: 12, marginTop: 6 } },
+              skillDraft.error
+            ),
+          skillDraft.status === "saved" &&
+            createElement(
+              "div",
+              { style: { color: "var(--orca-color-success)", fontSize: 12, marginTop: 6 } },
+              skillDraft.folderName ? `已保存：${skillDraft.folderName}` : "已保存"
+            ),
+          (skillDraft.status === "draft" || skillDraft.status === "error") &&
+            createElement(
+              "div",
+              {
+                style: {
+                  display: "flex",
+                  gap: 8,
+                  justifyContent: "flex-end",
+                  marginTop: 8,
+                },
+              },
+              createElement(
+                "button",
+                {
+                  onClick: () => handleSkillDraft("discard"),
+                  style: {
+                    padding: "6px 12px",
+                    borderRadius: 4,
+                    border: "1px solid var(--orca-color-border)",
+                    background: "var(--orca-color-bg-1)",
+                    color: "var(--orca-color-text-2)",
+                    cursor: "pointer",
+                    fontSize: 12,
+                  },
+                },
+                "放弃"
+              ),
+              createElement(
+                "button",
+                {
+                  onClick: () => handleSkillDraft("save"),
+                  style: {
+                    padding: "6px 12px",
+                    borderRadius: 4,
+                    border: "1px solid var(--orca-color-border)",
+                    background: "var(--orca-color-bg-3)",
+                    color: "var(--orca-color-text-1)",
+                    cursor: "pointer",
+                    fontSize: 12,
+                  },
+                },
+                "保存"
+              )
+            )
+        ),
+
       // Content - 使用增强版Markdown组件支持图片和引用
+      !skillDraft &&
         createElement(EnhancedMarkdownMessage, { 
           content: message.content || "", 
           role: message.role,
@@ -1546,6 +1916,70 @@ export default function MessageItem({
           onGenerate: onGenerateSuggestions,
         }),
 
+      // Branch Indicator (显示该消息的分支)
+      message.branches &&
+        message.branches.length > 0 &&
+        createElement(
+          "div",
+          {
+            style: {
+              display: "flex",
+              alignItems: "center",
+              gap: "8px",
+              marginTop: "10px",
+              padding: "8px 12px",
+              background: "rgba(99, 102, 241, 0.08)",
+              border: "1px solid rgba(99, 102, 241, 0.2)",
+              borderRadius: "8px",
+              fontSize: "12px",
+            },
+          },
+          // 分支图标
+          createElement("i", {
+            className: "ti ti-git-branch",
+            style: { fontSize: "14px", color: "#6366f1" },
+          }),
+          // 分支标签
+          createElement(
+            "span",
+            { style: { color: "var(--orca-color-text-2)", fontWeight: 500 } },
+            `${message.branches.length} 个分支:`
+          ),
+          // 分支列表
+          ...message.branches.map((branch, idx) =>
+            createElement(
+              "button",
+              {
+                key: branch.id,
+                onClick: (e: any) => {
+                  e.stopPropagation();
+                  if (onSwitchBranch) {
+                    onSwitchBranch(message.id, branch.id);
+                  }
+                },
+                style: {
+                  padding: "4px 10px",
+                  borderRadius: "4px",
+                  border: currentBranchId === branch.id 
+                    ? "1px solid #6366f1" 
+                    : "1px solid var(--orca-color-border)",
+                  background: currentBranchId === branch.id 
+                    ? "rgba(99, 102, 241, 0.15)" 
+                    : "var(--orca-color-bg-2)",
+                  color: currentBranchId === branch.id 
+                    ? "#6366f1" 
+                    : "var(--orca-color-text-2)",
+                  cursor: "pointer",
+                  fontSize: "11px",
+                  fontWeight: currentBranchId === branch.id ? 600 : 400,
+                  transition: "all 0.2s ease",
+                },
+              },
+              branch.name || `分支 ${idx + 1}`
+            )
+          )
+        ),
+
       // Message Time and Token Stats
       (message.createdAt || tokenStats || (isAssistant && message.model)) &&
         createElement(
@@ -1562,42 +1996,44 @@ export default function MessageItem({
           // 时间 (controlled by showTimestamps setting)
           showTimestamp && message.createdAt && formatMessageTime(message.createdAt),
           // Token 统计
-          tokenStats && createElement(
-            "span",
-            {
-              style: {
-                display: "inline-flex",
-                alignItems: "center",
-                gap: "4px",
-                fontSize: "11px",
-                color: "var(--orca-color-text-3)",
-                background: "var(--orca-color-bg-3)",
-                padding: "2px 6px",
-                borderRadius: "4px",
-              },
-              title: `本条消息: ${tokenStats.messageTokens} tokens${tokenStats.cost ? ` (${tokenStats.currencySymbol || '$'}${tokenStats.cost.toFixed(4)})` : ''}\n累计上下文: ${tokenStats.cumulativeTokens} tokens${tokenStats.cumulativeCost ? ` (${tokenStats.currencySymbol || '$'}${tokenStats.cumulativeCost.toFixed(4)})` : ''}`,
-            },
-            createElement("i", {
-              className: "ti ti-chart-bar",
-              style: { fontSize: "10px" },
-            }),
-            `${formatTokenCount(tokenStats.messageTokens)}`,
+          tokenStats && withTooltip(
+            tooltipText(`本条消息: ${tokenStats.messageTokens} tokens${tokenStats.cost ? ` (${tokenStats.currencySymbol || '$'}${tokenStats.cost.toFixed(4)})` : ''}\n累计上下文: ${tokenStats.cumulativeTokens} tokens${tokenStats.cumulativeCost ? ` (${tokenStats.currencySymbol || '$'}${tokenStats.cumulativeCost.toFixed(4)})` : ''}`),
             createElement(
               "span",
-              { style: { opacity: 0.6 } },
-              `/ ${formatTokenCount(tokenStats.cumulativeTokens)}`
-            ),
-            // 显示本条消息费用（如果有）
-            tokenStats.cost !== undefined && tokenStats.cost > 0 && createElement(
-              "span",
-              { 
-                style: { 
-                  marginLeft: "4px",
-                  color: "var(--orca-color-warning)",
-                  fontWeight: 500,
-                } 
+              {
+                style: {
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "4px",
+                  fontSize: "11px",
+                  color: "var(--orca-color-text-3)",
+                  background: "var(--orca-color-bg-3)",
+                  padding: "2px 6px",
+                  borderRadius: "4px",
+                },
               },
-              `${tokenStats.currencySymbol || '$'}${tokenStats.cost < 0.001 ? tokenStats.cost.toFixed(5) : tokenStats.cost < 0.01 ? tokenStats.cost.toFixed(4) : tokenStats.cost.toFixed(3)}`
+              createElement("i", {
+                className: "ti ti-chart-bar",
+                style: { fontSize: "10px" },
+              }),
+              `${formatTokenCount(tokenStats.messageTokens)}`,
+              createElement(
+                "span",
+                { style: { opacity: 0.6 } },
+                `/ ${formatTokenCount(tokenStats.cumulativeTokens)}`
+              ),
+              // 显示本条消息费用（如果有）
+              tokenStats.cost !== undefined && tokenStats.cost > 0 && createElement(
+                "span",
+                { 
+                  style: { 
+                    marginLeft: "4px",
+                    color: "var(--orca-color-warning)",
+                    fontWeight: 500,
+                  } 
+                },
+                `${tokenStats.currencySymbol || '$'}${tokenStats.cost < 0.001 ? tokenStats.cost.toFixed(5) : tokenStats.cost < 0.01 ? tokenStats.cost.toFixed(4) : tokenStats.cost.toFixed(3)}`
+              )
             )
           ),
           // 模型名称（仅 AI 消息，显示在最右边）
@@ -1687,83 +2123,99 @@ export default function MessageItem({
           },
         }),
 
-      // Action Bar
-      createElement(
+      // Action Bar - with slide-in animation
+      showActionBar && createElement(
         "div",
         {
+          className: "action-bar-enter",
           style: {
             ...actionBarStyle,
-            opacity: showActionBar ? 1 : 0,
-            pointerEvents: showActionBar ? "auto" : "none",
+            opacity: 1,
+            pointerEvents: "auto",
           },
         },
         // Copy Button
-        createElement(
-          "button",
-          {
-            style: actionButtonStyle,
-            onClick: handleCopy,
-            title: "Copy message",
-          },
-          createElement("i", { className: "ti ti-copy" })
+        withTooltip(
+          "Copy message",
+          createElement(
+            "button",
+            {
+              className: "action-bar-btn",
+              style: actionButtonStyle,
+              onClick: handleCopy,
+            },
+            createElement("i", { className: "ti ti-copy" })
+          )
         ),
         // Pin Button (标记重要，压缩时保留)
         onTogglePinned &&
           !isStreaming &&
-          createElement(
-            "button",
-            {
-              style: {
-                ...actionButtonStyle,
-                color: isPinned ? "var(--orca-color-warning)" : undefined,
+          withTooltip(
+            isPinned ? "取消重要标记" : "标记为重要（压缩时保留）",
+            createElement(
+              "button",
+              {
+                className: "action-bar-btn",
+                style: {
+                  ...actionButtonStyle,
+                  color: isPinned ? "var(--orca-color-warning)" : undefined,
+                },
+                onClick: onTogglePinned,
               },
-              onClick: onTogglePinned,
-              title: isPinned ? "取消重要标记" : "标记为重要（压缩时保留）",
-            },
-            createElement("i", { className: isPinned ? "ti ti-pin-filled" : "ti ti-pin" })
+              createElement("i", { className: isPinned ? "ti ti-pin-filled" : "ti ti-pin" })
+            )
           ),
         // Delete Button
         onDelete &&
           !isStreaming &&
-          createElement(
-            "button",
-            {
-              style: actionButtonStyle,
-              onClick: onDelete,
-              title: "删除此消息",
-            },
-            createElement("i", { className: "ti ti-trash" })
+          withTooltip(
+            "删除此消息",
+            createElement(
+              "button",
+              {
+                className: "action-bar-btn",
+                style: actionButtonStyle,
+                onClick: onDelete,
+              },
+              createElement("i", { className: "ti ti-trash" })
+            )
           ),
         // Rollback Button (回档到此消息之前)
         onRollback &&
           !isStreaming &&
-          createElement(
-            "button",
-            {
-              style: actionButtonStyle,
-              onClick: onRollback,
-              title: "回档到此处（删除此消息及之后的所有消息）",
-            },
-            createElement("i", { className: "ti ti-arrow-back-up" })
+          withTooltip(
+            "回档到此处（删除此消息及之后的所有消息）",
+            createElement(
+              "button",
+              {
+                className: "action-bar-btn",
+                style: actionButtonStyle,
+                onClick: onRollback,
+              },
+              createElement("i", { className: "ti ti-arrow-back-up" })
+            )
           ),
         // Save to Journal Button (保存单条消息到日记)
         !isStreaming &&
           message.content &&
-          createElement(
-            "button",
-            {
-              style: actionButtonStyle,
-              onClick: async () => {
-                const result = await saveSingleMessageToJournal(message, message.model);
-                if (result.success) {
-                  orca.notify("success", result.message);
-                } else {
-                  orca.notify("error", result.message);
-                }
+          withTooltip(
+            "保存到日记",
+            createElement(
+              "button",
+              {
+                className: "action-bar-btn",
+                style: actionButtonStyle,
+                onClick: async () => {
+                  const result = await saveSingleMessageToJournal(message, message.model);
+                  if (result.success) {
+                    orca.notify("success", result.message);
+                  } else {
+                    orca.notify("error", result.message);
+                  }
+                },
               },
-              title: "保存到日记",
-            },
-            createElement("i", { className: "ti ti-notebook" })
+              createElement("i", { className: "ti ti-notebook" })
+            )
           ),
         // Extract Memory Button (Only for AI messages with content)
         isAssistant &&
@@ -1780,14 +2232,33 @@ export default function MessageItem({
         !isUser &&
           isLastAiMessage &&
           onRegenerate &&
-          createElement(
-            "button",
-            {
-              style: actionButtonStyle,
-              onClick: onRegenerate,
-              title: "Regenerate response",
-            },
-            createElement("i", { className: "ti ti-refresh" })
+          withTooltip(
+            "Regenerate response",
+            createElement(
+              "button",
+              {
+                className: "action-bar-btn",
+                style: actionButtonStyle,
+                onClick: onRegenerate,
+              },
+              createElement("i", { className: "ti ti-refresh" })
+            )
+          ),
+        // Branch Button (从此处创建分支 - 仅 AI 消息)
+        isAssistant &&
+          !isStreaming &&
+          onCreateBranch &&
+          withTooltip(
+            "从此处创建分支",
+            createElement(
+              "button",
+              {
+                className: "action-bar-btn",
+                style: actionButtonStyle,
+                onClick: () => onCreateBranch(message.id),
+              },
+              createElement("i", { className: "ti ti-git-branch" })
+            )
           )
       )
     )

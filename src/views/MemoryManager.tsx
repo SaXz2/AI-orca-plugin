@@ -14,6 +14,7 @@ import {
 import { UserManagementCard } from "./memory-manager";
 import { UserPortraitCard } from "./memory-manager";
 import { MemoryCard } from "./memory-manager";
+import { withTooltip } from "../utils/orca-tooltip";
 import {
   modalOverlayStyle,
   modalStyle,
@@ -89,8 +90,9 @@ const betaBadgeStyle: React.CSSProperties = {
   fontSize: "10px",
   padding: "2px 6px",
   borderRadius: "4px",
-  background: "var(--orca-color-primary, #007bff)",
-  color: "#fff",
+  background: "var(--orca-color-bg-3)",
+  border: "1px solid var(--orca-color-border)",
+  color: "var(--orca-color-text-2)",
   fontWeight: 500,
 };
 
@@ -687,14 +689,16 @@ export default function MemoryManager({ onBack }: MemoryManagerProps) {
     return createElement(
       "div",
       { style: headerStyle },
-      createElement(
-        Button,
-        {
-          variant: "plain",
-          onClick: onBack,
-          title: "返回",
-        },
-        createElement("i", { className: "ti ti-arrow-left" })
+      withTooltip(
+        "返回",
+        createElement(
+          Button,
+          {
+            variant: "plain",
+            onClick: onBack,
+          },
+          createElement("i", { className: "ti ti-arrow-left" })
+        )
       ),
       createElement(
         "div",
@@ -794,14 +798,16 @@ export default function MemoryManager({ onBack }: MemoryManagerProps) {
               if (e.key === "Enter") handleCustomEmojiSubmit();
             },
           }),
-          createElement(
-            "button",
-            {
-              style: { ...iconButtonStyle, color: "var(--orca-color-primary)" },
-              onClick: handleCustomEmojiSubmit,
-              title: "确认",
-            },
-            createElement("i", { className: "ti ti-check" })
+          withTooltip(
+            "确认",
+            createElement(
+              "button",
+              {
+                style: { ...iconButtonStyle, color: "var(--orca-color-primary)" },
+                onClick: handleCustomEmojiSubmit,
+              },
+              createElement("i", { className: "ti ti-check" })
+            )
           )
         )
       )
@@ -831,25 +837,27 @@ export default function MemoryManager({ onBack }: MemoryManagerProps) {
           createElement(
             "div",
             { style: { display: "flex", alignItems: "center", gap: "12px" } },
-            createElement(
-              "button",
-              {
-                style: {
-                  width: "48px",
-                  height: "48px",
-                  borderRadius: "8px",
-                  border: "1px solid var(--orca-color-border)",
-                  background: "var(--orca-color-bg-2)",
-                  fontSize: "24px",
-                  cursor: "pointer",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
+            withTooltip(
+              "选择 Emoji",
+              createElement(
+                "button",
+                {
+                  style: {
+                    width: "48px",
+                    height: "48px",
+                    borderRadius: "8px",
+                    border: "1px solid var(--orca-color-border)",
+                    background: "var(--orca-color-bg-2)",
+                    fontSize: "24px",
+                    cursor: "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                  },
+                  onClick: () => setShowTagEmojiPicker(!showTagEmojiPicker),
                 },
-                onClick: () => setShowTagEmojiPicker(!showTagEmojiPicker),
-                title: "选择 Emoji",
-              },
-              tagEditorEmoji || "😀"
+                tagEditorEmoji || "😊"
+              )
             ),
             showTagEmojiPicker && createElement(
               "div",
@@ -924,9 +932,9 @@ export default function MemoryManager({ onBack }: MemoryManagerProps) {
             {
               style: {
                 ...cancelButtonStyle,
-                background: "var(--orca-color-primary, #007bff)",
-                color: "#fff",
-                border: "none",
+                background: tagEditorLabel.trim() ? "var(--orca-color-bg-3)" : "var(--orca-color-bg-2)",
+                color: "var(--orca-color-text-1)",
+                border: "1px solid var(--orca-color-border)",
                 opacity: tagEditorLabel.trim() ? 1 : 0.5,
                 cursor: tagEditorLabel.trim() ? "pointer" : "not-allowed",
               },

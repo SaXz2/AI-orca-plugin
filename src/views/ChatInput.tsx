@@ -8,6 +8,7 @@ import type { AiChatSettings, CurrencyType } from "../settings/ai-chat-settings"
 import type { FileRef, VideoProcessMode } from "../services/session-service";
 import { contextStore, addPageById, clearHighPriorityContexts } from "../store/context-store";
 import { estimateTokens, formatTokenCount, estimateCost, formatCost } from "../utils/token-utils";
+import { tooltipText, withTooltip } from "../utils/orca-tooltip";
 import {
   uploadFile,
   getFileDisplayUrl,
@@ -24,9 +25,14 @@ import { MultiModelToggleButton } from "../components/MultiModelSelector";
 import { multiModelStore } from "../store/multi-model-store";
 import ToolPanel from "../components/ToolPanel";
 import { loadToolSettings, toolStore, toggleWebSearch, toggleAgenticRAG, toggleScriptAnalysis } from "../store/tool-store";
+import { getAllCommandsInfo } from "../services/commands-loader";
+import { listSkills } from "../services/skills-manager";
+import type { SkillRef } from "../services/skills-manager";
+import { recommendSkills, type SkillRecommendation, getSkillSummary } from "../services/skill-recommender";
 
 const React = window.React as unknown as {
   createElement: typeof window.React.createElement;
+  Fragment: typeof window.React.Fragment;
   useRef: <T>(value: T) => { current: T };
   useState: <T>(initial: T | (() => T)) => [T, (next: T | ((prev: T) => T)) => void];
   useCallback: <T extends (...args: any[]) => any>(fn: T, deps: any[]) => T;
@@ -70,6 +76,8 @@ const SLASH_COMMANDS: SlashCommandDef[] = [
   { command: "/localgraph", description: "显示页面的链接关系图谱", icon: "ti ti-share", category: "visualization" },
   { command: "/mindmap", description: "显示块及子块的思维导图", icon: "ti ti-binary-tree", category: "visualization" },
   { command: "/diagram", description: "生成流程图或示意图", icon: "ti ti-chart-dots", category: "visualization" },
+  // Skill 技能
+  { command: "/skill", description: "让 AI 生成技能草稿（可附加需求）", icon: "ti ti-wand", category: "skill" },
   // Todoist 任务管理类
   { command: "/todoist", description: "查看今日 Todoist 任务", icon: "ti ti-checkbox", category: "todoist" },
   { command: "/todoist-all", description: "查看全部未完成任务", icon: "ti ti-list-check", category: "todoist" },
@@ -84,12 +92,14 @@ const CATEGORY_LABELS: Record<SlashCommandCategory, string> = {
   style: "回答风格",
   visualization: "可视化",
   todoist: "Todoist 任务",
+  skill: "技能",
+  command: "命令",
 };
 
 const { useSnapshot } = (window as any).Valtio as {
   useSnapshot: <T extends object>(obj: T) => T;
 };
-const { Button } = orca.components || {};
+const { Button, ContextMenu } = orca.components || {};
 
 type Props = {
   onSend: (message: string, files?: FileRef[], clearContext?: boolean) => void | Promise<void>;
@@ -112,8 +122,56 @@ type Props = {
 // Enhanced Styles
 const inputContainerStyle: React.CSSProperties = {
   padding: "16px",
-  borderTop: "1px solid var(--orca-color-border)",
+  borderTop: "none",
+  background: "transparent",
+};
+
+const TOOLBAR_HIDE_BREAKPOINTS = {
+  token: 520,
+  script: 480,
+  rag: 440,
+  web: 400,
+  multi: 360,
+  injection: 320,
+  mode: 280,
+  clear: 240,
+};
+
+const overflowMenuStyle: React.CSSProperties = {
+  minWidth: 240,
+  padding: "10px",
   background: "var(--orca-color-bg-1)",
+  display: "flex",
+  flexDirection: "column",
+  gap: "10px",
+  maxHeight: "60vh",
+  overflowY: "auto",
+};
+
+const overflowSectionTitleStyle: React.CSSProperties = {
+  fontSize: "11px",
+  fontWeight: 600,
+  color: "var(--orca-color-text-3)",
+};
+
+const overflowItemStyle: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "space-between",
+  gap: "10px",
+  padding: "6px 8px",
+  borderRadius: "6px",
+  background: "var(--orca-color-bg-2)",
+};
+
+const overflowItemLabelStyle: React.CSSProperties = {
+  fontSize: "12px",
+  color: "var(--orca-color-text-2)",
+};
+
+const overflowToggleButtonStyle: React.CSSProperties = {
+  padding: "4px",
+  borderRadius: "4px",
 };
 
 const textareaWrapperStyle = (focused: boolean, isDragging: boolean = false): React.CSSProperties => ({
@@ -156,15 +214,31 @@ export default function ChatInput({
   const [isFocused, setIsFocused] = useState(false);
   const [slashMenuOpen, setSlashMenuOpen] = useState(false);
   const [slashMenuIndex, setSlashMenuIndex] = useState(0);
+  const slashMenuRef = useRef<HTMLDivElement | null>(null);
+
+  // Skill 菜单状态
+  const [availableSkills, setAvailableSkills] = useState<SkillRef[]>([]);
+  const [skillMenuOpen, setSkillMenuOpen] = useState(false);
+  const [skillMenuIndex, setSkillMenuIndex] = useState(0);
+  const skillMenuRef = useRef<HTMLDivElement | null>(null);
+  
+  // Skill 推荐状态
+  const [skillRecommendations, setSkillRecommendations] = useState<SkillRecommendation[]>([]);
+  const [showSkillRecommendations, setShowSkillRecommendations] = useState(false);
+  const recommendationTimeoutRef = useRef<any>(null);
+  
   const [pendingFiles, setPendingFiles] = useState<FileRef[]>([]);
   const [isUploading, setIsUploading] = useState(false);
   const [clearContextPending, setClearContextPending] = useState(false);
   const [isSending, setIsSending] = useState(false);
+  const [sendSuccess, setSendSuccess] = useState(false);
   const [isDraggingFile, setIsDraggingFile] = useState(false);
+  const [toolbarWidth, setToolbarWidth] = useState(0);
+  const [availableCommands, setAvailableCommands] = useState<{ name: string; description: string }[]>([]);
   const addContextBtnRef = useRef<HTMLElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const slashMenuRef = useRef<HTMLDivElement | null>(null);
+  const leftToolbarRef = useRef<HTMLDivElement | null>(null);
   const contextSnap = useSnapshot(contextStore);
   const toolSnap = useSnapshot(toolStore);
 
@@ -211,18 +285,68 @@ export default function ChatInput({
     return { inputTokens, outputTokens, cost };
   }, [text, selectedModelInfo]);
 
+  const overflowFlags = useMemo(() => {
+    const width = toolbarWidth || 9999;
+    const hideScript = width < TOOLBAR_HIDE_BREAKPOINTS.script;
+    const hideRag = width < TOOLBAR_HIDE_BREAKPOINTS.rag;
+    const hideWeb = width < TOOLBAR_HIDE_BREAKPOINTS.web;
+    const hideMulti = width < TOOLBAR_HIDE_BREAKPOINTS.multi;
+    const hideInjection = width < TOOLBAR_HIDE_BREAKPOINTS.injection;
+    const hideMode = width < TOOLBAR_HIDE_BREAKPOINTS.mode;
+    const hideClear = width < TOOLBAR_HIDE_BREAKPOINTS.clear;
+    const hasOverflow = hideScript || hideRag || hideWeb || hideMulti || hideInjection || hideMode || hideClear;
+
+    return {
+      hideScript,
+      hideRag,
+      hideWeb,
+      hideMulti,
+      hideInjection,
+      hideMode,
+      hideClear,
+      hasOverflow,
+    };
+  }, [toolbarWidth]);
+
+  const showModeSection = overflowFlags.hideMulti || overflowFlags.hideInjection || overflowFlags.hideMode;
+  const showToolSection = overflowFlags.hideWeb || overflowFlags.hideRag || overflowFlags.hideScript;
+  const showTokenIndicator = tokenEstimate.inputTokens > 0;
+
   // 检测是否显示斜杠命令菜单 - 使用模糊匹配
   const filteredCommands = useMemo(() => {
     if (!text.startsWith("/")) return [];
     const query = text.slice(1).toLowerCase(); // 移除开头的 /
     if (query.includes(" ")) return []; // 如果有空格，不显示菜单
     
+    // 合并内置命令和文件命令
+    const allCommands: SlashCommandDef[] = [
+      ...SLASH_COMMANDS,
+      ...availableCommands.map(cmd => ({
+        command: `/${cmd.name}`,
+        description: cmd.description || "自定义命令",
+        icon: "ti ti-file-text",
+        category: "command" as SlashCommandCategory,
+      }))
+    ];
+    
     // 使用模糊匹配过滤命令
-    return SLASH_COMMANDS.filter(cmd => {
+    return allCommands.filter(cmd => {
       const cmdName = cmd.command.slice(1); // 移除命令开头的 /
       return fuzzyMatch(query, cmdName);
     });
-  }, [text]);
+  }, [text, availableCommands]);
+
+  // 检测是否显示 Skill 菜单 - 使用模糊匹配
+  const filteredSkills = useMemo(() => {
+    if (!text.startsWith("#")) return [];
+    const query = text.slice(1).toLowerCase(); // 移除开头的 #
+    if (query.includes(" ")) return []; // 如果有空格，不显示菜单
+    
+    // 使用模糊匹配过滤 Skills
+    return availableSkills.filter(skill => 
+      fuzzyMatch(query, skill.id)
+    );
+  }, [text, availableSkills]);
 
   // 获取最近使用的命令
   const recentCommands = useMemo(() => {
@@ -245,7 +369,7 @@ export default function ChatInput({
     items.push(...recentCmds);
     
     const grouped = groupCommandsByCategory(filteredCommands as SlashCommandType[]);
-    const categories: SlashCommandCategory[] = ["format", "style", "visualization", "todoist"];
+    const categories: SlashCommandCategory[] = ["format", "style", "visualization", "skill", "command", "todoist"];
     for (const category of categories) {
       const cmds = grouped[category];
       for (const cmd of cmds) {
@@ -267,6 +391,48 @@ export default function ChatInput({
     }
   }, [filteredCommands, text]);
 
+  // Skill 菜单显示逻辑
+  useEffect(() => {
+    if (filteredSkills.length > 0 && text.startsWith("#") && !text.includes(" ")) {
+      setSkillMenuOpen(true);
+      setSkillMenuIndex(0);
+    } else {
+      setSkillMenuOpen(false);
+    }
+  }, [filteredSkills, text]);
+
+  // Skill 自动推荐逻辑（防抖动）
+  useEffect(() => {
+    // 清除之前的定时器
+    if (recommendationTimeoutRef.current) {
+      clearTimeout(recommendationTimeoutRef.current);
+    }
+    
+    // 如果输入为空或以 / 或 # 开头，不显示推荐
+    if (!text || text.startsWith("/") || text.startsWith("#") || text.length < 4) {
+      setSkillRecommendations([]);
+      setShowSkillRecommendations(false);
+      return;
+    }
+    
+    // 防抖动：500ms 后才进行推荐
+    recommendationTimeoutRef.current = setTimeout(async () => {
+      try {
+        const recommendations = await recommendSkills(text, 2, 0.2);
+        setSkillRecommendations(recommendations);
+        setShowSkillRecommendations(recommendations.length > 0);
+      } catch (err) {
+        console.error('[ChatInput] Failed to get skill recommendations:', err);
+      }
+    }, 500);
+    
+    return () => {
+      if (recommendationTimeoutRef.current) {
+        clearTimeout(recommendationTimeoutRef.current);
+      }
+    };
+  }, [text]);
+
   // 斜杠菜单键盘导航时自动滚动到选中项
   useEffect(() => {
     if (!slashMenuOpen || !slashMenuRef.current) return;
@@ -277,10 +443,45 @@ export default function ChatInput({
     }
   }, [slashMenuIndex, slashMenuOpen]);
 
+  // Skill 菜单键盘导航时自动滚动到选中项
+  useEffect(() => {
+    if (!skillMenuOpen || !skillMenuRef.current) return;
+    const container = skillMenuRef.current;
+    const selectedItem = container.querySelector(`[data-skill-index="${skillMenuIndex}"]`) as HTMLElement;
+    if (selectedItem) {
+      selectedItem.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    }
+  }, [skillMenuIndex, skillMenuOpen]);
+
   // Load chat mode from storage on mount (Requirements: 5.2)
   useEffect(() => {
-    loadFromStorage();
-    loadToolSettings();
+    // Load settings asynchronously
+    Promise.all([
+      loadFromStorage(),
+      loadToolSettings(),
+      getAllCommandsInfo(),
+      listSkills()
+    ]).then(([, , commands, skills]) => {
+      setAvailableCommands(commands);
+      setAvailableSkills(skills);
+    }).catch(error => {
+      console.error('[ChatInput] Failed to load initial settings:', error);
+    });
+  }, []);
+
+  useEffect(() => {
+    const toolbarEl = leftToolbarRef.current;
+    if (!toolbarEl || typeof ResizeObserver === "undefined") return;
+
+    const observer = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect?.width ?? 0;
+      if (width > 0) {
+        setToolbarWidth(width);
+      }
+    });
+
+    observer.observe(toolbarEl);
+    return () => observer.disconnect();
   }, []);
 
   const canSend = (text.trim().length > 0 || pendingFiles.length > 0) && !disabled && !isSending;
@@ -301,6 +502,9 @@ export default function ChatInput({
       if (textareaRef.current) {
         textareaRef.current.value = "";
       }
+      // 显示发送成功动画
+      setSendSuccess(true);
+      setTimeout(() => setSendSuccess(false), 800);
     } finally {
       setIsSending(false);
     }
@@ -321,6 +525,37 @@ export default function ChatInput({
 
   const handleKeyDown = useCallback(
     (e: any) => {
+      // Skill 菜单键盘导航
+      if (skillMenuOpen && filteredSkills.length > 0) {
+        if (e.key === "ArrowDown") {
+          e.preventDefault();
+          setSkillMenuIndex(i => (i + 1) % filteredSkills.length);
+          return;
+        }
+        if (e.key === "ArrowUp") {
+          e.preventDefault();
+          setSkillMenuIndex(i => (i - 1 + filteredSkills.length) % filteredSkills.length);
+          return;
+        }
+        if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey)) {
+          e.preventDefault();
+          const skill = filteredSkills[skillMenuIndex];
+          if (skill) {
+            setText(`#${skill.id} `);
+            if (textareaRef.current) {
+              textareaRef.current.value = `#${skill.id} `;
+            }
+          }
+          setSkillMenuOpen(false);
+          return;
+        }
+        if (e.key === "Escape") {
+          e.preventDefault();
+          setSkillMenuOpen(false);
+          return;
+        }
+      }
+
       // 斜杠菜单键盘导航
       if (slashMenuOpen && flatMenuItems.length > 0) {
         if (e.key === "ArrowDown") {
@@ -370,7 +605,7 @@ export default function ChatInput({
         }
       }
     },
-    [handleSend, slashMenuOpen, flatMenuItems, slashMenuIndex]
+    [handleSend, slashMenuOpen, flatMenuItems, slashMenuIndex, skillMenuOpen, filteredSkills, skillMenuIndex]
   );
 
   const handlePickerClose = useCallback(() => {
@@ -703,7 +938,7 @@ export default function ChatInput({
             
             // 按分类分组显示
             const grouped = groupCommandsByCategory(filteredCommands as SlashCommandType[]);
-            const categories: SlashCommandCategory[] = ["format", "style", "visualization", "todoist"];
+            const categories: SlashCommandCategory[] = ["format", "style", "visualization", "skill", "command", "todoist"];
             
             for (const category of categories) {
               const cmds = grouped[category];
@@ -814,6 +1049,162 @@ export default function ChatInput({
         })()
       ),
 
+      // Skill Menu
+      skillMenuOpen && filteredSkills.length > 0 && createElement(
+        "div",
+        {
+          ref: skillMenuRef,
+          style: {
+            position: "absolute",
+            bottom: "100%",
+            left: 0,
+            right: 0,
+            marginBottom: "4px",
+            background: "var(--orca-color-bg-1)",
+            border: "1px solid var(--orca-color-border)",
+            borderRadius: "8px",
+            boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+            overflow: "hidden",
+            zIndex: 100,
+            maxHeight: "300px",
+            overflowY: "auto",
+          },
+        },
+        // 标题
+        createElement("div", {
+          style: {
+            padding: "6px 12px",
+            fontSize: "11px",
+            fontWeight: 600,
+            color: "var(--orca-color-text-3)",
+            background: "var(--orca-color-bg-2)",
+            textTransform: "uppercase",
+            letterSpacing: "0.5px",
+          },
+        }, "\u6280\u80fd (Skills)"),
+        // Skill 列表
+        ...filteredSkills.map((skill, index) => 
+          createElement("div", {
+            key: skill.id,
+            "data-skill-index": index,
+            onClick: () => {
+              setText(`#${skill.id} `);
+              if (textareaRef.current) {
+                textareaRef.current.value = `#${skill.id} `;
+                textareaRef.current.focus();
+              }
+              setSkillMenuOpen(false);
+            },
+            style: {
+              padding: "8px 12px",
+              cursor: "pointer",
+              background: index === skillMenuIndex ? "var(--orca-color-bg-3)" : "transparent",
+              display: "flex",
+              alignItems: "center",
+              gap: "8px",
+            },
+          },
+            createElement("i", { 
+              className: "ti ti-wand", 
+              style: { fontSize: "14px", color: "var(--orca-color-success, #10b981)", width: "18px", textAlign: "center" } 
+            }),
+            createElement("span", { style: { fontWeight: 600, color: "var(--orca-color-success, #10b981)" } }, `#${skill.id}`),
+            skill.isGlobal && createElement("span", { 
+              style: { 
+                fontSize: "10px", 
+                color: "var(--orca-color-text-4)",
+                padding: "2px 6px",
+                background: "var(--orca-color-bg-3)",
+                borderRadius: "4px",
+                marginLeft: "auto"
+              } 
+            }, "\u5168\u5c40")
+          )
+        )
+      ),
+
+      // Skill 推荐提示条
+      showSkillRecommendations && skillRecommendations.length > 0 && !slashMenuOpen && !skillMenuOpen && createElement(
+        "div",
+        {
+          style: {
+            display: "flex",
+            alignItems: "center",
+            gap: "8px",
+            padding: "8px 12px",
+            marginBottom: "8px",
+            background: "linear-gradient(90deg, rgba(16, 185, 129, 0.08) 0%, rgba(16, 185, 129, 0.02) 100%)",
+            border: "1px solid rgba(16, 185, 129, 0.2)",
+            borderRadius: "8px",
+            fontSize: "12px",
+          },
+        },
+        createElement("i", { 
+          className: "ti ti-sparkles", 
+          style: { fontSize: "14px", color: "var(--orca-color-success, #10b981)" } 
+        }),
+        createElement("span", { 
+          style: { color: "var(--orca-color-text-2)", marginRight: "4px" } 
+        }, "\u63a8\u8350\u6280\u80fd:"),
+        ...skillRecommendations.map((rec, index) => 
+          createElement(
+            "button",
+            {
+              key: rec.skill.id,
+              onClick: () => {
+                setText(`#${rec.skill.id} ${text}`);
+                if (textareaRef.current) {
+                  textareaRef.current.value = `#${rec.skill.id} ${text}`;
+                  textareaRef.current.focus();
+                }
+                setShowSkillRecommendations(false);
+              },
+              style: {
+                padding: "4px 10px",
+                fontSize: "12px",
+                fontWeight: 500,
+                border: "1px solid rgba(16, 185, 129, 0.3)",
+                borderRadius: "6px",
+                cursor: "pointer",
+                background: "var(--orca-color-bg-1)",
+                color: "var(--orca-color-success, #10b981)",
+                display: "flex",
+                alignItems: "center",
+                gap: "4px",
+                transition: "all 0.15s ease",
+              },
+              onMouseEnter: (e: any) => {
+                e.target.style.background = "rgba(16, 185, 129, 0.1)";
+              },
+              onMouseLeave: (e: any) => {
+                e.target.style.background = "var(--orca-color-bg-1)";
+              },
+              title: `${getSkillSummary(rec.skill)}\n${rec.matchReason}`,
+            },
+            createElement("i", { className: "ti ti-wand", style: { fontSize: "12px" } }),
+            rec.skill.metadata.name || rec.skill.id
+          )
+        ),
+        createElement(
+          "button",
+          {
+            onClick: () => setShowSkillRecommendations(false),
+            style: {
+              marginLeft: "auto",
+              padding: "2px",
+              border: "none",
+              background: "transparent",
+              cursor: "pointer",
+              color: "var(--orca-color-text-3)",
+              display: "flex",
+              alignItems: "center",
+            },
+            title: "\u5173\u95ed\u63a8\u8350",
+          },
+          createElement("i", { className: "ti ti-x", style: { fontSize: "14px" } })
+        )
+      ),
+
       // 文件预览区域
       pendingFiles.length > 0 &&
         createElement(
@@ -913,47 +1304,51 @@ export default function ChatInput({
                           gap: "2px",
                         },
                       },
-                      createElement(
-                        "button",
-                        {
-                          onClick: (e: any) => {
-                            e.stopPropagation();
-                            handleSetVideoMode(index, "full");
+                      withTooltip(
+                        "完整识别（画面+音频）",
+                        createElement(
+                          "button",
+                          {
+                            onClick: (e: any) => {
+                              e.stopPropagation();
+                              handleSetVideoMode(index, "full");
+                            },
+                            style: {
+                              padding: "2px 5px",
+                              fontSize: "9px",
+                              border: "1px solid var(--orca-color-border)",
+                              borderRadius: "3px",
+                              cursor: "pointer",
+                              background: file.videoMode !== "audio-only" ? "var(--orca-color-bg-3)" : "rgba(0,0,0,0.6)",
+                              color: file.videoMode !== "audio-only" ? "var(--orca-color-text-1)" : "#fff",
+                              fontWeight: file.videoMode !== "audio-only" ? "600" : "400",
+                            },
                           },
-                          style: {
-                            padding: "2px 5px",
-                            fontSize: "9px",
-                            border: file.videoMode !== "audio-only" ? "1px solid var(--orca-color-primary)" : "1px solid rgba(255,255,255,0.3)",
-                            borderRadius: "3px",
-                            cursor: "pointer",
-                            background: file.videoMode !== "audio-only" ? "var(--orca-color-primary)" : "rgba(0,0,0,0.6)",
-                            color: "#fff",
-                            fontWeight: file.videoMode !== "audio-only" ? "600" : "400",
-                          },
-                          title: "完整识别（画面+音频）",
-                        },
-                        "全"
+                          "全"
+                        )
                       ),
-                      createElement(
-                        "button",
-                        {
-                          onClick: (e: any) => {
-                            e.stopPropagation();
-                            handleSetVideoMode(index, "audio-only");
+                      withTooltip(
+                        "仅音频识别",
+                        createElement(
+                          "button",
+                          {
+                            onClick: (e: any) => {
+                              e.stopPropagation();
+                              handleSetVideoMode(index, "audio-only");
+                            },
+                            style: {
+                              padding: "2px 5px",
+                              fontSize: "9px",
+                              border: "1px solid var(--orca-color-border)",
+                              borderRadius: "3px",
+                              cursor: "pointer",
+                              background: file.videoMode === "audio-only" ? "var(--orca-color-bg-3)" : "rgba(0,0,0,0.6)",
+                              color: file.videoMode === "audio-only" ? "var(--orca-color-text-1)" : "#fff",
+                              fontWeight: file.videoMode === "audio-only" ? "600" : "400",
+                            },
                           },
-                          style: {
-                            padding: "2px 5px",
-                            fontSize: "9px",
-                            border: file.videoMode === "audio-only" ? "1px solid var(--orca-color-primary)" : "1px solid rgba(255,255,255,0.3)",
-                            borderRadius: "3px",
-                            cursor: "pointer",
-                            background: file.videoMode === "audio-only" ? "var(--orca-color-primary)" : "rgba(0,0,0,0.6)",
-                            color: "#fff",
-                            fontWeight: file.videoMode === "audio-only" ? "600" : "400",
-                          },
-                          title: "仅音频识别",
-                        },
-                        "音"
+                          "音"
+                        )
                       )
                     ),
                   ]
@@ -963,22 +1358,24 @@ export default function ChatInput({
                       className: getFileIcon(file.name, file.mimeType),
                       style: { fontSize: "20px", color: "var(--orca-color-primary)" },
                     }),
-                    createElement(
-                      "span",
-                      {
-                        key: "name",
-                        style: {
-                          fontSize: "10px",
-                          color: "var(--orca-color-text-2)",
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                          whiteSpace: "nowrap",
-                          maxWidth: "100%",
-                          textAlign: "center",
+                    withTooltip(
+                      file.name,
+                      createElement(
+                        "span",
+                        {
+                          key: "name",
+                          style: {
+                            fontSize: "10px",
+                            color: "var(--orca-color-text-2)",
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            whiteSpace: "nowrap",
+                            maxWidth: "100%",
+                            textAlign: "center",
+                          },
                         },
-                        title: file.name,
-                      },
-                      file.name.length > 12 ? file.name.slice(0, 10) + "..." : file.name
+                        file.name.length > 12 ? file.name.slice(0, 10) + "..." : file.name
+                      )
                     ),
                     // 视频模式切换按钮（无缩略图时）
                     isVideo &&
@@ -992,73 +1389,79 @@ export default function ChatInput({
                             marginTop: "2px",
                           },
                         },
-                        createElement(
-                          "button",
-                          {
-                            onClick: (e: any) => {
-                              e.stopPropagation();
-                              handleSetVideoMode(index, "full");
+                        withTooltip(
+                          "完整识别（画面+音频）",
+                          createElement(
+                            "button",
+                            {
+                              onClick: (e: any) => {
+                                e.stopPropagation();
+                                handleSetVideoMode(index, "full");
+                              },
+                              style: {
+                                padding: "2px 5px",
+                                fontSize: "9px",
+                                border: "1px solid var(--orca-color-border)",
+                                borderRadius: "3px",
+                                cursor: "pointer",
+                                background: file.videoMode !== "audio-only" ? "var(--orca-color-bg-3)" : "var(--orca-color-bg-1)",
+                                color: file.videoMode !== "audio-only" ? "var(--orca-color-text-1)" : "var(--orca-color-text-2)",
+                                fontWeight: file.videoMode !== "audio-only" ? "600" : "400",
+                              },
                             },
-                            style: {
-                              padding: "2px 5px",
-                              fontSize: "9px",
-                              border: file.videoMode !== "audio-only" ? "1px solid var(--orca-color-primary)" : "1px solid var(--orca-color-border)",
-                              borderRadius: "3px",
-                              cursor: "pointer",
-                              background: file.videoMode !== "audio-only" ? "var(--orca-color-primary)" : "var(--orca-color-bg-1)",
-                              color: file.videoMode !== "audio-only" ? "#fff" : "var(--orca-color-text-2)",
-                              fontWeight: file.videoMode !== "audio-only" ? "600" : "400",
-                            },
-                            title: "完整识别（画面+音频）",
-                          },
-                          "全"
+                            "全"
+                          )
                         ),
-                        createElement(
-                          "button",
-                          {
-                            onClick: (e: any) => {
-                              e.stopPropagation();
-                              handleSetVideoMode(index, "audio-only");
+                        withTooltip(
+                          "仅音频识别",
+                          createElement(
+                            "button",
+                            {
+                              onClick: (e: any) => {
+                                e.stopPropagation();
+                                handleSetVideoMode(index, "audio-only");
+                              },
+                              style: {
+                                padding: "2px 5px",
+                                fontSize: "9px",
+                                border: "1px solid var(--orca-color-border)",
+                                borderRadius: "3px",
+                                cursor: "pointer",
+                                background: file.videoMode === "audio-only" ? "var(--orca-color-bg-3)" : "var(--orca-color-bg-1)",
+                                color: file.videoMode === "audio-only" ? "var(--orca-color-text-1)" : "var(--orca-color-text-2)",
+                                fontWeight: file.videoMode === "audio-only" ? "600" : "400",
+                              },
                             },
-                            style: {
-                              padding: "2px 5px",
-                              fontSize: "9px",
-                              border: file.videoMode === "audio-only" ? "1px solid var(--orca-color-primary)" : "1px solid var(--orca-color-border)",
-                              borderRadius: "3px",
-                              cursor: "pointer",
-                              background: file.videoMode === "audio-only" ? "var(--orca-color-primary)" : "var(--orca-color-bg-1)",
-                              color: file.videoMode === "audio-only" ? "#fff" : "var(--orca-color-text-2)",
-                              fontWeight: file.videoMode === "audio-only" ? "600" : "400",
-                            },
-                            title: "仅音频识别",
-                          },
-                          "音"
+                            "音"
+                          )
                         )
                       ),
                   ],
-              createElement(
-                "button",
-                {
-                  onClick: () => handleRemoveFile(index),
-                  style: {
-                    position: "absolute",
-                    top: "2px",
-                    right: "2px",
-                    width: "18px",
-                    height: "18px",
-                    borderRadius: "50%",
-                    background: "rgba(0,0,0,0.6)",
-                    color: "#fff",
-                    border: "none",
-                    cursor: "pointer",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    fontSize: "10px",
+              withTooltip(
+                "移除文件",
+                createElement(
+                  "button",
+                  {
+                    onClick: () => handleRemoveFile(index),
+                    style: {
+                      position: "absolute",
+                      top: "2px",
+                      right: "2px",
+                      width: "18px",
+                      height: "18px",
+                      borderRadius: "50%",
+                      background: "rgba(0,0,0,0.6)",
+                      color: "#fff",
+                      border: "none",
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      fontSize: "10px",
+                    },
                   },
-                  title: "移除文件",
-                },
-                createElement("i", { className: "ti ti-x" })
+                  createElement("i", { className: "ti ti-x" })
+                )
               )
             );
           }),
@@ -1081,28 +1484,30 @@ export default function ChatInput({
       ),
 
       // 清除上下文提示标签
-      clearContextPending && createElement(
-        "div",
-        {
-          style: {
-            display: "flex",
-            alignItems: "center",
-            gap: "6px",
-            padding: "4px 10px",
-            marginBottom: "8px",
-            background: "var(--orca-color-warning-bg, rgba(255, 193, 7, 0.1))",
-            border: "1px solid var(--orca-color-warning, #ffc107)",
-            borderRadius: "6px",
-            fontSize: "12px",
-            color: "var(--orca-color-warning, #ffc107)",
-            cursor: "pointer",
+      clearContextPending && withTooltip(
+        "点击撤销清除上下文",
+        createElement(
+          "div",
+          {
+            style: {
+              display: "flex",
+              alignItems: "center",
+              gap: "6px",
+              padding: "4px 10px",
+              marginBottom: "8px",
+              background: "var(--orca-color-warning-bg, rgba(255, 193, 7, 0.1))",
+              border: "1px solid var(--orca-color-warning, #ffc107)",
+              borderRadius: "6px",
+              fontSize: "12px",
+              color: "var(--orca-color-warning, #ffc107)",
+              cursor: "pointer",
+            },
+            onClick: handleClearContextClick,
           },
-          onClick: handleClearContextClick,
-          title: "点击撤销清除上下文",
-        },
-        createElement("i", { className: "ti ti-refresh", style: { fontSize: "14px" } }),
-        "清除上下文",
-        createElement("span", { style: { color: "var(--orca-color-text-3)", marginLeft: "4px" } }, "(点击撤销)")
+          createElement("i", { className: "ti ti-refresh", style: { fontSize: "14px" } }),
+          "清除上下文",
+          createElement("span", { style: { color: "var(--orca-color-text-3)", marginLeft: "4px" } }, "(点击撤销)")
+        )
       ),
 
       // Row 1: TextArea
@@ -1139,30 +1544,51 @@ export default function ChatInput({
       // Row 2: Bottom Toolbar (Tools Left, Send Right)
       createElement(
         "div",
-        { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "8px" } },
-        
+        {
+          style: {
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            gap: 8,
+            marginTop: "8px",
+            minWidth: 0,
+          },
+        },
+
         // Left Tools: @ Button + File Button + Clear Context + Model Selector + Injection Mode Selector
         createElement(
           "div",
-          { style: { display: "flex", gap: 8, alignItems: "center" } },
+          {
+            ref: leftToolbarRef as any,
+            style: {
+              display: "flex",
+              gap: 8,
+              alignItems: "center",
+              flex: 1,
+              minWidth: 0,
+              overflow: "hidden",
+            },
+          },
           createElement(
             "div",
             {
               ref: addContextBtnRef as any,
               style: { display: "flex", alignItems: "center" },
             },
-            createElement(
-              Button,
-              {
-                variant: "plain",
-                onClick: () => setPickerOpen(!pickerOpen),
-                title: "Add Context (@)",
-                style: { padding: "4px" },
-              },
-              createElement("i", { className: "ti ti-at" })
+            withTooltip(
+              "Add Context (@)",
+              createElement(
+                Button,
+                {
+                  variant: "plain",
+                  onClick: () => setPickerOpen(!pickerOpen),
+                  style: { padding: "4px" },
+                },
+                createElement("i", { className: "ti ti-at" })
+              )
             )
           ),
-          // 文件上传按钮
+          // File upload button
           createElement(
             "div",
             { style: { display: "flex", alignItems: "center" } },
@@ -1174,169 +1600,318 @@ export default function ChatInput({
               style: { display: "none" },
               onChange: (e: any) => handleFileSelect(e.target.files),
             }),
-            createElement(
-              Button,
-              {
-                variant: "plain",
-                onClick: handleFileButtonClick,
-                title: "添加文件 (图片、文档、代码等)",
-                style: { padding: "4px" },
-                disabled: isUploading,
-              },
-              createElement("i", { className: isUploading ? "ti ti-loader" : "ti ti-paperclip" })
+            withTooltip(
+              "\u6dfb\u52a0\u6587\u4ef6 (\u56fe\u7247\u3001\u6587\u6863\u3001\u4ee3\u7801\u7b49)",
+              createElement(
+                Button,
+                {
+                  variant: "plain",
+                  onClick: handleFileButtonClick,
+                  style: { padding: "4px" },
+                  disabled: isUploading,
+                },
+                createElement("i", { className: isUploading ? "ti ti-loader" : "ti ti-paperclip" })
+              )
             )
-          ),
-          // 清除上下文按钮
-          createElement(
-            Button,
-            {
-              variant: "plain",
-              onClick: handleClearContextClick,
-              title: clearContextPending ? "撤销清除上下文" : "清除上下文（开始新对话）",
-              style: { 
-                padding: "4px",
-                color: clearContextPending ? "var(--orca-color-warning, #ffc107)" : undefined,
-              },
-            },
-            createElement("i", { className: "ti ti-refresh" })
           ),
           createElement(ModelSelectorButton, {
             settings,
             onSelect: onModelSelect,
             onUpdateSettings,
           }),
-          // 多模型并行按钮
-          createElement(MultiModelToggleButton, {
+          !overflowFlags.hideClear && withTooltip(
+            clearContextPending ? "\u64a4\u9500\u6e05\u9664\u4e0a\u4e0b\u6587" : "\u6e05\u9664\u4e0a\u4e0b\u6587\uff08\u5f00\u59cb\u65b0\u5bf9\u8bdd\uff09",
+            createElement(
+              Button,
+              {
+                variant: "plain",
+                onClick: handleClearContextClick,
+                style: {
+                  padding: "4px",
+                  color: clearContextPending ? "var(--orca-color-warning, #ffc107)" : undefined,
+                },
+              },
+              createElement("i", { className: "ti ti-refresh" })
+            )
+          ),
+          !overflowFlags.hideMulti && createElement(MultiModelToggleButton, {
             settings,
           }),
-          createElement(InjectionModeSelector, null),
-          createElement(ModeSelectorButton, null),
-          // 联网搜索开关
-          createElement(
-            Button,
-            {
-              variant: "plain",
-              onClick: toggleWebSearch,
-              title: toolSnap.webSearchEnabled ? "关闭联网搜索" : "开启联网搜索",
-              style: { 
-                padding: "4px",
-                color: toolSnap.webSearchEnabled ? "var(--orca-color-primary, #007bff)" : undefined,
-                background: toolSnap.webSearchEnabled ? "var(--orca-color-primary-bg, rgba(0, 123, 255, 0.1))" : undefined,
-                borderRadius: "4px",
+          !overflowFlags.hideInjection && createElement(InjectionModeSelector, null),
+          !overflowFlags.hideMode && createElement(ModeSelectorButton, null),
+          !overflowFlags.hideWeb && withTooltip(
+            toolSnap.webSearchEnabled ? "\u5173\u95ed\u8054\u7f51\u641c\u7d22" : "\u5f00\u542f\u8054\u7f51\u641c\u7d22",
+            createElement(
+              Button,
+              {
+                variant: "plain",
+                onClick: toggleWebSearch,
+                style: {
+                  padding: "4px",
+                  color: toolSnap.webSearchEnabled ? "var(--orca-color-primary, #007bff)" : undefined,
+                  background: toolSnap.webSearchEnabled ? "var(--orca-color-primary-bg, rgba(0, 123, 255, 0.1))" : undefined,
+                  borderRadius: "4px",
+                },
               },
-            },
-            createElement("i", { className: "ti ti-world-search" })
-          ),
-          // Agentic RAG 开关（深度检索模式）
-          createElement(
-            Button,
-            {
-              variant: "plain",
-              onClick: toggleAgenticRAG,
-              title: toolSnap.agenticRAGEnabled 
-                ? "关闭深度检索（Agentic RAG）\n当前：AI 会多轮迭代检索，消耗更多 token" 
-                : "开启深度检索（Agentic RAG）\n开启后：AI 会自主规划检索策略，多轮迭代直到信息充足",
-              style: { 
-                padding: "4px",
-                color: toolSnap.agenticRAGEnabled ? "var(--orca-color-warning, #f59e0b)" : undefined,
-                background: toolSnap.agenticRAGEnabled ? "rgba(245, 158, 11, 0.1)" : undefined,
-                borderRadius: "4px",
-              },
-            },
-            createElement("i", { className: "ti ti-brain" })
-          ),
-          // 数据分析开关
-          createElement(
-            Button,
-            {
-              variant: "plain",
-              onClick: toggleScriptAnalysis,
-              title: toolSnap.scriptAnalysisEnabled 
-                ? "关闭数据分析\n当前：AI 可以执行脚本分析笔记数据" 
-                : "开启数据分析\n开启后：AI 可以统计词频、搜索次数等，返回真实数据",
-              style: { 
-                padding: "4px",
-                color: toolSnap.scriptAnalysisEnabled ? "var(--orca-color-success, #10b981)" : undefined,
-                background: toolSnap.scriptAnalysisEnabled ? "rgba(16, 185, 129, 0.1)" : undefined,
-                borderRadius: "4px",
-              },
-            },
-            createElement("i", { className: "ti ti-chart-bar" })
-          ),
-          // Token 预估显示
-          tokenEstimate.inputTokens > 0 && createElement(
-            "div",
-            {
-              style: {
-                display: "flex",
-                alignItems: "center",
-                gap: "4px",
-                fontSize: "11px",
-                color: "var(--orca-color-text-3)",
-                padding: "2px 8px",
-                background: "var(--orca-color-bg-3)",
-                borderRadius: "10px",
-              },
-              title: `预估输入: ${formatTokenCount(tokenEstimate.inputTokens)} tokens\n预估输出: ${formatTokenCount(tokenEstimate.outputTokens)} tokens`,
-            },
-            createElement("i", { className: "ti ti-coins", style: { fontSize: "12px" } }),
-            `~${formatTokenCount(tokenEstimate.inputTokens)}`,
-            selectedModelInfo?.inputPrice !== undefined && selectedModelInfo.inputPrice > 0 && createElement(
-              "span",
-              { style: { color: "var(--orca-color-text-4)" } },
-              ` ${formatCost(tokenEstimate.cost, currency)}`
+              createElement("i", { className: "ti ti-world-search" })
             )
-          )
+          ),
+          !overflowFlags.hideRag && withTooltip(
+            tooltipText(
+              toolSnap.agenticRAGEnabled
+                ? "\u5173\u95ed\u6df1\u5ea6\u68c0\u7d22\uff08Agentic RAG\uff09\\n\u5f53\u524d\uff1aAI \u4f1a\u591a\u8f6e\u8fed\u4ee3\u68c0\u7d22\uff0c\u6d88\u8017\u66f4\u591atoken"
+                : "\u5f00\u542f\u6df1\u5ea6\u68c0\u7d22\uff08Agentic RAG\uff09\\n\u5f00\u542f\u540e\uff1aAI \u4f1a\u81ea\u4e3b\u89c4\u5212\u68c0\u7d22\u7b56\u7565\uff0c\u591a\u8f6e\u8fed\u4ee3\u76f4\u5230\u4fe1\u606f\u5145\u8db3"
+            ),
+            createElement(
+              Button,
+              {
+                variant: "plain",
+                onClick: toggleAgenticRAG,
+                style: {
+                  padding: "4px",
+                  color: toolSnap.agenticRAGEnabled ? "var(--orca-color-warning, #f59e0b)" : undefined,
+                  background: toolSnap.agenticRAGEnabled ? "rgba(245, 158, 11, 0.1)" : undefined,
+                  borderRadius: "4px",
+                },
+              },
+              createElement("i", { className: "ti ti-brain" })
+            )
+          ),
+          !overflowFlags.hideScript && withTooltip(
+            tooltipText(
+              toolSnap.scriptAnalysisEnabled
+                ? "\u5173\u95ed\u6570\u636e\u5206\u6790\\n\u5f53\u524d\uff1aAI \u53ef\u4ee5\u6267\u884c\u811a\u672c\u5206\u6790\u7b14\u8bb0\u6570\u636e"
+                : "\u5f00\u542f\u6570\u636e\u5206\u6790\\n\u5f00\u542f\u540e\uff1aAI \u53ef\u4ee5\u7edf\u8ba1\u8bcd\u9891\u3001\u641c\u7d22\u6b21\u6570\u7b49\uff0c\u8fd4\u56de\u771f\u5b9e\u6570\u636e"
+            ),
+            createElement(
+              Button,
+              {
+                variant: "plain",
+                onClick: toggleScriptAnalysis,
+                style: {
+                  padding: "4px",
+                  color: toolSnap.scriptAnalysisEnabled ? "var(--orca-color-success, #10b981)" : undefined,
+                  background: toolSnap.scriptAnalysisEnabled ? "rgba(16, 185, 129, 0.1)" : undefined,
+                  borderRadius: "4px",
+                },
+              },
+              createElement("i", { className: "ti ti-chart-bar" })
+            )
+          ),
         ),
 
-        // Right Tool: Send/Stop Button
-        disabled && onStop
-          ? createElement(
-              Button,
+        createElement(
+          "div",
+          { style: { display: "flex", alignItems: "center", gap: 8, flexShrink: 0 } },
+          showTokenIndicator && withTooltip(
+            tooltipText(`预估输入: ${formatTokenCount(tokenEstimate.inputTokens)} tokens
+预估输出: ${formatTokenCount(tokenEstimate.outputTokens)} tokens`),
+            createElement(
+              "div",
               {
-                variant: "solid",
-                onClick: onStop,
-                title: "Stop generation",
-                style: { 
-                  ...sendButtonStyle(true), 
-                  borderRadius: "50%", 
-                  width: "32px", 
-                  height: "32px", 
-                  padding: 0, 
-                  display: "flex", 
-                  alignItems: "center", 
-                  justifyContent: "center",
-                  background: "var(--orca-color-error, #cf222e)"
+                style: {
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "4px",
+                  fontSize: "11px",
+                  color: "var(--orca-color-text-3)",
+                  padding: "2px 8px",
+                  background: "var(--orca-color-bg-3)",
+                  borderRadius: "10px",
+                  whiteSpace: "nowrap",
+                  flexShrink: 0,
                 },
               },
-              createElement("i", { className: "ti ti-player-stop" })
+              createElement("i", { className: "ti ti-coins", style: { fontSize: "12px" } }),
+              `~${formatTokenCount(tokenEstimate.inputTokens)}`
             )
-          : createElement(
-              Button,
-              {
-                variant: "solid",
-                disabled: !canSend,
-                onClick: handleSend,
-                title: isSending ? "正在加载内容..." : "发送消息",
-                style: { 
-                  ...sendButtonStyle(canSend), 
-                  borderRadius: "50%", 
-                  width: "32px", 
-                  height: "32px", 
-                  padding: 0, 
-                  display: "flex", 
-                  alignItems: "center", 
-                  justifyContent: "center",
-                  opacity: isSending ? 0.7 : 1,
-                },
-              },
-              createElement("i", { 
-                className: isSending ? "ti ti-loader" : "ti ti-arrow-up",
-                style: isSending ? {
-                  animation: "spin 1s linear infinite",
-                } : undefined,
-              })
-            )
+          ),
+          overflowFlags.hasOverflow && createElement(
+            ContextMenu as any,
+            {
+              defaultPlacement: "top",
+              placement: "vertical",
+              alignment: "right",
+              allowBeyondContainer: true,
+              offset: 8,
+              menu: (close: () => void) =>
+                createElement(
+                  "div",
+                  { style: overflowMenuStyle },
+                  overflowFlags.hideClear && createElement("div", { style: overflowSectionTitleStyle }, "\u5feb\u6377\u64cd\u4f5c"),
+                  overflowFlags.hideClear && createElement(
+                    "div",
+                    {
+                      style: overflowItemStyle,
+                      onClick: () => {
+                        handleClearContextClick();
+                        close();
+                      },
+                    },
+                    createElement("span", { style: overflowItemLabelStyle }, clearContextPending ? "\u64a4\u9500\u6e05\u9664\u4e0a\u4e0b\u6587" : "\u6e05\u9664\u4e0a\u4e0b\u6587"),
+                    createElement("i", { className: "ti ti-refresh", style: { fontSize: "14px" } })
+                  ),
+                  showModeSection && createElement("div", { style: overflowSectionTitleStyle }, "\u6a21\u5f0f"),
+                  overflowFlags.hideMulti && createElement(
+                    "div",
+                    { style: overflowItemStyle },
+                    createElement("span", { style: overflowItemLabelStyle }, "\u591a\u6a21\u578b\u5e76\u884c"),
+                    createElement(MultiModelToggleButton, { settings })
+                  ),
+                  overflowFlags.hideInjection && createElement(
+                    "div",
+                    { style: overflowItemStyle },
+                    createElement("span", { style: overflowItemLabelStyle }, "\u6ce8\u5165\u6a21\u5f0f"),
+                    createElement(InjectionModeSelector, null)
+                  ),
+                  overflowFlags.hideMode && createElement(
+                    "div",
+                    { style: overflowItemStyle },
+                    createElement("span", { style: overflowItemLabelStyle }, "\u5bf9\u8bdd\u6a21\u5f0f"),
+                    createElement(ModeSelectorButton, null)
+                  ),
+                  showToolSection && createElement("div", { style: overflowSectionTitleStyle }, "\u5de5\u5177"),
+                  overflowFlags.hideWeb && createElement(
+                    "div",
+                    { style: overflowItemStyle },
+                    createElement("span", { style: overflowItemLabelStyle }, "\u8054\u7f51\u641c\u7d22"),
+                    withTooltip(
+                      toolSnap.webSearchEnabled ? "\u5173\u95ed\u8054\u7f51\u641c\u7d22" : "\u5f00\u542f\u8054\u7f51\u641c\u7d22",
+                      createElement(
+                        Button,
+                        {
+                          variant: "plain",
+                          onClick: toggleWebSearch,
+                          style: {
+                            ...overflowToggleButtonStyle,
+                            color: toolSnap.webSearchEnabled ? "var(--orca-color-primary, #007bff)" : undefined,
+                            background: toolSnap.webSearchEnabled ? "var(--orca-color-primary-bg, rgba(0, 123, 255, 0.1))" : undefined,
+                          },
+                        },
+                        createElement("i", { className: "ti ti-world-search" })
+                      )
+                    )
+                  ),
+                  overflowFlags.hideRag && createElement(
+                    "div",
+                    { style: overflowItemStyle },
+                    createElement("span", { style: overflowItemLabelStyle }, "\u6df1\u5ea6\u68c0\u7d22"),
+                    withTooltip(
+                      toolSnap.agenticRAGEnabled ? "\u5173\u95ed\u6df1\u5ea6\u68c0\u7d22" : "\u5f00\u542f\u6df1\u5ea6\u68c0\u7d22",
+                      createElement(
+                        Button,
+                        {
+                          variant: "plain",
+                          onClick: toggleAgenticRAG,
+                          style: {
+                            ...overflowToggleButtonStyle,
+                            color: toolSnap.agenticRAGEnabled ? "var(--orca-color-warning, #f59e0b)" : undefined,
+                            background: toolSnap.agenticRAGEnabled ? "rgba(245, 158, 11, 0.1)" : undefined,
+                          },
+                        },
+                        createElement("i", { className: "ti ti-brain" })
+                      )
+                    )
+                  ),
+                  overflowFlags.hideScript && createElement(
+                    "div",
+                    { style: overflowItemStyle },
+                    createElement("span", { style: overflowItemLabelStyle }, "\u6570\u636e\u5206\u6790"),
+                    withTooltip(
+                      toolSnap.scriptAnalysisEnabled ? "\u5173\u95ed\u6570\u636e\u5206\u6790" : "\u5f00\u542f\u6570\u636e\u5206\u6790",
+                      createElement(
+                        Button,
+                        {
+                          variant: "plain",
+                          onClick: toggleScriptAnalysis,
+                          style: {
+                            ...overflowToggleButtonStyle,
+                            color: toolSnap.scriptAnalysisEnabled ? "var(--orca-color-success, #10b981)" : undefined,
+                            background: toolSnap.scriptAnalysisEnabled ? "rgba(16, 185, 129, 0.1)" : undefined,
+                          },
+                        },
+                        createElement("i", { className: "ti ti-chart-bar" })
+                      )
+                    )
+                  ),
+                ),
+            },
+            (openMenu: (e: any) => void) =>
+              withTooltip(
+                "\u66f4\u591a\u64cd\u4f5c",
+                createElement(
+                  Button,
+                  {
+                    variant: "plain",
+                    onClick: openMenu,
+                    style: { padding: "4px" },
+                  },
+                  createElement("i", { className: "ti ti-dots" })
+                )
+              )
+          ),
+          // Right Tool: Send/Stop Button
+          disabled && onStop
+            ? withTooltip(
+                "Stop generation",
+                createElement(
+                  Button,
+                  {
+                    variant: "solid",
+                    onClick: onStop,
+                    style: {
+                      ...sendButtonStyle(true),
+                      borderRadius: "50%",
+                      width: "32px",
+                      height: "32px",
+                      padding: 0,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      background: "var(--orca-color-error, #cf222e)",
+                    },
+                  },
+                  createElement("i", { className: "ti ti-player-stop" })
+                )
+              )
+            : withTooltip(
+                isSending ? "正在发送..." : sendSuccess ? "发送成功" : "发送消息",
+                createElement(
+                  Button,
+                  {
+                    variant: "solid",
+                    disabled: !canSend,
+                    onClick: handleSend,
+                    className: isSending ? "send-btn-sending" : sendSuccess ? "send-btn-success" : "",
+                    style: {
+                      ...sendButtonStyle(canSend || sendSuccess),
+                      borderRadius: "50%",
+                      width: "32px",
+                      height: "32px",
+                      padding: 0,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      background: sendSuccess 
+                        ? "var(--orca-color-success, #10b981)" 
+                        : undefined,
+                      transition: "all 0.2s ease",
+                    },
+                  },
+                  createElement("i", {
+                    className: sendSuccess 
+                      ? "ti ti-check" 
+                      : isSending 
+                        ? "ti ti-loader" 
+                        : "ti ti-arrow-up",
+                    style: {
+                      ...(isSending ? { animation: "spin 1s linear infinite" } : {}),
+                      ...(sendSuccess ? { animation: "sendSuccess 0.4s ease-out" } : {}),
+                    },
+                  })
+                )
+              )
+        )
       )
     )
   );

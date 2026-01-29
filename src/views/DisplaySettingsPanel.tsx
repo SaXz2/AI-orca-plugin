@@ -83,10 +83,10 @@ export default function DisplaySettingsPanel({ onClose }: DisplaySettingsPanelPr
   const fontSizeButtonStyle = (isActive: boolean): React.CSSProperties => ({
     flex: 1,
     padding: "6px 12px",
-    border: "none",
+    border: isActive ? "1px solid var(--orca-color-border)" : "none",
     borderRadius: "4px",
-    background: isActive ? "var(--orca-color-primary)" : "transparent",
-    color: isActive ? "white" : "var(--orca-color-text-2)",
+    background: isActive ? "var(--orca-color-bg-3)" : "transparent",
+    color: isActive ? "var(--orca-color-text-1)" : "var(--orca-color-text-2)",
     fontSize: "13px",
     fontWeight: isActive ? 500 : 400,
     cursor: "pointer",

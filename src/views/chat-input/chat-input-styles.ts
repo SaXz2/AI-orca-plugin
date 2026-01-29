@@ -82,8 +82,8 @@ export const sendButtonStyle = (canSend: boolean) => ({
 
 export const containerStyle = {
   padding: "16px",
-  borderTop: "1px solid var(--orca-color-border)",
-  background: "var(--orca-color-bg-1)",
+  borderTop: "none",
+  background: "transparent",
   position: "relative" as const,
   zIndex: 20,
 };

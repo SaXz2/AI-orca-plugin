@@ -220,6 +220,219 @@ export const chatAnimations = `
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
+   Ripple Effect Animation (按钮涟漪效果)
+   Material Design inspired ripple animation
+   ─────────────────────────────────────────────────────────────────────────── */
+
+@keyframes ripple {
+    0% {
+        transform: scale(0);
+        opacity: 0.5;
+    }
+    100% {
+        transform: scale(4);
+        opacity: 0;
+    }
+}
+
+.ripple-container {
+    position: relative;
+    overflow: hidden;
+}
+
+.ripple-effect {
+    position: absolute;
+    border-radius: 50%;
+    background: currentColor;
+    opacity: 0.3;
+    pointer-events: none;
+    animation: ripple 0.6s ease-out forwards;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Send Button Animations (发送按钮动效)
+   - Sending: rotation animation
+   - Success: checkmark pop animation
+   ─────────────────────────────────────────────────────────────────────────── */
+
+@keyframes sendPulse {
+    0%, 100% {
+        transform: scale(1);
+    }
+    50% {
+        transform: scale(0.92);
+    }
+}
+
+@keyframes sendSuccess {
+    0% {
+        transform: scale(0.5);
+        opacity: 0;
+    }
+    50% {
+        transform: scale(1.2);
+        opacity: 1;
+    }
+    100% {
+        transform: scale(1);
+        opacity: 1;
+    }
+}
+
+@keyframes sendIconExit {
+    0% {
+        transform: translateY(0) scale(1);
+        opacity: 1;
+    }
+    100% {
+        transform: translateY(-10px) scale(0.5);
+        opacity: 0;
+    }
+}
+
+@keyframes sendIconEnter {
+    0% {
+        transform: translateY(10px) scale(0.5);
+        opacity: 0;
+    }
+    100% {
+        transform: translateY(0) scale(1);
+        opacity: 1;
+    }
+}
+
+.send-btn-sending {
+    animation: sendPulse 1s ease-in-out infinite;
+}
+
+.send-btn-success {
+    animation: sendSuccess 0.4s ease-out forwards;
+}
+
+.send-icon-exit {
+    animation: sendIconExit 0.2s ease-in forwards;
+}
+
+.send-icon-enter {
+    animation: sendIconEnter 0.2s ease-out forwards;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Scroll To Bottom Button Animation (滚动到底部按钮动画)
+   - Bounce in entrance
+   - Subtle float effect
+   ─────────────────────────────────────────────────────────────────────────── */
+
+@keyframes scrollBtnBounceIn {
+    0% {
+        transform: translateX(-50%) translateY(20px) scale(0.8);
+        opacity: 0;
+    }
+    60% {
+        transform: translateX(-50%) translateY(-5px) scale(1.05);
+        opacity: 1;
+    }
+    100% {
+        transform: translateX(-50%) translateY(0) scale(1);
+        opacity: 1;
+    }
+}
+
+@keyframes scrollBtnBounceOut {
+    0% {
+        transform: translateX(-50%) translateY(0) scale(1);
+        opacity: 1;
+    }
+    100% {
+        transform: translateX(-50%) translateY(20px) scale(0.8);
+        opacity: 0;
+    }
+}
+
+@keyframes scrollBtnFloat {
+    0%, 100% {
+        transform: translateX(-50%) translateY(0);
+    }
+    50% {
+        transform: translateX(-50%) translateY(-4px);
+    }
+}
+
+@keyframes arrowBounce {
+    0%, 100% {
+        transform: translateY(0);
+    }
+    50% {
+        transform: translateY(3px);
+    }
+}
+
+.scroll-btn-enter {
+    animation: scrollBtnBounceIn 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+
+.scroll-btn-exit {
+    animation: scrollBtnBounceOut 0.3s ease-in forwards;
+}
+
+.scroll-btn-float {
+    animation: scrollBtnFloat 2s ease-in-out infinite;
+}
+
+.scroll-btn-arrow {
+    animation: arrowBounce 1.5s ease-in-out infinite;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Action Bar Animation (消息操作栏浮出动画)
+   - Slide up from bottom with scale
+   ─────────────────────────────────────────────────────────────────────────── */
+
+@keyframes actionBarSlideIn {
+    0% {
+        transform: translateY(8px) scale(0.95);
+        opacity: 0;
+    }
+    100% {
+        transform: translateY(0) scale(1);
+        opacity: 1;
+    }
+}
+
+@keyframes actionBarSlideOut {
+    0% {
+        transform: translateY(0) scale(1);
+        opacity: 1;
+    }
+    100% {
+        transform: translateY(8px) scale(0.95);
+        opacity: 0;
+    }
+}
+
+.action-bar-enter {
+    animation: actionBarSlideIn 0.2s ease-out forwards;
+}
+
+.action-bar-exit {
+    animation: actionBarSlideOut 0.15s ease-in forwards;
+}
+
+/* Action bar button hover effect */
+.action-bar-btn {
+    transition: all 0.15s ease;
+}
+
+.action-bar-btn:hover {
+    background: var(--orca-color-bg-3);
+    transform: scale(1.1);
+}
+
+.action-bar-btn:active {
+    transform: scale(0.95);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
    Markdown Table Styles
    ─────────────────────────────────────────────────────────────────────────── */
 
@@ -267,8 +480,9 @@ export const chatAnimations = `
 }
 
 .md-table-view-btn.active {
-    background: var(--orca-color-primary-5, var(--orca-color-primary, #007bff));
-    color: #fff;
+    background: var(--orca-color-bg-3, rgba(128, 128, 128, 0.15));
+    color: var(--orca-color-text-1, inherit);
+    border: 1px solid var(--orca-color-border, rgba(128, 128, 128, 0.3));
 }
 
 .md-table-copy-btn {
@@ -428,12 +642,6 @@ export const chatAnimations = `
         background: rgba(255, 255, 255, 0.03);
         border-color: rgba(255, 255, 255, 0.1);
     }
-    
-    /* 标题在暗色模式下的优化 */
-    h1, h2, h3, h4, h5, h6 {
-        background: rgba(255, 255, 255, 0.03) !important;
-        border-left-color: var(--orca-color-primary) !important;
-    }
 }
 
 .md-list-ordered {
@@ -505,8 +713,9 @@ export const chatAnimations = `
     gap: 10px;
     padding: 10px 14px;
     border-radius: 10px;
-    background: linear-gradient(135deg, var(--orca-color-primary, #007bff) 0%, color-mix(in srgb, var(--orca-color-primary, #007bff) 80%, #000) 100%);
-    color: #fff;
+    background: var(--orca-color-bg-3, rgba(128, 128, 128, 0.1));
+    border: 1px solid var(--orca-color-border, rgba(128, 128, 128, 0.2));
+    color: var(--orca-color-text-1, inherit);
     font-weight: 600;
     font-size: 14px;
 }
@@ -624,9 +833,9 @@ export const chatAnimations = `
 }
 
 .md-checkbox.checked {
-    background: var(--orca-color-primary, #007bff);
-    border-color: var(--orca-color-primary, #007bff);
-    color: #fff;
+    background: var(--orca-color-bg-3, rgba(128, 128, 128, 0.15));
+    border-color: var(--orca-color-border, rgba(128, 128, 128, 0.3));
+    color: var(--orca-color-text-1, inherit);
 }
 
 .md-checklist-text {
@@ -976,8 +1185,9 @@ br + .md-block-dot {
 }
 
 .md-gallery-view-btn.active {
-    background: var(--orca-color-primary, #007bff);
-    color: #fff;
+    background: var(--orca-color-bg-3, rgba(128, 128, 128, 0.15));
+    color: var(--orca-color-text-1, inherit);
+    border: 1px solid var(--orca-color-border, rgba(128, 128, 128, 0.3));
 }
 
 /* Grid View */
@@ -1255,6 +1465,33 @@ br + .md-block-dot {
         width: 100% !important;
         max-width: 100% !important;
     }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Panel Background Override
+   去除面板内多余的背景色和边框
+   ─────────────────────────────────────────────────────────────────────────── */
+
+/* .orca-hideable 的直接子元素去掉背景色 */
+#main .orca-panel.active > .orca-hideable > div {
+    background: transparent !important;
+}
+
+/* .orca-hideable 内第一个子元素去掉背景色 */
+#main .orca-panel.active > .orca-hideable > div > div:first-child {
+    background: transparent !important;
+}
+
+/* .orca-hideable 内第四个子元素去掉边框和背景色 */
+#main .orca-panel.active > .orca-hideable > div > div:nth-child(4) {
+    border-top: none !important;
+    background: transparent !important;
+}
+
+/* 用户消息气泡样式调整 */
+.message-bubble-user {
+    background: var(--orca-color-bg-1) !important;
+    box-shadow: none !important;
 }
 
 `;

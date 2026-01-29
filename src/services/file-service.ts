@@ -494,6 +494,43 @@ export async function imageToBase64(fileRef: FileRef): Promise<string | null> {
 }
 
 /**
+ * 将 AVIF base64 转换为 JPEG base64
+ */
+async function convertAvifToJpeg(avifBase64: string): Promise<string | null> {
+  if (typeof window === "undefined" || !window.Image || !window.document) {
+    return null; // 非浏览器环境无法转换
+  }
+
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const canvas = document.createElement("canvas");
+        canvas.width = img.width;
+        canvas.height = img.height;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) {
+          resolve(null);
+          return;
+        }
+        ctx.drawImage(img, 0, 0);
+        const dataUrl = canvas.toDataURL("image/jpeg", 0.8);
+        const base64 = dataUrl.split(",")[1];
+        resolve(base64);
+      } catch (e) {
+        console.error("[file-service] Canvas conversion error:", e);
+        resolve(null);
+      }
+    };
+    img.onerror = () => {
+      console.error("[file-service] Image load error for AVIF conversion");
+      resolve(null);
+    };
+    img.src = `data:image/avif;base64,${avifBase64}`;
+  });
+}
+
+/**
  * 文件转 base64（用于发送 API，支持图片和视频）
  */
 export async function fileToBase64(fileRef: FileRef): Promise<string | null> {
@@ -553,10 +590,65 @@ export async function buildFileContentForApi(
   if (config.category === "image") {
     const base64 = await fileToBase64(fileRef);
     if (!base64) return null;
+    
+    // 确保 mimeType 有效，如果缺失则尝试从扩展名推断
+    let mimeType = fileRef.mimeType;
+    
+    // 尝试从 base64 头部检测真实文件类型 (Magic Numbers)
+    // AVIF: 00 00 00 1C 66 74 79 70 61 76 69 66 (AAAAHGZ0eXBhdmlm)
+    if (base64.startsWith("AAAAHGZ0eXBhdmlm")) {
+      // Anthropic 不支持 AVIF，需要转换
+      // 由于这里是在 Node/Browser 环境混合，我们尝试用 Canvas 转换
+      // 如果无法转换，则只能降级为文本提示
+      try {
+        const converted = await convertAvifToJpeg(base64);
+        if (converted) {
+          return {
+            type: "image_url",
+            image_url: {
+              url: `data:image/jpeg;base64,${converted}`,
+            },
+          };
+        }
+      } catch (e) {
+        console.warn("[file-service] Failed to convert AVIF to JPEG:", e);
+      }
+      
+      // 转换失败，标记为 avif，后续会被降级为文本
+      mimeType = "image/avif";
+    }
+    // PNG: 89 50 4E 47 (iVBORw0KGgo)
+    else if (base64.startsWith("iVBORw0KGgo")) {
+      mimeType = "image/png";
+    }
+    // JPEG: FF D8 FF (/9j/)
+    else if (base64.startsWith("/9j/")) {
+      mimeType = "image/jpeg";
+    }
+    // GIF: 47 49 46 38 (R0lGOD)
+    else if (base64.startsWith("R0lGOD")) {
+      mimeType = "image/gif";
+    }
+    // WebP: 52 49 46 46 (UklGR)
+    else if (base64.startsWith("UklGR")) {
+      mimeType = "image/webp";
+    }
+    // 如果无法从内容检测，且 mimeType 无效，则从扩展名推断
+    else if (!mimeType || mimeType === "application/octet-stream") {
+      const ext = getExtension(fileRef.name);
+      const inferredConfig = Object.values(FILE_TYPE_CONFIGS).find(c => c.extensions.includes(ext));
+      if (inferredConfig && inferredConfig.mimeTypes.length > 0) {
+        mimeType = inferredConfig.mimeTypes[0];
+      } else {
+        // 默认回退
+        mimeType = "image/jpeg";
+      }
+    }
+
     return {
       type: "image_url",
       image_url: {
-        url: `data:${fileRef.mimeType};base64,${base64}`,
+        url: `data:${mimeType};base64,${base64}`,
       },
     };
   }

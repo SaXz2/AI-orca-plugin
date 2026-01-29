@@ -7,6 +7,7 @@
  */
 
 import type { UserProfile } from "../../store/memory-store";
+import { withTooltip } from "../../utils/orca-tooltip";
 import {
   cardStyle,
   cardHeaderStyle,
@@ -210,16 +211,18 @@ export default function UserManagementCard({
       ? { ...userAvatarStyle, transform: "scale(1.05)", background: "var(--orca-color-bg-2)" }
       : userAvatarStyle;
 
-    return createElement(
-      "div",
-      {
-        style: avatarCurrentStyle,
-        onClick: onAvatarClick,
-        onMouseEnter: () => setIsAvatarHovered(true),
-        onMouseLeave: () => setIsAvatarHovered(false),
-        title: "点击更换头像",
-      },
-      activeUser?.emoji || "D"
+    return withTooltip(
+      "点击更换头像",
+      createElement(
+        "div",
+        {
+          style: avatarCurrentStyle,
+          onClick: onAvatarClick,
+          onMouseEnter: () => setIsAvatarHovered(true),
+          onMouseLeave: () => setIsAvatarHovered(false),
+        },
+        activeUser?.emoji || "D"
+      )
     );
   };
 
@@ -248,23 +251,27 @@ export default function UserManagementCard({
             if (e.key === "Escape") handleCancelEditUser();
           },
         }),
-        createElement(
-          "button",
-          {
-            style: { ...iconButtonStyle, color: "var(--orca-color-success, #28a745)" },
-            onClick: handleConfirmEditUser,
-            title: "保存",
-          },
-          createElement("i", { className: "ti ti-check" })
+        withTooltip(
+          "保存",
+          createElement(
+            "button",
+            {
+              style: { ...iconButtonStyle, color: "var(--orca-color-success, #28a745)" },
+              onClick: handleConfirmEditUser,
+            },
+            createElement("i", { className: "ti ti-check" })
+          )
         ),
-        createElement(
-          "button",
-          {
-            style: iconButtonStyle,
-            onClick: handleCancelEditUser,
-            title: "取消",
-          },
-          createElement("i", { className: "ti ti-x" })
+        withTooltip(
+          "取消",
+          createElement(
+            "button",
+            {
+              style: iconButtonStyle,
+              onClick: handleCancelEditUser,
+            },
+            createElement("i", { className: "ti ti-x" })
+          )
         )
       );
     }
@@ -304,23 +311,27 @@ export default function UserManagementCard({
           if (e.key === "Escape") handleCancelAddUser();
         },
       }),
-      createElement(
-        "button",
-        {
-          style: { ...iconButtonStyle, color: "var(--orca-color-success, #28a745)" },
-          onClick: handleConfirmAddUser,
-          title: "确认添加",
-        },
-        createElement("i", { className: "ti ti-check" })
+      withTooltip(
+        "确认添加",
+        createElement(
+          "button",
+          {
+            style: { ...iconButtonStyle, color: "var(--orca-color-success, #28a745)" },
+            onClick: handleConfirmAddUser,
+          },
+          createElement("i", { className: "ti ti-check" })
+        )
       ),
-      createElement(
-        "button",
-        {
-          style: iconButtonStyle,
-          onClick: handleCancelAddUser,
-          title: "取消",
-        },
-        createElement("i", { className: "ti ti-x" })
+      withTooltip(
+        "取消",
+        createElement(
+          "button",
+          {
+            style: iconButtonStyle,
+            onClick: handleCancelAddUser,
+          },
+          createElement("i", { className: "ti ti-x" })
+        )
       )
     );
   };
@@ -346,45 +357,45 @@ export default function UserManagementCard({
 
         const badgeStyle = isActive ? userTabBadgeActiveStyle : userTabBadgeStyle;
 
-        return createElement(
-          "button",
-          {
-            key: user.id,
-            style: tabStyle,
-            onClick: () => {
-              if (!isActive) {
-                onUserChange(user.id);
-              }
+        return withTooltip(
+          isDisabled ? `${user.name} (已禁用 - 右键启用)` : `${user.name} (右键禁用)`,
+          createElement(
+            "button",
+            {
+              key: user.id,
+              style: tabStyle,
+              onClick: () => {
+                if (!isActive) {
+                  onUserChange(user.id);
+                }
+              },
+              onContextMenu: (e: any) => {
+                e.preventDefault();
+                if (onToggleUserDisabled) {
+                  onToggleUserDisabled(user.id);
+                }
+              },
+              onMouseEnter: (e: any) => {
+                if (!isActive && !isDisabled) {
+                  e.currentTarget.style.background = "var(--orca-color-bg-2)";
+                  e.currentTarget.style.borderColor = "var(--orca-color-text-2)";
+                }
+              },
+              onMouseLeave: (e: any) => {
+                if (!isActive && !isDisabled) {
+                  e.currentTarget.style.background = "var(--orca-color-bg-1)";
+                  e.currentTarget.style.borderColor = "var(--orca-color-border)";
+                }
+              },
             },
-            onContextMenu: (e: any) => {
-              e.preventDefault();
-              if (onToggleUserDisabled) {
-                onToggleUserDisabled(user.id);
-              }
-            },
-            title: isDisabled 
-              ? `${user.name} (已禁用 - 右键启用)` 
-              : `${user.name} (右键禁用)`,
-            onMouseEnter: (e: any) => {
-              if (!isActive && !isDisabled) {
-                e.currentTarget.style.background = "var(--orca-color-bg-2)";
-                e.currentTarget.style.borderColor = "var(--orca-color-text-2)";
-              }
-            },
-            onMouseLeave: (e: any) => {
-              if (!isActive && !isDisabled) {
-                e.currentTarget.style.background = "var(--orca-color-bg-1)";
-                e.currentTarget.style.borderColor = "var(--orca-color-border)";
-              }
-            },
-          },
-          createElement("span", null, user.emoji),
-          createElement("span", null, user.name),
-          memoryCount > 0 && createElement("span", { style: badgeStyle }, memoryCount),
-          isDisabled && createElement("i", { 
-            className: "ti ti-ban", 
-            style: { fontSize: "11px", opacity: 0.6 } 
-          })
+            createElement("span", null, user.emoji),
+            createElement("span", null, user.name),
+            memoryCount > 0 && createElement("span", { style: badgeStyle }, memoryCount),
+            isDisabled && createElement("i", {
+              className: "ti ti-ban",
+              style: { fontSize: "11px", opacity: 0.6 },
+            })
+          )
         );
       })
     );
@@ -399,15 +410,33 @@ export default function UserManagementCard({
       "div",
       { style: cardActionsStyle, onClick: (e: any) => e.stopPropagation() },
       onSetAsSelf &&
+        withTooltip(
+          isSelf ? "取消设为我自己" : "设为我自己",
+          createElement(
+            "button",
+            {
+              style: {
+                ...userActionButtonStyle,
+                color: isSelf ? "var(--orca-color-text-1)" : undefined,
+              },
+              onClick: handleToggleSelf,
+              onMouseEnter: (e: any) => {
+                e.currentTarget.style.background = "var(--orca-color-bg-2)";
+              },
+              onMouseLeave: (e: any) => {
+                e.currentTarget.style.background = "transparent";
+              },
+            },
+            createElement("i", { className: isSelf ? "ti ti-user-check" : "ti ti-user-heart" })
+          )
+        ),
+      withTooltip(
+        "添加用户",
         createElement(
           "button",
           {
-            style: {
-              ...userActionButtonStyle,
-              color: isSelf ? "var(--orca-color-text-1)" : undefined,
-            },
-            onClick: handleToggleSelf,
-            title: isSelf ? "取消设为我自己" : "设为我自己",
+            style: userActionButtonStyle,
+            onClick: handleStartAddUser,
             onMouseEnter: (e: any) => {
               e.currentTarget.style.background = "var(--orca-color-bg-2)";
             },
@@ -415,53 +444,43 @@ export default function UserManagementCard({
               e.currentTarget.style.background = "transparent";
             },
           },
-          createElement("i", { className: isSelf ? "ti ti-user-check" : "ti ti-user-heart" })
-        ),
-      createElement(
-        "button",
-        {
-          style: userActionButtonStyle,
-          onClick: handleStartAddUser,
-          title: "添加用户",
-          onMouseEnter: (e: any) => {
-            e.currentTarget.style.background = "var(--orca-color-bg-2)";
-          },
-          onMouseLeave: (e: any) => {
-            e.currentTarget.style.background = "transparent";
-          },
-        },
-        createElement("i", { className: "ti ti-user-plus" })
+          createElement("i", { className: "ti ti-user-plus" })
+        )
       ),
-      createElement(
-        "button",
-        {
-          style: userActionButtonStyle,
-          onClick: handleStartEditUser,
-          title: "编辑用户名",
-          onMouseEnter: (e: any) => {
-            e.currentTarget.style.background = "var(--orca-color-bg-2)";
+      withTooltip(
+        "编辑用户名",
+        createElement(
+          "button",
+          {
+            style: userActionButtonStyle,
+            onClick: handleStartEditUser,
+            onMouseEnter: (e: any) => {
+              e.currentTarget.style.background = "var(--orca-color-bg-2)";
+            },
+            onMouseLeave: (e: any) => {
+              e.currentTarget.style.background = "transparent";
+            },
           },
-          onMouseLeave: (e: any) => {
-            e.currentTarget.style.background = "transparent";
-          },
-        },
-        createElement("i", { className: "ti ti-pencil" })
+          createElement("i", { className: "ti ti-pencil" })
+        )
       ),
       !activeUser?.isDefault &&
-        createElement(
-          "button",
-          {
-            style: { ...userActionButtonStyle, color: "var(--orca-color-danger, #dc3545)" },
-            onClick: handleDeleteUser,
-            title: "删除用户",
-            onMouseEnter: (e: any) => {
-              e.currentTarget.style.background = "var(--orca-color-bg-2)";
+        withTooltip(
+          "删除用户",
+          createElement(
+            "button",
+            {
+              style: { ...userActionButtonStyle, color: "var(--orca-color-danger, #dc3545)" },
+              onClick: handleDeleteUser,
+              onMouseEnter: (e: any) => {
+                e.currentTarget.style.background = "var(--orca-color-bg-2)";
+              },
+              onMouseLeave: (e: any) => {
+                e.currentTarget.style.background = "transparent";
+              },
             },
-            onMouseLeave: (e: any) => {
-              e.currentTarget.style.background = "transparent";
-            },
-          },
-          createElement("i", { className: "ti ti-trash" })
+            createElement("i", { className: "ti ti-trash" })
+          )
         )
     );
   };

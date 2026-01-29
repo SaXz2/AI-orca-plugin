@@ -9,6 +9,7 @@
 
 import MarkdownMessage from "./MarkdownMessage";
 import TypingIndicator from "./TypingIndicator";
+import { withTooltip } from "../utils/orca-tooltip";
 
 const React = window.React as unknown as {
   createElement: typeof window.React.createElement;
@@ -21,6 +22,8 @@ const { createElement, useState, useCallback, useMemo, useEffect } = React;
 
 /** 单个模型的响应状态 */
 export interface ModelResponse {
+  /** 模型唯一键 (格式: "providerId:modelId") */
+  modelKey: string;
   modelId: string;
   modelLabel: string;
   providerId: string;
@@ -191,48 +194,52 @@ function ModelResponseCard({
           },
           // Copy button
           onCopy &&
-            createElement(
-              "button",
-              {
-                onClick: handleCopy,
-                style: {
-                  padding: "4px 8px",
-                  border: "none",
-                  borderRadius: "4px",
-                  background: "var(--orca-color-bg-3)",
-                  color: "var(--orca-color-text-2)",
-                  cursor: "pointer",
-                  fontSize: "12px",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "4px",
+            withTooltip(
+              "复制内容",
+              createElement(
+                "button",
+                {
+                  onClick: handleCopy,
+                  style: {
+                    padding: "4px 8px",
+                    border: "none",
+                    borderRadius: "4px",
+                    background: "var(--orca-color-bg-3)",
+                    color: "var(--orca-color-text-2)",
+                    cursor: "pointer",
+                    fontSize: "12px",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "4px",
+                  },
                 },
-                title: "复制内容",
-              },
-              createElement("i", { className: "ti ti-copy", style: { fontSize: "14px" } })
+                createElement("i", { className: "ti ti-copy", style: { fontSize: "14px" } })
+              )
             ),
           // Adopt button
           onAdopt &&
-            createElement(
-              "button",
-              {
-                onClick: handleAdopt,
-                style: {
-                  padding: "4px 8px",
-                  border: "none",
-                  borderRadius: "4px",
-                  background: "var(--orca-color-primary)",
-                  color: "white",
-                  cursor: "pointer",
-                  fontSize: "12px",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "4px",
+            withTooltip(
+              "采用此回答",
+              createElement(
+                "button",
+                {
+                  onClick: handleAdopt,
+                  style: {
+                    padding: "4px 8px",
+                    border: "1px solid var(--orca-color-border)",
+                    borderRadius: "4px",
+                    background: "var(--orca-color-bg-3)",
+                    color: "var(--orca-color-text-1)",
+                    cursor: "pointer",
+                    fontSize: "12px",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "4px",
+                  },
                 },
-                title: "采用此回答",
-              },
-              createElement("i", { className: "ti ti-check", style: { fontSize: "14px" } }),
-              "采用"
+                createElement("i", { className: "ti ti-check", style: { fontSize: "14px" } }),
+                "采用"
+              )
             )
         )
       )
@@ -380,10 +387,10 @@ export default function MultiModelResponse({
     { style: containerStyle },
     ...responses.map((response) =>
       createElement(ModelResponseCard, {
-        key: response.modelId,
+        key: response.modelKey,
         response,
-        onCopy: onCopy ? (content: string) => onCopy(response.modelId, content) : undefined,
-        onAdopt: onAdopt ? (content: string) => onAdopt(response.modelId, content) : undefined,
+        onCopy: onCopy ? (content: string) => onCopy(response.modelKey, content) : undefined,
+        onAdopt: onAdopt ? (content: string) => onAdopt(response.modelKey, content) : undefined,
       })
     )
   );

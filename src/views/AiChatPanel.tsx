@@ -10,6 +10,7 @@ import { findViewPanelById } from "../utils/panel-tree";
 import { generateSuggestedReplies } from "../services/suggestion-service";
 import { estimateTokens, formatTokenCount } from "../utils/token-utils";
 import { isSameDay, formatDateSeparator, getTimeGreeting } from "../utils/chat-ui-utils";
+import { withTooltip } from "../utils/orca-tooltip";
 import ChatInput from "./ChatInput";
 import MarkdownMessage from "../components/MarkdownMessage";
 import MessageItem from "./MessageItem";
@@ -18,8 +19,9 @@ import ScrollToBottomButton from "../components/ScrollToBottomButton";
 import ErrorMessage from "../components/ErrorMessage";
 import ChatHistoryMenu from "./ChatHistoryMenu";
 import HeaderMenu from "./HeaderMenu";
-import CompressionSettingsModal from "./CompressionSettingsModal";
+import StreamSettingsModal from "./StreamSettingsModal";
 import WebSearchSettingsModal from "./WebSearchSettingsModal";
+import VisionModelSettingsModal from "./VisionModelSettingsModal";
 import EmptyState from "./EmptyState";
 import TypingIndicator from "../components/TypingIndicator";
 import MemoryManager from "./MemoryManager";
@@ -28,6 +30,7 @@ import FlashcardReview, { type Flashcard } from "../components/FlashcardReview";
 import GlobalImagePreview from "../components/GlobalImagePreview";
 import TodoistModals from "./TodoistModals";
 import TodoistSettingsModal from "./TodoistSettingsModal";
+import SkillManagerModal from "./SkillManagerModal";
 import { todoistModalStore } from "../store/todoist-store";
 import { injectChatStyles } from "../styles/chat-animations";
 import {
@@ -37,11 +40,13 @@ import {
   getSelectedProvider,
   updateAiChatSettings,
   validateCurrentConfig,
+  modelSupportsTools,
   DEFAULT_SYSTEM_PROMPT,
   type AiChatSettings,
 } from "../settings/ai-chat-settings";
 import {
   loadSessions,
+  loadFullSession,
   deleteSession,
   clearAllSessions,
   createNewSession,
@@ -56,14 +61,16 @@ import {
 } from "../services/session-service";
 import { exportSessionAsFile, saveSessionToJournal, saveMessagesToJournal } from "../services/export-service";
 import { sessionStore, updateSessionStore, clearSessionStore } from "../store/session-store";
-import { TOOLS, FLASHCARD_TOOL, executeTool, getToolsForDraggedContext, getTools, extractSearchResultsFromToolResults } from "../services/ai-tools";
+import { TOOLS, FLASHCARD_TOOL, executeTool, getToolsForDraggedContext, getTools, extractSearchResultsFromToolResults, getSkillToolsAsync, getSkillInstructionsAsync, getSkillToolName, resolveSkillIdFromToolName, detectToolCategories, getToolsByCategories } from "../services/ai-tools";
 import { TODOIST_TOOLS, executeTodoistTool, isTodoistTool } from "../services/todoist-tools";
+import { startPythonServer, stopPythonServer, getPythonServerStatus, browserAIChat, browserAIStatus as checkBrowserAIStatus } from "../services/python-runtime";
 import { getToolStatus, isToolDisabled, shouldAskForTool, isAgenticRAGEnabled, getAgenticRAGConfig } from "../store/tool-store";
+import { listSkills, getSkill, type Skill } from "../services/skills-manager";
 import { nowId, safeText } from "../utils/text-utils";
 import { buildConversationMessages } from "../services/message-builder";
 import { streamChatWithRetry, type ToolCallInfo } from "../services/chat-stream-handler";
+import type { OpenAIChatMessage } from "../services/openai-client";
 import { executeAgenticRAG, formatRAGSteps, getToolDisplayName } from "../services/agentic-rag-service";
-import { clearSummaryCache } from "../services/compression-service";
 import { normalizeWebSearchResults, type WebSearchSource } from "../utils/source-attribution";
 import {
   panelContainerStyle,
@@ -74,6 +81,13 @@ import {
   loadingBubbleStyle,
 } from "../styles/ai-chat-styles";
 import { multiModelStore } from "../store/multi-model-store";
+import {
+  createBranch,
+  switchBranch,
+  deleteBranch,
+  renameBranch,
+  getActiveBranchId,
+} from "../services/branch-service";
 import MultiModelResponse, { type ModelResponse } from "../components/MultiModelResponse";
 import {
   streamMultiModelChat,
@@ -233,44 +247,46 @@ function EditableTitle({ title, onSave }: EditableTitleProps) {
     });
   }
 
-  return createElement(
-    "div",
-    {
-      style: {
-        ...headerTitleStyle,
-        cursor: "pointer",
-        display: "flex",
-        alignItems: "center",
-        gap: 4,
-        padding: "2px 4px",
-        borderRadius: 4,
-        transition: "background 0.15s",
+  return withTooltip(
+    "点击编辑标题",
+    createElement(
+      "div",
+      {
+        style: {
+          ...headerTitleStyle,
+          cursor: "pointer",
+          display: "flex",
+          alignItems: "center",
+          gap: 4,
+          padding: "2px 4px",
+          borderRadius: 4,
+          transition: "background 0.15s",
+        },
+        onClick: () => setIsEditing(true),
+        onMouseOver: (e: any) => {
+          e.currentTarget.style.background = "var(--orca-color-bg-2)";
+        },
+        onMouseOut: (e: any) => {
+          e.currentTarget.style.background = "transparent";
+        },
       },
-      onClick: () => setIsEditing(true),
-      title: "点击编辑标题",
-      onMouseOver: (e: any) => {
-        e.currentTarget.style.background = "var(--orca-color-bg-2)";
-      },
-      onMouseOut: (e: any) => {
-        e.currentTarget.style.background = "transparent";
-      },
-    },
-    createElement("span", {
-      style: {
-        overflow: "hidden",
-        textOverflow: "ellipsis",
-        whiteSpace: "nowrap",
-        maxWidth: 180,
-      },
-    }, title),
-    createElement("i", {
-      className: "ti ti-edit",
-      style: {
-        fontSize: 12,
-        opacity: 0.5,
-        flexShrink: 0,
-      },
-    })
+      createElement("span", {
+        style: {
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+          maxWidth: 180,
+        },
+      }, title),
+      createElement("i", {
+        className: "ti ti-edit",
+        style: {
+          fontSize: 12,
+          opacity: 0.5,
+          flexShrink: 0,
+        },
+      })
+    )
   );
 }
 
@@ -318,18 +334,37 @@ export default function AiChatPanel({ panelId }: PanelProps) {
   const [multiModelResponses, setMultiModelResponses] = useState<ModelResponse[]>([]);
   const [isMultiModelMode, setIsMultiModelMode] = useState(false);
 
-  // Compression settings modal state
-  const [showCompressionSettings, setShowCompressionSettings] = useState(false);
+  // Stream settings modal state
+  const [showStreamSettings, setShowStreamSettings] = useState(false);
 
   // Web search settings modal state
   const [showWebSearchSettings, setShowWebSearchSettings] = useState(false);
 
+  // Vision model settings modal state
+  const [showVisionModelSettings, setShowVisionModelSettings] = useState(false);
+
+  // Skill manager modal state
+  const [showSkillManager, setShowSkillManager] = useState(false);
+
   // Todoist settings modal state
   const [showTodoistSettings, setShowTodoistSettings] = useState(false);
+
+  // Python server state
+  const [pythonServerStatus, setPythonServerStatus] = useState<"running" | "stopped" | "starting">("stopped");
+
+  // Browser AI mode state (use ChatGPT via browser instead of API)
+  const [browserAIMode, setBrowserAIMode] = useState(false);
+  const [browserAIStatus, setBrowserAIStatus] = useState<"connected" | "disconnected" | "checking">("disconnected");
+  // 跟踪浏览器 AI 会话是否已发送首次消息（包含记忆和上下文），后续消息不再重复注入
+  const browserAIFirstMessageSentRef = useRef(false);
 
   // Message selection mode state (for batch save)
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedMessageIds, setSelectedMessageIds] = useState<Set<string>>(new Set());
+
+  // Branch management state (对话分支功能)
+  const [currentBranchId, setCurrentBranchId] = useState<string | null>(null);
+
 
   // Scroll to bottom button state
   // **Feature: chat-ui-enhancement**
@@ -338,6 +373,7 @@ export default function AiChatPanel({ panelId }: PanelProps) {
 
   const listRef = useRef<HTMLDivElement | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const skillConfirmResolversRef = useRef(new Map<string, (approved: boolean) => void>());
   // 追踪用户是否在底部附近，用于决定流式输出时是否自动滚动
   const isNearBottomRef = useRef(true);
   const scrollAnimationStateRef = useRef<ScrollAnimationState>({ rafId: null, cancelToken: 0 });
@@ -392,6 +428,78 @@ export default function AiChatPanel({ panelId }: PanelProps) {
     scrollToBottomIfNeeded();
   }, [scrollToBottomIfNeeded]);
 
+  const extractJsonPayload = useCallback((raw: string): any | null => {
+    if (!raw) return null;
+    const cleaned = raw
+      .trim()
+      .replace(/```json/gi, "")
+      .replace(/```/g, "")
+      .trim();
+    if (!cleaned) return null;
+    try {
+      return JSON.parse(cleaned);
+    } catch {}
+    const match = cleaned.match(/\{[\s\S]*\}/);
+    if (!match) return null;
+    try {
+      return JSON.parse(match[0]);
+    } catch {
+      return null;
+    }
+  }, []);
+
+  const requestSkillConfirm = useCallback((skill: Skill): Promise<boolean> => {
+    return new Promise((resolve) => {
+      const messageId = nowId();
+      const createdAt = Date.now();
+      const stepSummary = [skill.metadata.description || skill.instruction.slice(0, 200)];
+      skillConfirmResolversRef.current.set(messageId, resolve);
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: messageId,
+          role: "assistant",
+          content: "",
+          createdAt,
+          localOnly: true,
+          skillConfirm: {
+            skillId: skill.id,
+            skillName: skill.metadata.name,
+            steps: stepSummary,
+            status: "pending",
+          },
+        },
+      ]);
+    });
+  }, []);
+
+  const handleSkillConfirmAction = useCallback((messageId: string, approved: boolean) => {
+    const resolver = skillConfirmResolversRef.current.get(messageId);
+    if (resolver) {
+      resolver(approved);
+      skillConfirmResolversRef.current.delete(messageId);
+    }
+
+    setMessages((prev) =>
+      prev.map((m) => {
+        if (m.id !== messageId || !m.skillConfirm) return m;
+        return {
+          ...m,
+          skillConfirm: {
+            ...m.skillConfirm,
+            status: approved ? "approved" : "denied",
+          },
+        };
+      })
+    );
+  }, []);
+
+  const handleSkillSlashCommand = useCallback(async (rawContent: string, requestText: string) => {
+    // Skill slash command is no longer supported in the new system
+    // This function is kept for compatibility but does nothing
+    orca.notify("info", "技能编写功能暂不可用，请使用技能管理器创建新技能");
+  }, []);
+
   const displaySessionTitle = useMemo(() => {
     const title = (currentSession.title || "").trim();
     if (title) return title;
@@ -439,10 +547,11 @@ export default function AiChatPanel({ panelId }: PanelProps) {
     const settings = getAiChatSettings(pluginName);
     const defaultModel = settings.selectedModelId;
 
-    loadSessions().then((data) => {
+    loadSessions().then(async (data) => {
       setSessions(data.sessions);
       if (data.activeSessionId) {
-        const active = data.sessions.find((s) => s.id === data.activeSessionId);
+        // 加载完整会话数据（包含消息）
+        const active = await loadFullSession(data.activeSessionId);
         if (active) {
           // 恢复会话（即使没有消息，也可能有闪卡状态）
           setCurrentSession({
@@ -490,10 +599,6 @@ export default function AiChatPanel({ panelId }: PanelProps) {
     const settings = getAiChatSettings(pluginName);
     const defaultModel = settings.selectedModelId;
 
-    // 清理旧会话的压缩缓存（重要！防止旧对话摘要泄漏到新对话）
-    if (currentSession.id) {
-      clearSummaryCache(currentSession.id);
-    }
 
     // 创建全新的会话，确保 ID 是新的
     const newSession = { ...createNewSession(), model: defaultModel };
@@ -526,9 +631,6 @@ export default function AiChatPanel({ panelId }: PanelProps) {
     const settings = getAiChatSettings(pluginName);
     const defaultModel = settings.selectedModelId;
 
-    const session = sessions.find((s) => s.id === sessionId);
-    if (!session) return;
-
     // 保存当前会话的滚动位置
     if (listRef.current && currentSession.id !== sessionId) {
       setCurrentSession((prev) => ({
@@ -536,6 +638,10 @@ export default function AiChatPanel({ panelId }: PanelProps) {
         scrollPosition: listRef.current?.scrollTop ?? 0,
       }));
     }
+
+    // 加载完整会话数据（包含消息）
+    const session = await loadFullSession(sessionId);
+    if (!session) return;
 
     setCurrentSession({
       ...session,
@@ -583,7 +689,7 @@ export default function AiChatPanel({ panelId }: PanelProps) {
         }
       }
     }, 50);
-  }, [sessions, currentSession.id]);
+  }, [currentSession.id]);
 
   const handleDeleteSession = useCallback(async (sessionId: string) => {
     await deleteSession(sessionId);
@@ -680,6 +786,75 @@ export default function AiChatPanel({ panelId }: PanelProps) {
   useEffect(() => () => { clearSessionStore(); }, []);
   useEffect(() => () => { if (abortRef.current) abortRef.current.abort(); }, []);
   useEffect(() => () => { cancelAutoScroll(); }, [cancelAutoScroll]);
+
+  // Check Python server status on mount
+  useEffect(() => {
+    getPythonServerStatus().then((status) => {
+      setPythonServerStatus(status.running ? "running" : "stopped");
+    });
+  }, []);
+
+  // Handle Python server start
+  const handleStartPythonServer = useCallback(async () => {
+    if (pythonServerStatus === "starting") return;
+    
+    if (pythonServerStatus === "running") {
+      orca.notify("info", "Python 服务器已在运行");
+      return;
+    }
+    
+    setPythonServerStatus("starting");
+    const result = await startPythonServer();
+    
+    if (result.success) {
+      setPythonServerStatus("running");
+      orca.notify("success", result.message);
+    } else {
+      setPythonServerStatus("stopped");
+      orca.notify("error", result.message);
+    }
+  }, [pythonServerStatus]);
+
+  // Handle Python server stop
+  const handleStopPythonServer = useCallback(async () => {
+    if (pythonServerStatus !== "running") return;
+    
+    const result = await stopPythonServer();
+    
+    if (result.success) {
+      setPythonServerStatus("stopped");
+      orca.notify("success", result.message);
+    } else {
+      orca.notify("error", result.message);
+    }
+  }, [pythonServerStatus]);
+
+  // Handle Browser AI mode toggle
+  const handleToggleBrowserAI = useCallback(async () => {
+    if (browserAIMode) {
+      // 关闭浏览器 AI 模式
+      setBrowserAIMode(false);
+      setBrowserAIStatus("disconnected");
+      browserAIFirstMessageSentRef.current = false; // 重置首次消息标记
+      orca.notify("info", "已关闭浏览器 AI 模式");
+    } else {
+      // 开启浏览器 AI 模式，先检查连接状态
+      setBrowserAIStatus("checking");
+      browserAIFirstMessageSentRef.current = false; // 重置首次消息标记
+      const status = await checkBrowserAIStatus();
+      
+      if (status.ok && status.connected) {
+        setBrowserAIMode(true);
+        setBrowserAIStatus("connected");
+        orca.notify("success", `已连接到 ${status.tab || "ChatGPT"}`);
+      } else {
+        setBrowserAIStatus("disconnected");
+        orca.notify("warn", status.error || "无法连接浏览器 AI，请确保：\n1. Python 服务器已启动\n2. Edge 以调试模式运行\n3. ChatGPT 页面已打开");
+        // 仍然开启模式，让用户可以尝试
+        setBrowserAIMode(true);
+      }
+    }
+  }, [browserAIMode]);
 
   // ─────────────────────────────────────────────────────────────────────────
   // Scroll to Bottom Button Detection
@@ -794,7 +969,7 @@ export default function AiChatPanel({ panelId }: PanelProps) {
     // Todoist 命令拦截（不发送给 AI，直接执行）
     // ─────────────────────────────────────────────────────────────────────
     const trimmedContent = content.trim();
-    
+
     // /todoist - 查看今日任务
     if (trimmedContent === "/todoist" || trimmedContent.startsWith("/todoist ")) {
       todoistModalStore.viewMode = "today";
@@ -836,6 +1011,13 @@ export default function AiChatPanel({ panelId }: PanelProps) {
       await new Promise(resolve => setTimeout(resolve, 100));
     }
 
+    // /skill - 生成技能草稿（不发送给 AI 对话流）
+    if (trimmedContent === "/skill" || trimmedContent.startsWith("/skill ")) {
+      const requestText = trimmedContent.replace(/^\/skill\s*/, "").trim();
+      await handleSkillSlashCommand(content, requestText);
+      return;
+    }
+
 	    const pluginName = getAiChatPluginName();
 	    const settings = getAiChatSettings(pluginName);
 	    // 工具调用最大轮数：可在设置中配置；若缺失则默认 5（向后兼容）
@@ -845,6 +1027,80 @@ export default function AiChatPanel({ panelId }: PanelProps) {
 
 	    // 检测用户指令并追加格式要求
 	    let processedContent = content;
+	    
+	    // Skill 加载逻辑：如果用户输入 #skillname，尝试加载 Skill
+	    if (content.startsWith("#")) {
+	      const spaceIndex = content.indexOf(" ");
+	      const skillName = spaceIndex > 0 ? content.slice(1, spaceIndex) : content.slice(1);
+	      const restText = spaceIndex > 0 ? content.slice(spaceIndex + 1).trim() : "";
+	      
+	      // 尝试加载 Skill
+	      try {
+	        const { listSkills, getSkill } = await import("../services/skills-manager");
+	        const allSkills = await listSkills();
+	        
+	        // 查找匹配的 Skill（名称或 ID）
+	        const skillRef = allSkills.find(s => {
+	          // 这里 skillRef 只有 id 和 isGlobal，需要加载完整 Skill 来获取 name
+	          return s.id === skillName;
+	        });
+	        
+	        // 如果没找到精确匹配，尝试通过 name 匹配
+	        let foundSkill = null;
+	        if (skillRef) {
+	          foundSkill = await getSkill(skillRef.id, skillRef.isGlobal);
+	        } else {
+	          // 遍历所有 Skill 查找 name 匹配
+	          for (const ref of allSkills) {
+	            const skill = await getSkill(ref.id, ref.isGlobal);
+	            if (skill && skill.metadata.name === skillName) {
+	              foundSkill = skill;
+	              break;
+	            }
+	          }
+	        }
+	        
+	        if (foundSkill) {
+	          // 使用现有的 requestSkillConfirm 机制显示确认对话框
+	          const confirmed = await requestSkillConfirm(foundSkill);
+	          
+	          if (!confirmed) {
+	            // 用户取消，不继续执行
+	            return;
+	          }
+	          
+	          // 用户确认，加载 Skill 指令
+	          processedContent = restText ? `${foundSkill.instruction}\n\n## 用户输入\n${restText}` : foundSkill.instruction;
+	        }
+	      } catch (err) {
+	        console.error("[handleSend] Failed to load skill:", err);
+	      }
+	    }
+	    
+	    // Commands 加载逻辑：如果用户输入 /commandname，尝试加载命令文件
+	    if (content.startsWith("/")) {
+	      const spaceIndex = content.indexOf(" ");
+	      const commandName = spaceIndex > 0 ? content.slice(1, spaceIndex) : content.slice(1);
+	      const restText = spaceIndex > 0 ? content.slice(spaceIndex + 1).trim() : "";
+	      
+	      // 检查是否是内置 UI 命令（如 /table, /brief, /localgraph 等）
+	      const builtinCommands = [
+	        "table", "timeline", "compare", "list", "steps", "brief", "detail", "summary", "eli5", "formal", "diagram",
+	        "localgraph", "mindmap", "card", "skill",
+	        "todoist", "todoist-all", "todoist-add", "todoist-done", "todoist-ai"
+	      ];
+	      const isBuiltinCommand = builtinCommands.includes(commandName);
+	      
+	      if (!isBuiltinCommand) {
+	        // 尝试从 Commands 文件夹加载命令
+	        const { loadCommand } = await import("../services/commands-loader");
+	        const commandContent = await loadCommand(commandName);
+	        if (commandContent) {
+	          // 拼接命令内容和用户输入（发送给 AI）
+	          processedContent = restText ? `${commandContent}\n\n${restText}` : commandContent;
+	        }
+	      }
+	    }
 	    
 	    // /timeline - 时间线格式
 	    if (content.includes("/timeline")) {
@@ -1213,12 +1469,13 @@ graph TD
 	      } catch {}
 	      
 	      // 使用专用的闪卡工具（不在普通 TOOLS 列表中）
-	      const { standard: apiMessages, fallback: apiMessagesFallback } = await buildConversationMessages({
+      const { standard: apiMessages, fallback: apiMessagesFallback } = await buildConversationMessages({
 	        messages: conversationForFlashcard,
 	        systemPrompt: flashcardSystemPrompt,
 	        contextText,
 	        customMemory: memoryText,
 	        chatMode: "agent", // 使用工具模式
+	        modelId: model,
 	      });
 	      
 	      // 获取模型特定的 API 配置
@@ -1233,16 +1490,18 @@ graph TD
 	        let mergedToolCalls: ToolCallInfo[] = [];
 	        
 	        // Stream tool calls and content, then process the final tool args.
-	        for await (const chunk of streamChatWithRetry(
-	          {
-	            apiUrl: apiConfig.apiUrl,
-	            apiKey: apiConfig.apiKey,
-	            model,
-	            temperature: settings.temperature,
-	            maxTokens: settings.maxTokens,
-	            signal: aborter.signal,
-	            tools: [FLASHCARD_TOOL],
-	          },
+          for await (const chunk of streamChatWithRetry(
+            {
+              apiUrl: apiConfig.apiUrl,
+              apiKey: apiConfig.apiKey,
+              model,
+              protocol: apiConfig.protocol,
+              anthropicApiPath: apiConfig.anthropicApiPath,
+              temperature: settings.temperature,
+              maxTokens: settings.maxTokens,
+              signal: aborter.signal,
+              tools: [FLASHCARD_TOOL],
+            },
 	          apiMessages,
 	          apiMessagesFallback || apiMessages,
 	        )) {
@@ -1408,11 +1667,12 @@ graph TD
           contextText,
           customMemory: memoryText,
           chatMode: "ask", // 多模型模式下不使用工具
+          // 多模型模式不传 modelId，因为每个模型都不同
         });
         
         // 并行流式请求所有模型
         for await (const update of streamMultiModelChat({
-          modelIds: selectedModels,
+          modelKeys: selectedModels,
           messages: apiMessages,
           fallbackMessages: apiMessagesFallback,
           temperature: settings.temperature,
@@ -1436,8 +1696,7 @@ graph TD
     }
     // ─────────────────────────────────────────────────────────────────────────
 
-    // 发送给 API 的消息使用处理后的内容（去掉指令）
-    const userMsgForApi: Message = { 
+    const userMsgForApi: Message = {
       id: userMsg.id, 
       role: "user", 
       content: processedContent, 
@@ -1527,18 +1786,33 @@ graph TD
         customMemory: memoryText,
         chatMode: currentChatMode,
         maxHistoryMessages: settings.maxHistoryMessages,
-        enableCompression: settings.enableCompression,
-        compressAfterMessages: settings.compressAfterMessages,
-        sessionId: currentSession.id,
-        apiConfig: { apiUrl: apiConfig.apiUrl, apiKey: apiConfig.apiKey, model },
+        modelId: model,
       });
 
       // 根据是否有拖入的块来选择工具列表
       // 有拖入块时禁用搜索类工具，强制 AI 使用已提供的上下文
       const hasHighPriorityContext = highPriorityContexts.length > 0;
-      // 根据用户工具设置过滤工具列表（排除禁用的工具）
-      // 使用 getTools() 动态获取工具列表（包含联网搜索工具，如果已启用）
-      let baseTools = hasHighPriorityContext ? getToolsForDraggedContext() : getTools();
+      
+      // 💡 智能工具加载：根据用户输入检测需要的工具类别
+      const detectedCategories = detectToolCategories(processedContent);
+      const needsTools = detectedCategories.size > 0;
+      
+      // 如果没有检测到需要工具，跳过工具加载
+      let baseTools = hasHighPriorityContext 
+        ? getToolsForDraggedContext() 
+        : (needsTools ? getToolsByCategories(detectedCategories) : []);
+      
+      // 动态加载 Skill 工具（只有检测到需要时）
+      if (needsTools && detectedCategories.has("skill")) {
+        try {
+          const skillTools = await getSkillToolsAsync();
+          if (skillTools.length > 0) {
+            baseTools = [...baseTools, ...skillTools];
+          }
+        } catch (err) {
+          console.warn("[AiChatPanel] Failed to load skill tools:", err);
+        }
+      }
       
       // 如果启用了 Todoist AI 模式，注入 Todoist 工具
       if (enableTodoistTools) {
@@ -1546,7 +1820,20 @@ graph TD
       }
       
       const filteredTools = baseTools.filter(tool => !isToolDisabled(tool.function.name));
-      const toolsToUse = includeTools && filteredTools.length > 0 ? filteredTools : undefined;
+      
+      // 检查模型是否支持原生 function calling
+      const supportsTools = modelSupportsTools(settings, model);
+      
+      // 调试日志：显示加载的工具数量
+      if (filteredTools.length > 0) {
+        if (supportsTools) {
+          console.log(`[AiChatPanel] 智能工具加载: ${filteredTools.length} 个工具 (类别: ${[...detectedCategories].join(", ")})`);
+        } else {
+          console.log(`[AiChatPanel] 模型 ${model} 不支持 tools 能力，跳过工具加载`);
+        }
+      }
+      // 只有当模型支持 tools 时才传递工具，避免不支持的模型输出 XML 格式
+      const toolsToUse = includeTools && supportsTools && filteredTools.length > 0 ? filteredTools : undefined;
 
       // ─────────────────────────────────────────────────────────────────────────
       // Agentic RAG 模式：AI 自主规划检索策略，多轮迭代
@@ -1582,15 +1869,18 @@ graph TD
               contextText: "",
               customMemory: "",
               chatMode: "agent", // 使用 agent 模式，避免 Ask 模式限制
+              modelId: model,
             });
             
             let result = "";
             for await (const chunk of streamChatWithRetry(
               {
-                apiUrl: apiConfig.apiUrl,
-                apiKey: apiConfig.apiKey,
-                model,
-                temperature: options?.temperature ?? 0.3,
+              apiUrl: apiConfig.apiUrl,
+              apiKey: apiConfig.apiKey,
+              model,
+              protocol: apiConfig.protocol,
+              anthropicApiPath: apiConfig.anthropicApiPath,
+              temperature: options?.temperature ?? 0.3,
                 maxTokens: options?.maxTokens ?? 1000,
                 signal: aborter.signal,
               },
@@ -1678,20 +1968,31 @@ graph TD
       }
       // ─────────────────────────────────────────────────────────────────────────
 
+      // 浏览器 AI 模式标记：用于在工具调用完成后发送到浏览器 ChatGPT
+      // 不再在这里直接返回，而是让 API 先执行工具调用
+      // browserAIMode 时：收到 tool_calls 就执行工具，收到 content 就中止并发给浏览器
+      let browserAIAborted = false;
+
       for await (const chunk of streamChatWithRetry(
         {
           apiUrl: apiConfig.apiUrl,
           apiKey: apiConfig.apiKey,
           model,
+          protocol: apiConfig.protocol,
+          anthropicApiPath: apiConfig.anthropicApiPath,
           temperature: settings.temperature,
           maxTokens: settings.maxTokens,
           signal: aborter.signal,
           tools: toolsToUse,
+          timeoutMs: settings.streamTimeout,
         },
         apiMessages,
         apiMessagesFallback,
       )) {
         if (chunk.type === "reasoning") {
+          // 浏览器 AI 模式：跳过 reasoning，等待 tool_calls 或 content
+          if (browserAIMode) continue;
+          
           // 第一次收到 reasoning 时，创建独立的 reasoning 消息
           if (!reasoningMessageId) {
             reasoningMessageId = nowId();
@@ -1712,6 +2013,13 @@ graph TD
             updateMessage(reasoningMessageId, { reasoning: currentReasoning });
           }
         } else if (chunk.type === "content") {
+          // 浏览器 AI 模式：收到 content 说明没有工具调用，立即中止并发给浏览器
+          if (browserAIMode && !browserAIAborted) {
+            browserAIAborted = true;
+            aborter.abort(); // 中止 API 流
+            break;
+          }
+          
           // 第一次收到 content 时，创建 assistant 消息（如果还没有 reasoning 消息，或者 reasoning 已完成）
           if (!reasoningMessageId) {
             // 没有 reasoning，直接创建 assistant 消息
@@ -1755,34 +2063,82 @@ graph TD
       }
 
       setStreamingMessageId(null);
+      
+      // 浏览器 AI 模式：如果没有工具调用（被中止或正常结束），直接发给浏览器 ChatGPT
+      if (browserAIMode && toolCalls.length === 0) {
+        // 构建提示词
+        let browserPromptParts: string[] = [];
+        
+        if (!browserAIFirstMessageSentRef.current) {
+          browserPromptParts.push("你是一个智能助手，请回答用户的问题。");
+          if (memoryText) browserPromptParts.push(`\n【用户记忆】\n${memoryText}`);
+          if (contextText) browserPromptParts.push(`\n【相关上下文】\n${contextText}`);
+          browserPromptParts.push(`\n【用户问题】\n${content}`);
+          browserAIFirstMessageSentRef.current = true;
+        } else {
+          browserPromptParts.push(content);
+        }
+        
+        const browserMessage = browserPromptParts.join("\n");
+        
+        // 添加浏览器 AI 回复占位消息
+        const browserAssistantId = nowId();
+        setMessages(prev => [...prev, {
+          id: browserAssistantId,
+          role: "assistant",
+          content: "🌐 正在通过浏览器 ChatGPT 生成回复...",
+          createdAt: Date.now(),
+          model: "ChatGPT (Browser)",
+        }]);
+        setStreamingMessageId(browserAssistantId);
+        
+        try {
+          const browserResult = await browserAIChat(browserMessage, 120);
+          if (browserResult.ok && browserResult.response) {
+            updateMessage(browserAssistantId, { content: browserResult.response });
+          } else {
+            updateMessage(browserAssistantId, { 
+              content: `❌ ${browserResult.error || "浏览器 AI 请求失败"}\n\n${browserResult.partial ? `部分回复：${browserResult.partial}` : ""}`,
+            });
+          }
+        } catch (browserErr: any) {
+          updateMessage(browserAssistantId, { content: `❌ 浏览器 AI 错误: ${browserErr.message}` });
+        }
+        
+        setStreamingMessageId(null);
+        setSending(false);
+        if (abortRef.current === aborter) abortRef.current = null;
+        autoCacheSession(currentSession);
+        return;
+      }
+
+      const hasAssistantMessage = Boolean(reasoningMessageId);
+      if (toolCalls.length > 0 && hasAssistantMessage && currentContent) {
+        currentContent = "";
+        updateMessage(reasoningMessageId!, { content: "" });
+      }
+
+      // 浏览器 AI 模式：如果有工具调用，清空初始内容（后续会发给浏览器 ChatGPT）
+      if (browserAIMode && toolCalls.length > 0 && hasAssistantMessage) {
+        currentContent = "";
+        updateMessage(reasoningMessageId!, { content: "" });
+      }
 
       // 如果只有 reasoning 没有 content，需要创建 assistant 消息
-      const assistantId = currentContent ? reasoningMessageId! : nowId();
-      const assistantCreatedAt = currentContent ? (reasoningCreatedAt || Date.now()) : Date.now();
+      const assistantId = hasAssistantMessage ? reasoningMessageId! : nowId();
+      const assistantCreatedAt = hasAssistantMessage ? (reasoningCreatedAt || Date.now()) : Date.now();
       
-      if (!currentContent && toolCalls.length === 0) {
-        if (reasoningMessageId && currentReasoning) {
-          // 有 reasoning 但没有 content，创建空的 assistant 消息
-          setMessages((prev) => [...prev, { 
-            id: assistantId, 
-            role: "assistant", 
-            content: "(empty response)", 
-            createdAt: assistantCreatedAt,
-            model,
-            searchResults: getSearchResultsForMessage(),
-          }]);
-        } else {
-          // 完全空响应
-          setMessages((prev) => [...prev, { 
-            id: assistantId, 
-            role: "assistant", 
-            content: "(empty response)", 
-            createdAt: assistantCreatedAt,
-            model,
-            searchResults: getSearchResultsForMessage(),
-          }]);
-        }
-      } else if (!currentContent && toolCalls.length > 0) {
+      if (!hasAssistantMessage && !currentContent && toolCalls.length === 0) {
+        // 完全空响应
+        setMessages((prev) => [...prev, { 
+          id: assistantId, 
+          role: "assistant", 
+          content: "(empty response)", 
+          createdAt: assistantCreatedAt,
+          model,
+          searchResults: getSearchResultsForMessage(),
+        }]);
+      } else if (!hasAssistantMessage && !currentContent && toolCalls.length > 0) {
         // 只有 tool calls，创建空 content 的 assistant 消息
         setMessages((prev) => [...prev, { 
           id: assistantId, 
@@ -1808,6 +2164,7 @@ graph TD
 		      let currentToolCalls = toolCalls;
 		      let currentAssistantId = assistantId;
 		      const allToolResultMessages: Message[] = [];
+          const executedSkillToolNames = new Set<string>();
 
       while (currentToolCalls.length > 0 && toolRound < MAX_TOOL_ROUNDS) {
         toolRound++;
@@ -1836,10 +2193,87 @@ graph TD
           let args: any = {};
           let parseError: string | null = null;
 
+          // Helper function to attempt JSON repair for common AI model errors
+          const tryRepairJson = (jsonStr: string): string | null => {
+            let repaired = jsonStr.trim();
+            
+            // Fix 0a: Handle concatenated JSON objects (e.g., {"a":1}{"b":2} -> {"a":1})
+            // This happens when AI model incorrectly merges multiple tool calls
+            const concatenatedMatch = repaired.match(/^(\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\})(\{.+)$/);
+            if (concatenatedMatch) {
+              // Take only the first complete JSON object
+              repaired = concatenatedMatch[1];
+              console.warn('[Tool Call] Detected concatenated JSON, using first object:', repaired);
+            }
+            
+            // Fix 0b: If string doesn't start with {, try to find and extract JSON object
+            if (!repaired.startsWith('{')) {
+              // Try to find a JSON object pattern
+              const jsonMatch = repaired.match(/\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}/);
+              if (jsonMatch) {
+                repaired = jsonMatch[0];
+              } else {
+                // If first char is a digit or other non-{ char followed by ", assume { was corrupted
+                // e.g., 0"blockId": 9807} -> {"blockId": 9807}
+                const firstQuoteIdx = repaired.indexOf('"');
+                if (firstQuoteIdx > 0 && firstQuoteIdx < 5) {
+                  repaired = '{' + repaired.slice(firstQuoteIdx);
+                }
+              }
+            }
+            
+            // Fix 1: Remove duplicate keys (e.g., "key": "val1""key": "val2" -> "key": "val2")
+            // This handles cases where AI model outputs duplicate fields
+            repaired = repaired.replace(/"([^"]+)":\s*"[^"]*"\s*"(\1)":\s*/g, '"$1": ');
+            
+            // Fix 2: Replace ) with } at the end if mismatched
+            if (repaired.includes(')') && !repaired.includes('(')) {
+              repaired = repaired.replace(/\)$/g, '}');
+            }
+            
+            // Fix 3: Ensure proper closing brace
+            const openBraces = (repaired.match(/{/g) || []).length;
+            const closeBraces = (repaired.match(/}/g) || []).length;
+            if (openBraces > closeBraces) {
+              repaired = repaired + '}'.repeat(openBraces - closeBraces);
+            }
+            
+            // Fix 4: Remove trailing content after last valid JSON structure
+            // Find the last } and truncate anything after it that's not whitespace
+            const lastBraceIndex = repaired.lastIndexOf('}');
+            if (lastBraceIndex !== -1 && lastBraceIndex < repaired.length - 1) {
+              const afterBrace = repaired.slice(lastBraceIndex + 1).trim();
+              if (afterBrace && !afterBrace.startsWith(',') && !afterBrace.startsWith(']')) {
+                repaired = repaired.slice(0, lastBraceIndex + 1);
+              }
+            }
+            
+            // Fix 5: Fix common typos in key names (blockld -> blockId)
+            repaired = repaired.replace(/"blockld"/gi, '"blockId"');
+            
+            try {
+              JSON.parse(repaired);
+              return repaired;
+            } catch {
+              return null;
+            }
+          };
+
           try {
             args = JSON.parse(toolCall.function.arguments);
           } catch (error: any) {
-            parseError = `Invalid JSON in tool arguments: ${error.message}`;
+            // Try to repair the JSON before giving up
+            const repaired = tryRepairJson(toolCall.function.arguments);
+            if (repaired) {
+              console.warn('[Tool Call] Repaired malformed JSON:', toolCall.function.arguments, '->', repaired);
+              try {
+                args = JSON.parse(repaired);
+              } catch {
+                parseError = `Invalid JSON in tool arguments: ${error.message}`;
+              }
+            } else {
+              parseError = `Invalid JSON in tool arguments: ${error.message}`;
+            }
           }
 
           // Log tool call with parsed arguments for debugging
@@ -1848,37 +2282,62 @@ graph TD
           if (parseError) {
              result = `Error: ${parseError}\n\nRaw arguments received:\n${toolCall.function.arguments}\n\nPlease provide valid JSON arguments.`;
           } else {
-             // 检查工具是否需要询问用户
-             const needsConfirm = shouldAskForTool(toolName);
-             let userApproved = true;
-             
-             if (needsConfirm) {
-               // 使用确认对话框询问用户
-               const { createToolConfirmPromise } = await import("../components/ToolConfirmDialog");
-               userApproved = await createToolConfirmPromise(toolName, args);
-             }
-             
-             if (!userApproved) {
-               result = `用户拒绝执行此工具。请尝试其他方式或直接回答用户的问题。`;
+             const TOOL_TIMEOUT_MS = 60000; // 60s timeout for tool execution
+             const isSkillCall = toolName.startsWith("skill_");
+
+             if (isSkillCall) {
+               // Skill 工具执行 - Level 2: 按需加载详细指令
+               const resolvedSkillId = await resolveSkillIdFromToolName(toolName);
+               if (!resolvedSkillId) {
+                 result = `Error: Skill not found for tool: ${toolName}`;
+               } else {
+                 try {
+                   const instructions = await getSkillInstructionsAsync(resolvedSkillId);
+                   if (!instructions) {
+                     result = `Error: Skill not found: ${resolvedSkillId}`;
+                   } else {
+                     // 返回 Skill 的详细指令供 AI 使用
+                     const userInput = args.input || "";
+                     result = `${instructions}
+
+## 用户输入
+${userInput}`;
+                   }
+                 } catch (err: any) {
+                   result = `Error: Failed to execute skill ${resolvedSkillId}: ${err?.message || "Unknown error"}`;
+                 }
+               }
              } else {
-               // Execute tool with timeout protection
-               const TOOL_TIMEOUT_MS = 60000; // 60s timeout for tool execution
-               try {
-                 const timeoutPromise = new Promise<string>((_, reject) => {
-                   setTimeout(() => reject(new Error(`Tool execution timed out after ${TOOL_TIMEOUT_MS / 1000}s`)), TOOL_TIMEOUT_MS);
-                 });
-                 
-                 // 检查是否是 Todoist 工具
-                 const toolExecutor = isTodoistTool(toolName) 
-                   ? executeTodoistTool(toolName, args)
-                   : executeTool(toolName, args);
-                 
-                 result = await Promise.race([
-                   toolExecutor,
-                   timeoutPromise
-                 ]);
-               } catch (err: any) {
-                 result = `Error: ${err.message || "Tool execution failed"}`;
+               // 检查工具是否需要询问用户
+               const needsConfirm = shouldAskForTool(toolName);
+               let userApproved = true;
+               
+               if (needsConfirm) {
+                 // 使用确认对话框询问用户
+                 const { createToolConfirmPromise } = await import("../components/ToolConfirmDialog");
+                 userApproved = await createToolConfirmPromise(toolName, args);
+               }
+               
+               if (!userApproved) {
+                 result = `用户拒绝执行此工具。请尝试其他方式或直接回答用户的问题。`;
+               } else {
+                 try {
+                   const timeoutPromise = new Promise<string>((_, reject) => {
+                     setTimeout(() => reject(new Error(`Tool execution timed out after ${TOOL_TIMEOUT_MS / 1000}s`)), TOOL_TIMEOUT_MS);
+                   });
+                   
+                   // 检查是否是 Todoist 工具
+                   const toolExecutor = isTodoistTool(toolName) 
+                     ? executeTodoistTool(toolName, args)
+                     : executeTool(toolName, args);
+                   
+                   result = await Promise.race([
+                     toolExecutor,
+                     timeoutPromise
+                   ]);
+                 } catch (err: any) {
+                   result = `Error: ${err.message || "Tool execution failed"}`;
+                 }
                }
              }
           }
@@ -1916,6 +2375,14 @@ graph TD
         setMessages((prev) => [...prev, ...toolResultMessages]);
         queueMicrotask(scrollToBottom);
 
+        // ─────────────────────────────────────────────────────────────────────
+        // 浏览器 AI 模式：工具执行完成后，直接跳出循环，不再调用 API 生成回复
+        // ─────────────────────────────────────────────────────────────────────
+        if (browserAIMode) {
+          // 直接跳出工具循环，后续会发送到浏览器 ChatGPT
+          break;
+        }
+
         // Build messages for next response including all prior tool results
         const { standard, fallback } = await buildConversationMessages({
           messages: conversation,
@@ -1924,10 +2391,7 @@ graph TD
           customMemory: memoryText,
           chatMode: currentChatMode,
           maxHistoryMessages: settings.maxHistoryMessages,
-          enableCompression: settings.enableCompression,
-          compressAfterMessages: settings.compressAfterMessages,
-          sessionId: currentSession.id,
-          apiConfig: { apiUrl: apiConfig.apiUrl, apiKey: apiConfig.apiKey, model },
+          modelId: model,
         });
 
         // Stream next response with reasoning support
@@ -1947,10 +2411,12 @@ graph TD
               apiUrl: toolApiConfig.apiUrl,
               apiKey: toolApiConfig.apiKey,
               model,
+              protocol: toolApiConfig.protocol,
               temperature: settings.temperature,
               maxTokens: settings.maxTokens,
               signal: aborter.signal,
               tools: enableTools ? filteredTools : undefined, // Last round: disable tools to force an answer
+              timeoutMs: settings.streamTimeout,
             },
             standard,
             fallback
@@ -2094,6 +2560,92 @@ graph TD
           break;
         }
       }
+      
+      // ─────────────────────────────────────────────────────────────────────────
+      // 浏览器 AI 模式：工具调用完成后，发送到浏览器 ChatGPT
+      // ─────────────────────────────────────────────────────────────────────────
+      if (browserAIMode) {
+        // 删除 API 生成的最终回复消息，用浏览器 AI 替代
+        setMessages(prev => {
+          // 找到最后一个 assistant 消息（API 生成的回复）
+          const lastAssistantIdx = prev.findLastIndex(m => m.role === "assistant");
+          if (lastAssistantIdx >= 0) {
+            // 保留工具结果消息，只删除最后的 assistant 回复
+            const lastMsg = prev[lastAssistantIdx];
+            // 如果是工具结果消息，不删除
+            if (lastMsg.tool_call_id) {
+              return prev;
+            }
+            return prev.slice(0, lastAssistantIdx);
+          }
+          return prev;
+        });
+        
+        // 构建发送给 ChatGPT 的消息
+        let browserPromptParts: string[] = [];
+        
+        if (!browserAIFirstMessageSentRef.current) {
+          // 首次消息：注入系统提示、记忆、上下文
+          browserPromptParts.push("你是一个智能助手，请根据以下信息回答用户的问题。");
+          
+          if (memoryText) {
+            browserPromptParts.push(`\n【用户记忆】\n${memoryText}`);
+          }
+          
+          if (contextText) {
+            browserPromptParts.push(`\n【相关上下文】\n${contextText}`);
+          }
+          
+          browserAIFirstMessageSentRef.current = true;
+        }
+        
+        // 添加工具结果（如果有）
+        if (allToolResultMessages.length > 0) {
+          const toolResultsSummary = allToolResultMessages
+            .map(m => `【${m.name || "工具"}结果】\n${m.content}`)
+            .join("\n\n");
+          browserPromptParts.push(`\n【工具调用结果】\n${toolResultsSummary}`);
+        }
+        
+        // 添加用户问题
+        browserPromptParts.push(`\n【用户问题】\n${content}`);
+        
+        const browserMessage = browserPromptParts.join("\n");
+        
+        // 添加浏览器 AI 回复占位消息
+        const browserAssistantId = nowId();
+        setMessages(prev => [...prev, {
+          id: browserAssistantId,
+          role: "assistant",
+          content: "🌐 正在通过浏览器 ChatGPT 生成回复...",
+          createdAt: Date.now(),
+          model: "ChatGPT (Browser)",
+        }]);
+        setStreamingMessageId(browserAssistantId);
+        
+        try {
+          const browserResult = await browserAIChat(browserMessage, 120);
+          
+          if (browserResult.ok && browserResult.response) {
+            updateMessage(browserAssistantId, { 
+              content: browserResult.response,
+            });
+          } else {
+            const errorMsg = browserResult.error || "浏览器 AI 请求失败";
+            updateMessage(browserAssistantId, { 
+              content: `❌ ${errorMsg}\n\n${browserResult.partial ? `部分回复：${browserResult.partial}` : "请确保：\n1. Edge 以调试模式启动\n2. ChatGPT 页面已打开并登录\n3. Python 服务器正在运行"}`,
+            });
+          }
+        } catch (browserErr: any) {
+          updateMessage(browserAssistantId, { 
+            content: `❌ 浏览器 AI 错误: ${browserErr.message}`,
+          });
+        }
+        
+        setStreamingMessageId(null);
+      }
+      // ─────────────────────────────────────────────────────────────────────────
+      
       // Clear error state on successful completion
       // **Feature: chat-ui-enhancement**
       // **Validates: Requirements 11.3**
@@ -2179,6 +2731,7 @@ graph TD
     if (abortRef.current) abortRef.current.abort();
     setMessages([]);
     setLastError(null);
+    browserAIFirstMessageSentRef.current = false; // 重置浏览器 AI 首次消息标记
   }
 
   function stop() {
@@ -2212,6 +2765,69 @@ graph TD
       return prev.slice(0, index);
     });
   }, []);
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Branch Management Callbacks (对话分支功能)
+  // ─────────────────────────────────────────────────────────────────────────
+
+  const handleCreateBranch = useCallback((messageId: string) => {
+    try {
+      console.log("[Branch] Creating branch at message:", messageId);
+      console.log("[Branch] Current messages:", messages.length);
+      // createBranch(messages, messageId, branchName?) -> { messages: Message[]; branchId: string }
+      const result = createBranch(messages, messageId);
+      console.log("[Branch] Result:", {
+        branchId: result.branchId,
+        messagesCount: result.messages.length,
+        lastMessage: result.messages[result.messages.length - 1],
+        hasBranches: result.messages[result.messages.length - 1]?.branches?.length,
+      });
+      setCurrentBranchId(result.branchId);
+      setMessages(result.messages);
+      orca.notify("success", `已创建新分支，当前在分支: ${result.branchId.slice(0, 10)}...`);
+    } catch (err: any) {
+      console.error("[Branch] Create failed:", err);
+      orca.notify("error", err?.message || "创建分支失败");
+    }
+  }, [messages]);
+
+  const handleSwitchBranch = useCallback((messageId: string, branchId: string) => {
+    try {
+      // switchBranch(messages, messageId, branchId) -> Message[]
+      const updatedMessages = switchBranch(messages, messageId, branchId);
+      setMessages(updatedMessages);
+      setCurrentBranchId(branchId);
+      orca.notify("success", "已切换分支");
+    } catch (err: any) {
+      orca.notify("error", err?.message || "切换分支失败");
+    }
+  }, [messages]);
+
+  const handleDeleteBranch = useCallback((messageId: string, branchId: string) => {
+    try {
+      // deleteBranch(messages, branchPointId, branchId) -> Message[]
+      const updatedMessages = deleteBranch(messages, messageId, branchId);
+      setMessages(updatedMessages);
+      // 如果删除的是当前分支，重置分支 ID
+      if (currentBranchId === branchId) {
+        setCurrentBranchId(null);
+      }
+      orca.notify("success", "已删除分支");
+    } catch (err: any) {
+      orca.notify("error", err?.message || "删除分支失败");
+    }
+  }, [messages, currentBranchId]);
+
+  const handleRenameBranch = useCallback((messageId: string, branchId: string, newName: string) => {
+    try {
+      // renameBranch(messages, branchPointId, branchId, newName) -> Message[]
+      const updatedMessages = renameBranch(messages, messageId, branchId, newName);
+      setMessages(updatedMessages);
+      orca.notify("success", "已重命名分支");
+    } catch (err: any) {
+      orca.notify("error", err?.message || "重命名分支失败");
+    }
+  }, [messages]);
 
   // 生成建议回复 - 根据指定的 AI 消息内容生成
   const createSuggestionGenerator = useCallback(
@@ -2437,37 +3053,43 @@ graph TD
                 border: "1px solid var(--orca-color-border)",
               },
             },
-            createElement(
-              "span",
-              {
-                style: { display: "flex", alignItems: "center", gap: "4px" },
-                title: "系统提示词消耗",
-              },
-              createElement("i", { className: "ti ti-prompt", style: { fontSize: "12px" } }),
-              `提示词 ${formatTokenCount(systemPromptTokens)}`
-            ),
-            memoryTokens > 0 && createElement(
-              "span",
-              {
-                style: { display: "flex", alignItems: "center", gap: "4px" },
-                title: "记忆消耗（用户画像+记忆）",
-              },
-              createElement("i", { className: "ti ti-brain", style: { fontSize: "12px" } }),
-              `记忆 ${formatTokenCount(memoryTokens)}`
-            ),
-            createElement(
-              "span",
-              {
-                style: { 
-                  display: "flex", 
-                  alignItems: "center", 
-                  gap: "4px",
-                  fontWeight: 500,
-                  color: "var(--orca-color-text-2)",
+            withTooltip(
+              "系统提示词消耗",
+              createElement(
+                "span",
+                {
+                  style: { display: "flex", alignItems: "center", gap: "4px" },
                 },
-                title: "基础开销合计",
-              },
-              `= ${formatTokenCount(baseOverheadTokens)} tokens`
+                createElement("i", { className: "ti ti-prompt", style: { fontSize: "12px" } }),
+                `提示词 ${formatTokenCount(systemPromptTokens)}`
+              )
+            ),
+            memoryTokens > 0 && withTooltip(
+              "记忆消耗（用户画像+记忆）",
+              createElement(
+                "span",
+                {
+                  style: { display: "flex", alignItems: "center", gap: "4px" },
+                },
+                createElement("i", { className: "ti ti-brain", style: { fontSize: "12px" } }),
+                `记忆 ${formatTokenCount(memoryTokens)}`
+              )
+            ),
+            withTooltip(
+              "基础开销合计",
+              createElement(
+                "span",
+                {
+                  style: { 
+                    display: "flex", 
+                    alignItems: "center", 
+                    gap: "4px",
+                    fontWeight: 500,
+                    color: "var(--orca-color-text-2)",
+                  },
+                },
+                `= ${formatTokenCount(baseOverheadTokens)} tokens`
+              )
             )
           )
         )
@@ -2519,6 +3141,13 @@ graph TD
           onSuggestedReply: isLastAi ? (text: string) => handleSend(text) : undefined,
           onGenerateSuggestions: isLastAi && m.content ? createSuggestionGenerator(m.content) : undefined,
           tokenStats: tokenStatsMap.get(m.id),
+          onSkillConfirmAction: m.skillConfirm ? handleSkillConfirmAction : undefined,
+          // Branch management (对话分支功能)
+          currentBranchId,
+          onCreateBranch: handleCreateBranch,
+          onSwitchBranch: handleSwitchBranch,
+          onDeleteBranch: handleDeleteBranch,
+          onRenameBranch: handleRenameBranch,
         })
       );
     });
@@ -2851,27 +3480,43 @@ graph TD
         },
       }),
       // New Session Button
-      createElement(
-        Button,
-        {
-          variant: "plain",
-          onClick: handleNewSession,
-          title: "新对话",
-        },
-        createElement("i", { className: "ti ti-plus" })
+      withTooltip(
+        "新对话",
+        createElement(
+          Button,
+          {
+            variant: "plain",
+            onClick: handleNewSession,
+          },
+          createElement("i", { className: "ti ti-plus" })
+        )
       ),
       // Todoist Button
-      createElement(
-        Button,
-        {
-          variant: "plain",
-          onClick: () => {
-            todoistModalStore.viewMode = "today";
-            todoistModalStore.showTaskList = true;
+      withTooltip(
+        "Todoist 今日任务",
+        createElement(
+          Button,
+          {
+            variant: "plain",
+            onClick: () => {
+              todoistModalStore.viewMode = "today";
+              todoistModalStore.showTaskList = true;
+            },
           },
-          title: "Todoist 今日任务",
-        },
-        createElement("i", { className: "ti ti-checkbox" })
+          createElement("i", { className: "ti ti-checkbox" })
+        )
+      ),
+      // Skill Manager Button
+      withTooltip(
+        "技能管理",
+        createElement(
+          Button,
+          {
+            variant: "plain",
+            onClick: () => setShowSkillManager(true),
+          },
+          createElement("i", { className: "ti ti-stars" })
+        )
       ),
       // Chat History
       createElement(ChatHistoryMenu, {
@@ -2894,9 +3539,16 @@ graph TD
           }
         },
         onOpenMemoryManager: handleOpenMemoryManager,
-        onOpenCompressionSettings: () => setShowCompressionSettings(true),
+        onOpenStreamSettings: () => setShowStreamSettings(true),
         onOpenWebSearchSettings: () => setShowWebSearchSettings(true),
+        onOpenVisionModelSettings: () => setShowVisionModelSettings(true),
         onOpenTodoistSettings: () => setShowTodoistSettings(true),
+        onStartPythonServer: handleStartPythonServer,
+        onStopPythonServer: handleStopPythonServer,
+        pythonServerStatus,
+        browserAIMode,
+        onToggleBrowserAI: handleToggleBrowserAI,
+        browserAIStatus,
         onExportMarkdown: () => {
           if (messages.length === 0) {
             orca.notify("warn", "没有可导出的消息");
@@ -2923,7 +3575,14 @@ graph TD
         onSaveSelected: handleSaveSelectedMessages,
       }),
       // Close Button
-      createElement(Button, { variant: "plain", onClick: () => closeAiChatPanel(panelId), title: "Close" }, createElement("i", { className: "ti ti-x" }))
+      withTooltip(
+        "Close",
+        createElement(
+          Button,
+          { variant: "plain", onClick: () => closeAiChatPanel(panelId) },
+          createElement("i", { className: "ti ti-x" })
+        )
+      )
     ),
     // Message List or Empty State (wrapped in relative container for ScrollToBottomButton)
     createElement(
@@ -2970,15 +3629,25 @@ graph TD
       onUpdateSettings: handleUpdateSettings,
       currency: settingsForUi.currency,
     }),
-    // Compression Settings Modal
-    createElement(CompressionSettingsModal, {
-      isOpen: showCompressionSettings,
-      onClose: () => setShowCompressionSettings(false),
+    // Skill Manager Modal
+    createElement(SkillManagerModal, {
+      isOpen: showSkillManager,
+      onClose: () => setShowSkillManager(false),
+    }),
+    // Stream Settings Modal
+    createElement(StreamSettingsModal, {
+      isOpen: showStreamSettings,
+      onClose: () => setShowStreamSettings(false),
     }),
     // Web Search Settings Modal
     createElement(WebSearchSettingsModal, {
       isOpen: showWebSearchSettings,
       onClose: () => setShowWebSearchSettings(false),
+    }),
+    // Vision Model Settings Modal
+    createElement(VisionModelSettingsModal, {
+      isOpen: showVisionModelSettings,
+      onClose: () => setShowVisionModelSettings(false),
     }),
     // Todoist Settings Modal
     createElement(TodoistSettingsModal, {

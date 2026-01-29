@@ -1,4 +1,5 @@
 import DisplaySettingsPanel from "./DisplaySettingsPanel";
+import { withTooltip } from "../utils/orca-tooltip";
 
 const React = window.React as unknown as {
   createElement: typeof window.React.createElement;
@@ -13,9 +14,16 @@ interface HeaderMenuProps {
   onClearChat: () => void;
   onOpenSettings: () => void;
   onOpenMemoryManager: () => void;
-  onOpenCompressionSettings?: () => void;
+  onOpenStreamSettings?: () => void;
   onOpenWebSearchSettings?: () => void;
+  onOpenVisionModelSettings?: () => void;
   onOpenTodoistSettings?: () => void;
+  onStartPythonServer?: () => void;
+  onStopPythonServer?: () => void;
+  pythonServerStatus?: "running" | "stopped" | "starting";
+  browserAIMode?: boolean;
+  onToggleBrowserAI?: () => void;
+  browserAIStatus?: "connected" | "disconnected" | "checking";
   onExportMarkdown?: () => void;
   onSaveToJournal?: () => void;
   onToggleSelectionMode?: () => void;
@@ -28,9 +36,16 @@ export default function HeaderMenu({
   onClearChat,
   onOpenSettings,
   onOpenMemoryManager,
-  onOpenCompressionSettings,
+  onOpenStreamSettings,
   onOpenWebSearchSettings,
+  onOpenVisionModelSettings,
   onOpenTodoistSettings,
+  onStartPythonServer,
+  onStopPythonServer,
+  pythonServerStatus,
+  browserAIMode,
+  onToggleBrowserAI,
+  browserAIStatus,
   onExportMarkdown,
   onSaveToJournal,
   onToggleSelectionMode,
@@ -77,14 +92,16 @@ export default function HeaderMenu({
       ref: menuRef as any,
       style: { position: "relative" },
     },
-    createElement(
-      Button,
-      {
-        variant: "plain",
-        onClick: () => setIsOpen(!isOpen),
-        title: "More options",
-      },
-      createElement("i", { className: "ti ti-dots-vertical" })
+    withTooltip(
+      "More options",
+      createElement(
+        Button,
+        {
+          variant: "plain",
+          onClick: () => setIsOpen(!isOpen),
+        },
+        createElement("i", { className: "ti ti-dots-vertical" })
+      )
     ),
     // Display Settings Panel (shown as a popover)
     showDisplaySettings && createElement(
@@ -165,17 +182,17 @@ export default function HeaderMenu({
           createElement("i", { className: "ti ti-brain" }),
           "记忆管理"
         ),
-        // Token Optimization
-        onOpenCompressionSettings && createElement(
+        // Stream Settings
+        onOpenStreamSettings && createElement(
           "div",
           {
             style: menuItemStyle,
-            onClick: () => handleItemClick(onOpenCompressionSettings),
+            onClick: () => handleItemClick(onOpenStreamSettings),
             onMouseEnter: (e: any) => (e.currentTarget.style.background = "var(--orca-color-bg-2)"),
             onMouseLeave: (e: any) => (e.currentTarget.style.background = "transparent"),
           },
-          createElement("i", { className: "ti ti-arrows-minimize" }),
-          "Token 优化"
+          createElement("i", { className: "ti ti-clock" }),
+          "流式设置"
         ),
         // Web Search Settings
         onOpenWebSearchSettings && createElement(
@@ -189,6 +206,18 @@ export default function HeaderMenu({
           createElement("i", { className: "ti ti-world" }),
           "联网搜索"
         ),
+        // Vision Model Settings
+        onOpenVisionModelSettings && createElement(
+          "div",
+          {
+            style: menuItemStyle,
+            onClick: () => handleItemClick(onOpenVisionModelSettings),
+            onMouseEnter: (e: any) => (e.currentTarget.style.background = "var(--orca-color-bg-2)"),
+            onMouseLeave: (e: any) => (e.currentTarget.style.background = "transparent"),
+          },
+          createElement("i", { className: "ti ti-eye" }),
+          "视觉模型"
+        ),
         // Todoist Settings
         onOpenTodoistSettings && createElement(
           "div",
@@ -200,6 +229,60 @@ export default function HeaderMenu({
           },
           createElement("i", { className: "ti ti-checkbox" }),
           "Todoist"
+        ),
+        // Python Server
+        onStartPythonServer && createElement(
+          "div",
+          {
+            style: {
+              ...menuItemStyle,
+              color: pythonServerStatus === "running" 
+                ? "var(--orca-color-success, #28a745)" 
+                : pythonServerStatus === "starting"
+                  ? "var(--orca-color-warning, #ffc107)"
+                  : undefined,
+            },
+            onClick: pythonServerStatus === "starting" 
+              ? undefined 
+              : pythonServerStatus === "running"
+                ? () => onStopPythonServer && handleItemClick(onStopPythonServer)
+                : () => handleItemClick(onStartPythonServer),
+            onMouseEnter: (e: any) => (e.currentTarget.style.background = "var(--orca-color-bg-2)"),
+            onMouseLeave: (e: any) => (e.currentTarget.style.background = "transparent"),
+          },
+          createElement("i", { 
+            className: pythonServerStatus === "running" 
+              ? "ti ti-player-stop" 
+              : pythonServerStatus === "starting"
+                ? "ti ti-loader"
+                : "ti ti-brand-python" 
+          }),
+          pythonServerStatus === "running" 
+            ? "停止 Python 服务" 
+            : pythonServerStatus === "starting"
+              ? "正在启动..."
+              : "启动 Python 服务"
+        ),
+        // Browser AI Mode Toggle
+        onToggleBrowserAI && createElement(
+          "div",
+          {
+            style: {
+              ...menuItemStyle,
+              color: browserAIMode 
+                ? "var(--orca-color-primary)" 
+                : undefined,
+            },
+            onClick: () => handleItemClick(onToggleBrowserAI),
+            onMouseEnter: (e: any) => (e.currentTarget.style.background = "var(--orca-color-bg-2)"),
+            onMouseLeave: (e: any) => (e.currentTarget.style.background = "transparent"),
+          },
+          createElement("i", { 
+            className: browserAIMode ? "ti ti-toggle-right" : "ti ti-browser" 
+          }),
+          browserAIMode 
+            ? `浏览器 AI ✓ ${browserAIStatus === "connected" ? "(已连接)" : browserAIStatus === "checking" ? "(检查中)" : "(未连接)"}`
+            : "浏览器 AI 模式"
         ),
         // Divider
         createElement("div", {

@@ -193,6 +193,27 @@ export function detectBreakpoint(message: Message): BreakpointResult {
     return { isBreakpoint: false, confidence: 0 };
   }
   
+  // 0. 检查工具调用状态（最高优先级）
+  // 如果消息包含工具调用，绝对不能压缩
+  if (message.tool_calls && message.tool_calls.length > 0) {
+    return {
+      isBreakpoint: false,
+      confidence: 1.0,
+      blockingReason: "tool_calls_in_progress",
+      suggestion: "wait",
+    };
+  }
+  
+  // 如果是 tool 角色的消息（工具返回结果），也不能压缩
+  if (message.role === "tool") {
+    return {
+      isBreakpoint: false,
+      confidence: 1.0,
+      blockingReason: "tool_result_pending",
+      suggestion: "wait",
+    };
+  }
+  
   // 1. 检查人工标记（最高优先级）
   for (const { pattern, confidence } of MANUAL_MARKER_PATTERNS) {
     if (pattern.test(content)) {

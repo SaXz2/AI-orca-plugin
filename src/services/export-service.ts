@@ -30,6 +30,14 @@ interface SavedMessage {
   model?: string;
   // 上下文引用
   contextRefs?: Array<{ title: string; kind: string; blockId?: number }>;
+  // Web 搜索结果来源
+  searchResults?: Array<{
+    title: string;
+    url: string;
+    snippet?: string;
+    publishedDate?: string;
+    domain?: string;
+  }>;
   // 工具调用
   tool_calls?: Array<{
     id: string;
@@ -270,6 +278,16 @@ function convertMessages(messages: Message[]): SavedMessage[] {
       // 上下文引用
       if (m.contextRefs && m.contextRefs.length > 0) {
         saved.contextRefs = m.contextRefs;
+      }
+      // Web 搜索结果来源
+      if (m.searchResults && m.searchResults.length > 0) {
+        saved.searchResults = m.searchResults.map(r => ({
+          title: r.title,
+          url: r.url,
+          snippet: r.snippet,
+          publishedDate: r.publishedDate,
+          domain: r.domain,
+        }));
       }
       // 工具调用
       if (m.tool_calls && m.tool_calls.length > 0) {

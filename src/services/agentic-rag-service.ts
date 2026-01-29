@@ -23,6 +23,18 @@
 import { executeTool } from "./ai-tools";
 import { isWebSearchEnabled } from "../store/tool-store";
 
+// 检查是否是 Skill 工具
+function isSkillToolName(toolName: string): boolean {
+  return toolName.startsWith("skill_");
+}
+
+// 获取 Skill 显示名称
+function getSkillDisplayName(toolName: string): string {
+  if (!isSkillToolName(toolName)) return toolName;
+  const skillId = toolName.slice("skill_".length);
+  return skillId;
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // 类型定义
 // ═══════════════════════════════════════════════════════════════════════════
@@ -93,16 +105,234 @@ export type LLMCaller = (
   options?: { temperature?: number; maxTokens?: number }
 ) => Promise<string>;
 
+/** 检索结果缓存项 */
+interface CacheEntry {
+  result: string;
+  timestamp: number;
+  hitCount: number;
+}
+
+/** 语义策略记录 */
+interface SemanticStrategy {
+  tool: string;
+  args: Record<string, any>;
+  keywords: string[];  // 提取的关键词
+  timestamp: number;
+  success: boolean;    // 是否成功获取结果
+}
+
 /** 检索记忆 - 记录已尝试的检索策略，避免重复 */
 interface RetrievalMemory {
-  /** 已使用的工具和参数组合 */
+  /** 已使用的工具和参数组合（精确匹配） */
   usedStrategies: Set<string>;
+  /** 语义策略列表（用于语义去重） */
+  semanticStrategies: SemanticStrategy[];
   /** 失败的策略（用于自我修正） */
   failedStrategies: Map<string, string>;
   /** 成功获取信息的策略 */
   successfulStrategies: string[];
   /** 累积的关键信息点 */
   keyFindings: string[];
+  /** 检索结果缓存 */
+  cache: Map<string, CacheEntry>;
+}
+
+/** 缓存配置 */
+const CACHE_TTL_MS = 5 * 60 * 1000; // 缓存有效期 5 分钟
+const CACHE_MAX_SIZE = 50;          // 最大缓存条目数
+const SEMANTIC_SIMILARITY_THRESHOLD = 0.7; // 语义相似度阈值
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 语义去重工具函数
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * 从文本中提取关键词（用于语义比较）
+ */
+function extractKeywords(text: string): string[] {
+  if (!text) return [];
+  
+  // 移除标点符号，转小写，分词
+  const cleaned = text
+    .toLowerCase()
+    .replace(/[\u3000-\u303f\uff00-\uffef]/g, ' ') // 中文标点
+    .replace(/[^\u4e00-\u9fa5a-z0-9\s]/g, ' ')     // 保留中英文和数字
+    .trim();
+  
+  // 分词（中文按字，英文按空格）
+  const words: string[] = [];
+  let currentWord = '';
+  
+  for (const char of cleaned) {
+    if (/[\u4e00-\u9fa5]/.test(char)) {
+      // 中文字符：先保存之前的英文单词，然后添加中文字
+      if (currentWord) {
+        words.push(currentWord);
+        currentWord = '';
+      }
+      words.push(char);
+    } else if (/[a-z0-9]/.test(char)) {
+      currentWord += char;
+    } else if (currentWord) {
+      words.push(currentWord);
+      currentWord = '';
+    }
+  }
+  if (currentWord) words.push(currentWord);
+  
+  // 过滤短词和停用词
+  const stopWords = new Set(['the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been', 'being', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could', 'should', 'may', 'might', 'must', 'shall', 'can', 'need', 'dare', 'ought', 'used', 'to', 'of', 'in', 'for', 'on', 'with', 'at', 'by', 'from', 'as', 'into', 'through', 'during', 'before', 'after', 'above', 'below', 'between', 'under', 'again', 'further', 'then', 'once', 'here', 'there', 'when', 'where', 'why', 'how', 'all', 'each', 'few', 'more', 'most', 'other', 'some', 'such', 'no', 'nor', 'not', 'only', 'own', 'same', 'so', 'than', 'too', 'very', 'just', 'and', 'but', 'if', 'or', 'because', 'until', 'while', 'of', 'at', 'by', 'about', 'against', 'between', 'into', 'through', 'during', 'before', 'after', 'above', 'below', 'to', 'from', 'up', 'down', 'in', 'out', 'on', 'off', 'over', 'under', 'again', 'further', 'then', 'once', '的', '了', '是', '在', '我', '有', '和', '就', '不', '人', '都', '一', '一个', '上', '也', '很', '到', '说', '要', '去', '你', '会', '着', '没有', '看', '好', '自己', '这']);
+  
+  return words.filter(w => w.length > 1 && !stopWords.has(w));
+}
+
+/**
+ * 从工具参数中提取关键词
+ */
+function extractKeywordsFromArgs(tool: string, args: Record<string, any>): string[] {
+  const keywords: string[] = [tool]; // 工具名也是关键词
+  
+  // 常见的搜索参数名
+  const searchParamNames = ['query', 'text', 'tag_query', 'pageName', 'keyword', 'search', 'q'];
+  
+  for (const [key, value] of Object.entries(args)) {
+    if (typeof value === 'string') {
+      if (searchParamNames.includes(key)) {
+        // 搜索参数：提取关键词
+        keywords.push(...extractKeywords(value));
+      } else {
+        // 其他参数：直接添加
+        keywords.push(value.toLowerCase());
+      }
+    } else if (typeof value === 'number') {
+      keywords.push(String(value));
+    }
+  }
+  
+  return [...new Set(keywords)]; // 去重
+}
+
+/**
+ * 计算两个关键词列表的 Jaccard 相似度
+ */
+function calculateSimilarity(keywords1: string[], keywords2: string[]): number {
+  if (keywords1.length === 0 || keywords2.length === 0) return 0;
+  
+  const set1 = new Set(keywords1);
+  const set2 = new Set(keywords2);
+  
+  // 计算交集
+  let intersection = 0;
+  for (const word of set1) {
+    if (set2.has(word)) intersection++;
+  }
+  
+  // 计算并集
+  const union = set1.size + set2.size - intersection;
+  
+  return union > 0 ? intersection / union : 0;
+}
+
+/**
+ * 检查是否存在语义相似的**成功**策略
+ * 注意：只对成功的策略进行去重，失败的策略不应该阻止相似查询的尝试
+ */
+function findSimilarStrategy(
+  tool: string,
+  args: Record<string, any>,
+  semanticStrategies: SemanticStrategy[],
+  threshold: number = SEMANTIC_SIMILARITY_THRESHOLD
+): SemanticStrategy | null {
+  const newKeywords = extractKeywordsFromArgs(tool, args);
+  
+  for (const strategy of semanticStrategies) {
+    // 工具不同，跳过
+    if (strategy.tool !== tool) continue;
+    
+    // ⭐ 关键修复：只检查成功的策略
+    // 如果之前的相似策略失败了，应该允许尝试变体
+    if (!strategy.success) continue;
+    
+    const similarity = calculateSimilarity(newKeywords, strategy.keywords);
+    
+    if (similarity >= threshold) {
+      console.log(`[AgenticRAG] 语义相似策略检测: similarity=${similarity.toFixed(2)}, threshold=${threshold}`);
+      console.log(`  新策略: ${tool}(${JSON.stringify(args)})`);
+      console.log(`  已有成功策略: ${strategy.tool}(${JSON.stringify(strategy.args)})`);
+      return strategy;
+    }
+  }
+  
+  return null;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 缓存工具函数
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * 生成缓存键
+ */
+function getCacheKey(tool: string, args: Record<string, any>): string {
+  return `${tool}:${JSON.stringify(args)}`;
+}
+
+/**
+ * 从缓存中获取结果
+ */
+function getFromCache(cache: Map<string, CacheEntry>, key: string): string | null {
+  const entry = cache.get(key);
+  if (!entry) return null;
+  
+  // 检查是否过期
+  if (Date.now() - entry.timestamp > CACHE_TTL_MS) {
+    cache.delete(key);
+    return null;
+  }
+  
+  // 更新命中次数
+  entry.hitCount++;
+  return entry.result;
+}
+
+/**
+ * 存入缓存
+ */
+function setToCache(cache: Map<string, CacheEntry>, key: string, result: string): void {
+  // 如果缓存已满，删除最早的条目
+  if (cache.size >= CACHE_MAX_SIZE) {
+    let oldestKey: string | null = null;
+    let oldestTime = Infinity;
+    
+    for (const [k, v] of cache.entries()) {
+      if (v.timestamp < oldestTime) {
+        oldestTime = v.timestamp;
+        oldestKey = k;
+      }
+    }
+    
+    if (oldestKey) {
+      cache.delete(oldestKey);
+    }
+  }
+  
+  cache.set(key, {
+    result,
+    timestamp: Date.now(),
+    hitCount: 0,
+  });
+}
+
+/**
+ * 清理过期缓存
+ */
+function cleanExpiredCache(cache: Map<string, CacheEntry>): void {
+  const now = Date.now();
+  for (const [key, entry] of cache.entries()) {
+    if (now - entry.timestamp > CACHE_TTL_MS) {
+      cache.delete(key);
+    }
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -494,10 +724,18 @@ export async function executeAgenticRAG(
   // 初始化检索记忆
   const memory: RetrievalMemory = {
     usedStrategies: new Set(),
+    semanticStrategies: [],
     failedStrategies: new Map(),
     successfulStrategies: [],
     keyFindings: [],
+    cache: new Map(),
   };
+  
+  // 定期清理过期缓存
+  const cleanupInterval = setInterval(() => cleanExpiredCache(memory.cache), 60000);
+  
+  // 确保函数结束时清理
+  const cleanup = () => clearInterval(cleanupInterval);
   
   // 累积的思考过程文本
   let reasoningLog = "";
@@ -587,14 +825,36 @@ export async function executeAgenticRAG(
       break;
     }
 
-    // 检查是否重复策略
+    // 检查是否重复策略（精确匹配）
     const strategyKey = getStrategyKey(plan.tool, plan.args);
     if (memory.usedStrategies.has(strategyKey)) {
       console.log("[AgenticRAG] Duplicate strategy detected, skipping:", strategyKey);
       addReasoning("planning", "跳过重复策略", `⏭️ 跳过重复的检索策略: ${plan.tool}\n`);
       continue;
     }
+    
+    // 检查是否存在语义相似的策略（模糊匹配）
+    const similarStrategy = findSimilarStrategy(plan.tool, plan.args, memory.semanticStrategies);
+    if (similarStrategy) {
+      console.log("[AgenticRAG] Semantically similar strategy detected, skipping");
+      addReasoning(
+        "planning", 
+        "跳过相似策略", 
+        `⏭️ 跳过语义相似的策略: ${plan.tool}\n   已有相似: ${similarStrategy.tool}(${JSON.stringify(similarStrategy.args)})\n`
+      );
+      continue;
+    }
+    
+    // 记录策略（先添加，成功状态稍后更新）
     memory.usedStrategies.add(strategyKey);
+    const currentStrategyIndex = memory.semanticStrategies.length;
+    memory.semanticStrategies.push({
+      tool: plan.tool,
+      args: plan.args,
+      keywords: extractKeywordsFromArgs(plan.tool, plan.args),
+      timestamp: Date.now(),
+      success: false, // 先设为 false，执行成功后更新
+    });
 
     // 显示正在执行的工具
     const toolDisplayName = getToolDisplayName(plan.tool);
@@ -609,13 +869,31 @@ export async function executeAgenticRAG(
     
     let toolResult: string;
     let isError = false;
-    try {
-      toolResult = await executeTool(plan.tool, plan.args);
-      isError = toolResult.includes("Error:");
-    } catch (err: any) {
-      toolResult = `Error: ${err.message || err}`;
-      isError = true;
-      console.error("[AgenticRAG] Tool execution failed:", err);
+    let cacheHit = false;
+    
+    // 先检查缓存
+    const cacheKey = getCacheKey(plan.tool, plan.args);
+    const cachedResult = getFromCache(memory.cache, cacheKey);
+    
+    if (cachedResult !== null) {
+      toolResult = cachedResult;
+      cacheHit = true;
+      console.log(`[AgenticRAG] 💾 缓存命中: ${plan.tool}`);
+    } else {
+      // 执行检索
+      try {
+        toolResult = await executeTool(plan.tool, plan.args);
+        isError = toolResult.includes("Error:");
+        
+        // 如果成功，存入缓存
+        if (!isError) {
+          setToCache(memory.cache, cacheKey, toolResult);
+        }
+      } catch (err: any) {
+        toolResult = `Error: ${err.message || err}`;
+        isError = true;
+        console.error("[AgenticRAG] Tool execution failed:", err);
+      }
     }
 
     const retrieveStep: RAGStep = {
@@ -648,8 +926,13 @@ export async function executeAgenticRAG(
     // 记录成功/失败策略
     if (isError || hasNoResults) {
       memory.failedStrategies.set(strategyKey, resultSummary);
+      // 语义策略保持 success: false
     } else {
       memory.successfulStrategies.push(strategyKey);
+      // ⭐ 更新语义策略为成功状态
+      if (memory.semanticStrategies[currentStrategyIndex]) {
+        memory.semanticStrategies[currentStrategyIndex].success = true;
+      }
       // 累积上下文（只累积有结果的）
       collectedContext += `\n\n--- ${plan.tool} 结果 ---\n${toolResult}`;
     }
@@ -737,15 +1020,27 @@ export async function executeAgenticRAG(
     timestamp: Date.now(),
   });
 
+  // 清理定时器
+  cleanup();
+  
+  // 统计缓存命中情况
+  let cacheHits = 0;
+  for (const entry of memory.cache.values()) {
+    cacheHits += entry.hitCount;
+  }
+  
   // 生成策略摘要
   const strategySummary = [
     `成功策略: ${memory.successfulStrategies.length}`,
     `失败策略: ${memory.failedStrategies.size}`,
+    `语义去重: ${memory.semanticStrategies.length}`,
+    `缓存命中: ${cacheHits}`,
     `关键发现: ${memory.keyFindings.length}`,
   ].join(" | ");
 
   console.log(`[AgenticRAG] Completed with ${iteration} iterations, ${steps.length} steps`);
   console.log(`[AgenticRAG] Strategy summary: ${strategySummary}`);
+  console.log(`[AgenticRAG] Cache stats: size=${memory.cache.size}, hits=${cacheHits}`);
 
   return {
     answer,
@@ -761,6 +1056,9 @@ export async function executeAgenticRAG(
  * 获取工具的中文显示名称
  */
 export function getToolDisplayName(toolName: string): string {
+  if (isSkillToolName(toolName)) {
+    return getSkillDisplayName(toolName);
+  }
   const names: Record<string, string> = {
     searchBlocksByTag: "搜索标签",
     searchBlocksByText: "全文搜索",

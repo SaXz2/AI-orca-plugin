@@ -5,6 +5,7 @@ import "./queryBlocksByTag.test";
 import "./markdown-renderer.test";
 import "./chat-ui-utils.test";
 import "./model-fetcher.test";
+import "./tool-prompt-loader.test";
 import { run } from "./test-harness";
 
 await run();
