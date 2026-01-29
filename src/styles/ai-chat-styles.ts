@@ -451,27 +451,33 @@ type ToolStatus = "loading" | "success" | "failed" | "cancelled";
 
 /**
  * Tool status pill - inline status indicator
- * Gemini UX Review: Pill shape + subtle background + secondary text color
+ * Modern card-style design with status-based styling
  */
-export const toolStatusPillStyle = (status: ToolStatus): React.CSSProperties => ({
-  display: "flex",
-  alignItems: "center",
-  gap: "8px",
-  padding: "6px 12px",
-  borderRadius: "16px", // Pill shape
-  fontSize: "13px",
-  background:
-    status === "failed"
-      ? "var(--orca-color-bg-danger, rgba(255, 0, 0, 0.08))"
-      : "var(--orca-color-bg-3)",
-  color:
-    status === "failed"
-      ? "var(--orca-color-danger, #dc3545)"
-      : "var(--orca-color-text-2)",
-  transition: "all 0.2s ease",
-  maxWidth: "100%",
-  overflow: "hidden",
-});
+export const toolStatusPillStyle = (status: ToolStatus): React.CSSProperties => {
+  // 状态颜色配置
+  const statusColors = {
+    loading: { bg: "rgba(59, 130, 246, 0.08)", border: "rgba(59, 130, 246, 0.2)", text: "#3b82f6" },
+    success: { bg: "rgba(34, 197, 94, 0.08)", border: "rgba(34, 197, 94, 0.2)", text: "#22c55e" },
+    failed: { bg: "rgba(239, 68, 68, 0.08)", border: "rgba(239, 68, 68, 0.2)", text: "#ef4444" },
+    cancelled: { bg: "rgba(107, 114, 128, 0.08)", border: "rgba(107, 114, 128, 0.2)", text: "#6b7280" },
+  };
+  const colors = statusColors[status];
+  
+  return {
+    display: "flex",
+    alignItems: "center",
+    gap: "10px",
+    padding: "10px 14px",
+    borderRadius: "10px",
+    fontSize: "13px",
+    background: colors.bg,
+    border: `1px solid ${colors.border}`,
+    color: "var(--orca-color-text-2)",
+    transition: "all 0.2s ease",
+    maxWidth: "100%",
+    overflow: "hidden",
+  };
+};
 
 /**
  * Tool status icon - animated icon container
@@ -480,8 +486,12 @@ export const toolStatusIconStyle: React.CSSProperties = {
   display: "inline-flex",
   alignItems: "center",
   justifyContent: "center",
-  fontSize: "14px",
+  fontSize: "16px",
   flexShrink: 0,
+  width: "24px",
+  height: "24px",
+  borderRadius: "6px",
+  background: "rgba(255, 255, 255, 0.5)",
 };
 
 /**
@@ -492,6 +502,8 @@ export const toolStatusTextStyle: React.CSSProperties = {
   overflow: "hidden",
   textOverflow: "ellipsis",
   whiteSpace: "nowrap",
+  fontWeight: 500,
+  fontSize: "13px",
 };
 
 /**
@@ -519,13 +531,14 @@ export const toolStatusExpandButtonStyle: React.CSSProperties = {
  * Tool status details - expandable details panel
  */
 export const toolStatusDetailsStyle: React.CSSProperties = {
-  marginTop: "8px",
-  padding: "12px",
+  marginTop: "10px",
+  padding: "14px",
   background: "var(--orca-color-bg-2)",
   border: "1px solid var(--orca-color-border)",
-  borderRadius: "8px",
+  borderRadius: "10px",
   fontSize: "12px",
   color: "var(--orca-color-text-2)",
+  animation: "messageFadeSlideIn 0.2s ease-out",
 };
 
 /**

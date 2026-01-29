@@ -74,6 +74,20 @@ export type Message = {
     folderName?: string;
     error?: string;
   };
+  // 分支功能
+  branchId?: string;           // 分支 ID（主分支为 undefined）
+  parentMessageId?: string;    // 父消息 ID（分支点）
+  branches?: MessageBranch[];  // 此消息的其他分支
+};
+
+/**
+ * 消息分支
+ */
+export type MessageBranch = {
+  id: string;              // 分支 ID
+  name?: string;           // 分支名称（可选）
+  createdAt: number;       // 创建时间
+  messages: Message[];     // 分支中的消息
 };
 
 /**

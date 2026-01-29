@@ -786,11 +786,18 @@ interface MessageItemProps {
     totalOutputCost?: number;   // 总输出费用
     isLastMessage?: boolean;    // 是否是最后一条消息
   };
+  // Branch management (对话分支功能)
+  currentBranchId?: string | null;
+  onCreateBranch?: (messageId: string) => void;
+  onSwitchBranch?: (messageId: string, branchId: string) => void;
+  onDeleteBranch?: (messageId: string, branchId: string) => void;
+  onRenameBranch?: (messageId: string, branchId: string, newName: string) => void;
 }
 
 /**
  * Render a tool call with its result using ToolStatusIndicator
  * Gemini UX Review: Unified tool call + result display
+ * Enhanced: Detect error state from result content
  */
 function ToolCallWithResult({
   toolCall,
@@ -801,13 +808,18 @@ function ToolCallWithResult({
   result?: { content: string; name: string };
   isLoading: boolean;
 }) {
-  const status = isLoading ? "loading" : result ? "success" : "loading";
+  // 检测结果是否为错误
+  const isError = result?.content?.startsWith("Error:") || 
+                  result?.content?.includes("失败") ||
+                  result?.content?.includes("拒绝");
+  const status = isLoading ? "loading" : isError ? "failed" : result ? "success" : "loading";
 
   return createElement(ToolStatusIndicator, {
     toolName: toolCall.function.name,
     status,
     args: toolCall.function.arguments,
     result: result?.content,
+    error: isError ? result?.content : undefined,
   });
 }
 
@@ -815,8 +827,10 @@ function ToolCallWithResult({
  * CollapsibleToolCalls - 可折叠的工具调用列表
  * 流式传输时展开，完成后自动折叠
  * 
- * Enhanced features (Requirements 10.3):
+ * Enhanced features:
  * - Shows parallel progress indicator (x/y 完成)
+ * - Shows success/error counts
+ * - Displays error tools with red indicators
  */
 function CollapsibleToolCalls({
   toolCalls,
@@ -835,6 +849,27 @@ function CollapsibleToolCalls({
     return toolCalls.every((tc) => toolResults.has(tc.id));
   }, [toolCalls, toolResults]);
 
+  // 统计成功/失败数量
+  const { successCount, errorCount } = useMemo(() => {
+    if (!toolResults) return { successCount: 0, errorCount: 0 };
+    let success = 0;
+    let errors = 0;
+    toolCalls.forEach((tc) => {
+      const result = toolResults.get(tc.id);
+      if (result) {
+        const isError = result.content?.startsWith("Error:") || 
+                       result.content?.includes("失败") ||
+                       result.content?.includes("拒绝");
+        if (isError) {
+          errors++;
+        } else {
+          success++;
+        }
+      }
+    });
+    return { successCount: success, errorCount: errors };
+  }, [toolCalls, toolResults]);
+
   // 流式传输时展开，完成后自动折叠
   useEffect(() => {
     if (!isStreaming && allCompleted) {
@@ -848,8 +883,62 @@ function CollapsibleToolCalls({
     ? toolCalls.filter((tc) => toolResults.has(tc.id)).length
     : 0;
 
-  // Format progress string (Requirements 10.3)
-  const progressText = `${completedCount}/${toolCount} 完成`;
+  // 格式化进度字符串 - 显示成功/失败数
+  const progressText = allCompleted
+    ? (errorCount > 0 
+        ? `${successCount} 成功, ${errorCount} 失败`
+        : `${toolCount} 完成`)
+    : `${completedCount}/${toolCount} 完成`;
+
+  // 获取每个工具的状态信息
+  const getToolStatus = (index: number): { color: string; status: "pending" | "running" | "success" | "error" } => {
+    const tc = toolCalls[index];
+    const result = toolResults?.get(tc.id);
+    if (!result) {
+      return isStreaming 
+        ? { color: "#f59e0b", status: "running" } 
+        : { color: "#6b7280", status: "pending" };
+    }
+    const isError = result.content?.startsWith("Error:") || 
+                   result.content?.includes("失败") ||
+                   result.content?.includes("拒绝");
+    return isError 
+      ? { color: "#ef4444", status: "error" } 
+      : { color: "#22c55e", status: "success" };
+  };
+
+  // 进度条组件 - 显示每个工具的状态
+  const renderProgressBar = () => {
+    return createElement(
+      "div",
+      {
+        style: {
+          display: "flex",
+          alignItems: "center",
+          gap: "3px",
+          marginLeft: "8px",
+          padding: "2px 6px",
+          background: "var(--orca-color-bg-3)",
+          borderRadius: "10px",
+        },
+      },
+      ...toolCalls.map((_, i) => {
+        const { color, status } = getToolStatus(i);
+        return createElement("span", {
+          key: i,
+          style: {
+            width: "8px",
+            height: "8px",
+            borderRadius: "50%",
+            background: color,
+            transition: "all 0.3s ease",
+            boxShadow: status === "running" ? `0 0 6px ${color}` : "none",
+            animation: status === "running" ? "pulse 1.5s ease-in-out infinite" : "none",
+          },
+        });
+      })
+    );
+  };
 
   // 折叠状态的摘要头部
   const collapsedHeader = createElement(
@@ -859,61 +948,41 @@ function CollapsibleToolCalls({
       style: {
         display: "flex",
         alignItems: "center",
-        gap: "6px",
-        padding: "6px 10px",
-        borderRadius: "6px",
-        background: "var(--orca-color-bg-2)",
-        border: "1px solid var(--orca-color-border)",
+        gap: "8px",
+        padding: "8px 12px",
+        borderRadius: "8px",
+        background: errorCount > 0 
+          ? "rgba(239, 68, 68, 0.06)" 
+          : "var(--orca-color-bg-2)",
+        border: errorCount > 0 
+          ? "1px solid rgba(239, 68, 68, 0.15)" 
+          : "1px solid var(--orca-color-border)",
         cursor: "pointer",
-        fontSize: "12px",
+        fontSize: "13px",
         color: "var(--orca-color-text-2)",
+        transition: "all 0.2s ease",
       },
     },
+    // 工具图标
     createElement("i", {
-      className: "ti ti-tools",
-      style: { fontSize: "14px", color: "var(--orca-color-primary)" },
+      className: errorCount > 0 ? "ti ti-alert-circle" : "ti ti-tools",
+      style: { 
+        fontSize: "15px", 
+        color: errorCount > 0 ? "#ef4444" : "var(--orca-color-primary)",
+      },
     }),
-    // Progress indicator (Requirements 10.3)
+    // 状态文字
     createElement(
       "span",
-      {
-        style: {
-          display: "inline-flex",
-          alignItems: "center",
-          gap: "4px",
-        },
-      },
-      `已执行 ${progressText}`,
-      // Progress bar
-      toolCount > 1 && createElement(
-        "span",
-        {
-          style: {
-            display: "inline-flex",
-            alignItems: "center",
-            gap: "2px",
-            marginLeft: "4px",
-          },
-        },
-        ...Array.from({ length: toolCount }, (_, i) =>
-          createElement("span", {
-            key: i,
-            style: {
-              width: "6px",
-              height: "6px",
-              borderRadius: "50%",
-              background: i < completedCount
-                ? "var(--orca-color-success)"
-                : "var(--orca-color-border)",
-              transition: "background 0.3s",
-            },
-          })
-        )
-      )
+      { style: { fontWeight: 500 } },
+      `已执行 ${progressText}`
     ),
+    // 进度条
+    renderProgressBar(),
+    // 展开箭头
     createElement("i", {
       className: "ti ti-chevron-down",
-      style: { fontSize: "12px", marginLeft: "auto" },
+      style: { fontSize: "14px", marginLeft: "auto", opacity: 0.6 },
     })
   );
 
@@ -925,70 +994,49 @@ function CollapsibleToolCalls({
       style: {
         display: "flex",
         alignItems: "center",
-        gap: "6px",
-        padding: "6px 10px",
-        marginBottom: "8px",
-        borderRadius: "6px",
-        background: "var(--orca-color-bg-2)",
-        border: "1px solid var(--orca-color-border)",
+        gap: "8px",
+        padding: "8px 12px",
+        marginBottom: "10px",
+        borderRadius: "8px",
+        background: errorCount > 0 
+          ? "rgba(239, 68, 68, 0.06)" 
+          : "var(--orca-color-bg-2)",
+        border: errorCount > 0 
+          ? "1px solid rgba(239, 68, 68, 0.15)" 
+          : "1px solid var(--orca-color-border)",
         cursor: "pointer",
-        fontSize: "12px",
+        fontSize: "13px",
         color: "var(--orca-color-text-2)",
+        transition: "all 0.2s ease",
       },
     },
+    // 动态图标
     createElement("i", {
-      className: isStreaming && !allCompleted ? "ti ti-loader" : "ti ti-tools",
+      className: isStreaming && !allCompleted 
+        ? "ti ti-loader-2" 
+        : errorCount > 0 
+          ? "ti ti-alert-circle" 
+          : "ti ti-tools",
       style: {
-        fontSize: "14px",
-        color: "var(--orca-color-primary)",
+        fontSize: "15px",
+        color: errorCount > 0 ? "#ef4444" : "var(--orca-color-primary)",
         animation: isStreaming && !allCompleted ? "spin 1s linear infinite" : undefined,
       },
     }),
-    // Progress indicator (Requirements 10.3)
+    // 状态文字
     createElement(
       "span",
-      {
-        style: {
-          display: "inline-flex",
-          alignItems: "center",
-          gap: "4px",
-        },
-      },
+      { style: { fontWeight: 500 } },
       isStreaming && !allCompleted
-        ? `工具执行中 ${progressText}`
-        : `${toolCount} 个工具调用 (${progressText})`,
-      // Progress dots for multiple tools
-      toolCount > 1 && createElement(
-        "span",
-        {
-          style: {
-            display: "inline-flex",
-            alignItems: "center",
-            gap: "2px",
-            marginLeft: "4px",
-          },
-        },
-        ...Array.from({ length: toolCount }, (_, i) =>
-          createElement("span", {
-            key: i,
-            style: {
-              width: "6px",
-              height: "6px",
-              borderRadius: "50%",
-              background: i < completedCount
-                ? "var(--orca-color-success)"
-                : isStreaming
-                  ? "var(--orca-color-warning)"
-                  : "var(--orca-color-border)",
-              transition: "background 0.3s",
-            },
-          })
-        )
-      )
+        ? `执行中 ${progressText}`
+        : `${toolCount} 个工具调用 (${progressText})`
     ),
+    // 进度条
+    renderProgressBar(),
+    // 折叠箭头
     createElement("i", {
       className: "ti ti-chevron-up",
-      style: { fontSize: "12px", marginLeft: "auto" },
+      style: { fontSize: "14px", marginLeft: "auto", opacity: 0.6 },
     })
   );
 
@@ -1076,6 +1124,12 @@ export default function MessageItem({
   onSkillConfirmAction,
   onSkillDraftAction,
   tokenStats,
+  // Branch management
+  currentBranchId,
+  onCreateBranch,
+  onSwitchBranch,
+  onDeleteBranch,
+  onRenameBranch,
 }: MessageItemProps) {
   const [isHovered, setIsHovered] = useState(false);
   const [isExtractDropdownOpen, setIsExtractDropdownOpen] = useState(false);
@@ -1846,6 +1900,70 @@ export default function MessageItem({
           onGenerate: onGenerateSuggestions,
         }),
 
+      // Branch Indicator (显示该消息的分支)
+      message.branches &&
+        message.branches.length > 0 &&
+        createElement(
+          "div",
+          {
+            style: {
+              display: "flex",
+              alignItems: "center",
+              gap: "8px",
+              marginTop: "10px",
+              padding: "8px 12px",
+              background: "rgba(99, 102, 241, 0.08)",
+              border: "1px solid rgba(99, 102, 241, 0.2)",
+              borderRadius: "8px",
+              fontSize: "12px",
+            },
+          },
+          // 分支图标
+          createElement("i", {
+            className: "ti ti-git-branch",
+            style: { fontSize: "14px", color: "#6366f1" },
+          }),
+          // 分支标签
+          createElement(
+            "span",
+            { style: { color: "var(--orca-color-text-2)", fontWeight: 500 } },
+            `${message.branches.length} 个分支:`
+          ),
+          // 分支列表
+          ...message.branches.map((branch, idx) =>
+            createElement(
+              "button",
+              {
+                key: branch.id,
+                onClick: (e: any) => {
+                  e.stopPropagation();
+                  if (onSwitchBranch) {
+                    onSwitchBranch(message.id, branch.id);
+                  }
+                },
+                style: {
+                  padding: "4px 10px",
+                  borderRadius: "4px",
+                  border: currentBranchId === branch.id 
+                    ? "1px solid #6366f1" 
+                    : "1px solid var(--orca-color-border)",
+                  background: currentBranchId === branch.id 
+                    ? "rgba(99, 102, 241, 0.15)" 
+                    : "var(--orca-color-bg-2)",
+                  color: currentBranchId === branch.id 
+                    ? "#6366f1" 
+                    : "var(--orca-color-text-2)",
+                  cursor: "pointer",
+                  fontSize: "11px",
+                  fontWeight: currentBranchId === branch.id ? 600 : 400,
+                  transition: "all 0.2s ease",
+                },
+              },
+              branch.name || `分支 ${idx + 1}`
+            )
+          )
+        ),
+
       // Message Time and Token Stats
       (message.createdAt || tokenStats || (isAssistant && message.model)) &&
         createElement(
@@ -2101,6 +2219,21 @@ export default function MessageItem({
                 onClick: onRegenerate,
               },
               createElement("i", { className: "ti ti-refresh" })
+            )
+          ),
+        // Branch Button (从此处创建分支 - 仅 AI 消息)
+        isAssistant &&
+          !isStreaming &&
+          onCreateBranch &&
+          withTooltip(
+            "从此处创建分支",
+            createElement(
+              "button",
+              {
+                style: actionButtonStyle,
+                onClick: () => onCreateBranch(message.id),
+              },
+              createElement("i", { className: "ti ti-git-branch" })
             )
           )
       )

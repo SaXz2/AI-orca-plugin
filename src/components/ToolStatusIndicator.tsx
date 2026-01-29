@@ -29,6 +29,7 @@ import {
   toolStatusRetryButtonStyle,
 } from "../styles/ai-chat-styles";
 import { withTooltip } from "../utils/orca-tooltip";
+import MarkdownMessage from "./MarkdownMessage";
 
 const React = window.React as unknown as {
   createElement: typeof window.React.createElement;
@@ -243,23 +244,42 @@ export default function ToolStatusIndicator({
               { style: { fontWeight: "bold", marginBottom: "4px", fontSize: "12px" } },
               "结果:"
             ),
-            createElement(
-              "pre",
-              {
-                style: {
-                  margin: 0,
-                  fontSize: "11px",
-                  whiteSpace: "pre-wrap",
-                  wordBreak: "break-all",
-                  background: "var(--orca-color-bg-3)",
-                  padding: "8px",
-                  borderRadius: "4px",
-                  maxHeight: "200px",
-                  overflowY: "auto",
-                },
-              },
-              formatJson(result)
-            )
+            // 检测是否是 JSON 或纯数据，使用 pre 显示；否则使用 Markdown 渲染
+            isJsonLike(result)
+              ? createElement(
+                  "pre",
+                  {
+                    style: {
+                      margin: 0,
+                      fontSize: "11px",
+                      whiteSpace: "pre-wrap",
+                      wordBreak: "break-all",
+                      background: "var(--orca-color-bg-3)",
+                      padding: "8px",
+                      borderRadius: "4px",
+                      maxHeight: "200px",
+                      overflowY: "auto",
+                    },
+                  },
+                  formatJson(result)
+                )
+              : createElement(
+                  "div",
+                  {
+                    style: {
+                      background: "var(--orca-color-bg-3)",
+                      padding: "8px",
+                      borderRadius: "4px",
+                      maxHeight: "200px",
+                      overflowY: "auto",
+                      fontSize: "12px",
+                    },
+                  },
+                  createElement(MarkdownMessage, {
+                    content: result,
+                    role: "tool",
+                  })
+                )
           )
       ),
     // Error details (always visible for failed state)
@@ -285,4 +305,28 @@ function formatJson(str: string): string {
   } catch {
     return str;
   }
+}
+
+/**
+ * Check if a string looks like JSON or structured data
+ * Returns true for JSON objects/arrays, false for natural language text
+ */
+function isJsonLike(str: string): boolean {
+  const trimmed = str.trim();
+  // Check if starts with { or [ (JSON)
+  if ((trimmed.startsWith("{") && trimmed.endsWith("}")) ||
+      (trimmed.startsWith("[") && trimmed.endsWith("]"))) {
+    try {
+      JSON.parse(trimmed);
+      return true;
+    } catch {
+      // Not valid JSON, could be Markdown
+      return false;
+    }
+  }
+  // Check if it's mostly code-like (no spaces, special chars)
+  if (trimmed.length < 100 && !trimmed.includes(" ") && !trimmed.includes("\n")) {
+    return true;
+  }
+  return false;
 }

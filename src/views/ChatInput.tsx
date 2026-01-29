@@ -28,6 +28,7 @@ import { loadToolSettings, toolStore, toggleWebSearch, toggleAgenticRAG, toggleS
 import { getAllCommandsInfo } from "../services/commands-loader";
 import { listSkills } from "../services/skills-manager";
 import type { SkillRef } from "../services/skills-manager";
+import { recommendSkills, type SkillRecommendation, getSkillSummary } from "../services/skill-recommender";
 
 const React = window.React as unknown as {
   createElement: typeof window.React.createElement;
@@ -220,6 +221,12 @@ export default function ChatInput({
   const [skillMenuOpen, setSkillMenuOpen] = useState(false);
   const [skillMenuIndex, setSkillMenuIndex] = useState(0);
   const skillMenuRef = useRef<HTMLDivElement | null>(null);
+  
+  // Skill 推荐状态
+  const [skillRecommendations, setSkillRecommendations] = useState<SkillRecommendation[]>([]);
+  const [showSkillRecommendations, setShowSkillRecommendations] = useState(false);
+  const recommendationTimeoutRef = useRef<any>(null);
+  
   const [pendingFiles, setPendingFiles] = useState<FileRef[]>([]);
   const [isUploading, setIsUploading] = useState(false);
   const [clearContextPending, setClearContextPending] = useState(false);
@@ -392,6 +399,38 @@ export default function ChatInput({
       setSkillMenuOpen(false);
     }
   }, [filteredSkills, text]);
+
+  // Skill 自动推荐逻辑（防抖动）
+  useEffect(() => {
+    // 清除之前的定时器
+    if (recommendationTimeoutRef.current) {
+      clearTimeout(recommendationTimeoutRef.current);
+    }
+    
+    // 如果输入为空或以 / 或 # 开头，不显示推荐
+    if (!text || text.startsWith("/") || text.startsWith("#") || text.length < 4) {
+      setSkillRecommendations([]);
+      setShowSkillRecommendations(false);
+      return;
+    }
+    
+    // 防抖动：500ms 后才进行推荐
+    recommendationTimeoutRef.current = setTimeout(async () => {
+      try {
+        const recommendations = await recommendSkills(text, 2, 0.2);
+        setSkillRecommendations(recommendations);
+        setShowSkillRecommendations(recommendations.length > 0);
+      } catch (err) {
+        console.error('[ChatInput] Failed to get skill recommendations:', err);
+      }
+    }, 500);
+    
+    return () => {
+      if (recommendationTimeoutRef.current) {
+        clearTimeout(recommendationTimeoutRef.current);
+      }
+    };
+  }, [text]);
 
   // 斜杠菜单键盘导航时自动滚动到选中项
   useEffect(() => {
@@ -1077,6 +1116,88 @@ export default function ChatInput({
               } 
             }, "\u5168\u5c40")
           )
+        )
+      ),
+
+      // Skill 推荐提示条
+      showSkillRecommendations && skillRecommendations.length > 0 && !slashMenuOpen && !skillMenuOpen && createElement(
+        "div",
+        {
+          style: {
+            display: "flex",
+            alignItems: "center",
+            gap: "8px",
+            padding: "8px 12px",
+            marginBottom: "8px",
+            background: "linear-gradient(90deg, rgba(16, 185, 129, 0.08) 0%, rgba(16, 185, 129, 0.02) 100%)",
+            border: "1px solid rgba(16, 185, 129, 0.2)",
+            borderRadius: "8px",
+            fontSize: "12px",
+          },
+        },
+        createElement("i", { 
+          className: "ti ti-sparkles", 
+          style: { fontSize: "14px", color: "var(--orca-color-success, #10b981)" } 
+        }),
+        createElement("span", { 
+          style: { color: "var(--orca-color-text-2)", marginRight: "4px" } 
+        }, "\u63a8\u8350\u6280\u80fd:"),
+        ...skillRecommendations.map((rec, index) => 
+          createElement(
+            "button",
+            {
+              key: rec.skill.id,
+              onClick: () => {
+                setText(`#${rec.skill.id} ${text}`);
+                if (textareaRef.current) {
+                  textareaRef.current.value = `#${rec.skill.id} ${text}`;
+                  textareaRef.current.focus();
+                }
+                setShowSkillRecommendations(false);
+              },
+              style: {
+                padding: "4px 10px",
+                fontSize: "12px",
+                fontWeight: 500,
+                border: "1px solid rgba(16, 185, 129, 0.3)",
+                borderRadius: "6px",
+                cursor: "pointer",
+                background: "var(--orca-color-bg-1)",
+                color: "var(--orca-color-success, #10b981)",
+                display: "flex",
+                alignItems: "center",
+                gap: "4px",
+                transition: "all 0.15s ease",
+              },
+              onMouseEnter: (e: any) => {
+                e.target.style.background = "rgba(16, 185, 129, 0.1)";
+              },
+              onMouseLeave: (e: any) => {
+                e.target.style.background = "var(--orca-color-bg-1)";
+              },
+              title: `${getSkillSummary(rec.skill)}\n${rec.matchReason}`,
+            },
+            createElement("i", { className: "ti ti-wand", style: { fontSize: "12px" } }),
+            rec.skill.metadata.name || rec.skill.id
+          )
+        ),
+        createElement(
+          "button",
+          {
+            onClick: () => setShowSkillRecommendations(false),
+            style: {
+              marginLeft: "auto",
+              padding: "2px",
+              border: "none",
+              background: "transparent",
+              cursor: "pointer",
+              color: "var(--orca-color-text-3)",
+              display: "flex",
+              alignItems: "center",
+            },
+            title: "\u5173\u95ed\u63a8\u8350",
+          },
+          createElement("i", { className: "ti ti-x", style: { fontSize: "14px" } })
         )
       ),
 

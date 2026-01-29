@@ -80,6 +80,13 @@ import {
   loadingBubbleStyle,
 } from "../styles/ai-chat-styles";
 import { multiModelStore } from "../store/multi-model-store";
+import {
+  createBranch,
+  switchBranch,
+  deleteBranch,
+  renameBranch,
+  getActiveBranchId,
+} from "../services/branch-service";
 import MultiModelResponse, { type ModelResponse } from "../components/MultiModelResponse";
 import {
   streamMultiModelChat,
@@ -350,6 +357,10 @@ export default function AiChatPanel({ panelId }: PanelProps) {
   // Message selection mode state (for batch save)
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedMessageIds, setSelectedMessageIds] = useState<Set<string>>(new Set());
+
+  // Branch management state (对话分支功能)
+  const [currentBranchId, setCurrentBranchId] = useState<string | null>(null);
+
 
   // Scroll to bottom button state
   // **Feature: chat-ui-enhancement**
@@ -2746,6 +2757,60 @@ ${userInput}`;
     });
   }, []);
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // Branch Management Callbacks (对话分支功能)
+  // ─────────────────────────────────────────────────────────────────────────
+
+  const handleCreateBranch = useCallback((messageId: string) => {
+    try {
+      // createBranch(messages, messageId, branchName?) -> { messages: Message[]; branchId: string }
+      const result = createBranch(messages, messageId);
+      setCurrentBranchId(result.branchId);
+      setMessages(result.messages);
+      orca.notify("success", "已创建新分支");
+    } catch (err: any) {
+      orca.notify("error", err?.message || "创建分支失败");
+    }
+  }, [messages]);
+
+  const handleSwitchBranch = useCallback((messageId: string, branchId: string) => {
+    try {
+      // switchBranch(messages, messageId, branchId) -> Message[]
+      const updatedMessages = switchBranch(messages, messageId, branchId);
+      setMessages(updatedMessages);
+      setCurrentBranchId(branchId);
+      orca.notify("success", "已切换分支");
+    } catch (err: any) {
+      orca.notify("error", err?.message || "切换分支失败");
+    }
+  }, [messages]);
+
+  const handleDeleteBranch = useCallback((messageId: string, branchId: string) => {
+    try {
+      // deleteBranch(messages, branchPointId, branchId) -> Message[]
+      const updatedMessages = deleteBranch(messages, messageId, branchId);
+      setMessages(updatedMessages);
+      // 如果删除的是当前分支，重置分支 ID
+      if (currentBranchId === branchId) {
+        setCurrentBranchId(null);
+      }
+      orca.notify("success", "已删除分支");
+    } catch (err: any) {
+      orca.notify("error", err?.message || "删除分支失败");
+    }
+  }, [messages, currentBranchId]);
+
+  const handleRenameBranch = useCallback((messageId: string, branchId: string, newName: string) => {
+    try {
+      // renameBranch(messages, branchPointId, branchId, newName) -> Message[]
+      const updatedMessages = renameBranch(messages, messageId, branchId, newName);
+      setMessages(updatedMessages);
+      orca.notify("success", "已重命名分支");
+    } catch (err: any) {
+      orca.notify("error", err?.message || "重命名分支失败");
+    }
+  }, [messages]);
+
   // 生成建议回复 - 根据指定的 AI 消息内容生成
   const createSuggestionGenerator = useCallback(
     (messageContent: string) => async (): Promise<string[]> => {
@@ -3059,7 +3124,12 @@ ${userInput}`;
           onGenerateSuggestions: isLastAi && m.content ? createSuggestionGenerator(m.content) : undefined,
           tokenStats: tokenStatsMap.get(m.id),
           onSkillConfirmAction: m.skillConfirm ? handleSkillConfirmAction : undefined,
-          // onSkillDraftAction is no longer supported in the new system
+          // Branch management (对话分支功能)
+          currentBranchId,
+          onCreateBranch: handleCreateBranch,
+          onSwitchBranch: handleSwitchBranch,
+          onDeleteBranch: handleDeleteBranch,
+          onRenameBranch: handleRenameBranch,
         })
       );
     });
