@@ -21,9 +21,15 @@
 
 ```
 Tool-Prompt/
-├── README.md           # 本说明文件
-├── searchNotes.md      # 工具说明（可编辑）
-├── getPage.md
+├── README.md                 # 本说明文件
+├── searchNotes.md            # 工具说明（可编辑）
+├── get_page.md
+├── get_page_by_name.md
+├── get_blocks_text.md
+├── insert_markdown.md
+├── create_page.md
+├── batch_insert_tags.md
+├── get_tags_and_pages.md
 ├── webSearch.md
 └── ...
 ```
@@ -95,21 +101,22 @@ Tool-Prompt/
 - `searchBlocksByReference` - 反向链接搜索
 
 ### 读取工具
-- `getPage` - 读取页面内容
-- `getBlocksText` - 读取块内容
+- `get_page` - 查找块所属页面
+- `get_page_by_name` - 读取页面内容
+- `get_blocks_text` - 读取块内容
 - `getBlockMeta` - 获取块元数据
 - `getBlockLinks` - 获取块链接关系
+- `get_tags_and_pages` - 获取标签和页面
 
 ### 日记工具
-- `getTodayJournal` - 获取今日日记
-- `getJournalByDate` - 获取指定日期日记
-- `getJournals` - 获取日记范围
+- `get_today_journal` - 获取今日日记
+- `get_journal_by_date` - 获取指定日期日记
+- `get_journals` - 获取日记范围
 
 ### 写入工具
-- `createBlock` - 创建笔记块
-- `createPage` - 创建页面别名
-- `insertTag` - 添加标签
-- `updateTagProperties` - 修改标签属性
+- `insert_markdown` - 插入 Markdown
+- `create_page` - 创建页面
+- `batch_insert_tags` - 批量添加标签
 
 ### 联网工具
 - `webSearch` - 联网搜索
