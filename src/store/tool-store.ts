@@ -9,7 +9,12 @@ import { proxy } from "valtio";
  * 工具状态类型
  * - auto: 自动批准，AI 可以直接调用
  * - ask: 询问用户，每次调用前需要用户确认
- * - disabled: 禁用，AI 无法调用此工具
+ * - disabled: 禁用，不加载到工具列表中
+ * 
+ * 使用场景：
+ * - auto: 搜索、读取等安全操作
+ * - ask: 写入操作、联网搜索等需要用户确认的操作
+ * - disabled: 临时禁用某些工具，但保留配置
  */
 export type ToolStatus = "auto" | "ask" | "disabled";
 

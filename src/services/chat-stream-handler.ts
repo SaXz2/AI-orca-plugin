@@ -43,22 +43,27 @@ export function parseXmlToolCalls(content: string): ToolCallInfo[] {
     let args: Record<string, any> = {};
     let parsed = false;
     
-    // 尝试格式1: JSON 格式
+    // 尝试格式1: JSON 格式（必须包含 name 或 function.name 字段）
     if (!parsed && innerContent.startsWith("{")) {
       try {
         const jsonObj = JSON.parse(innerContent);
         toolName = jsonObj.name || jsonObj.function?.name || "";
-        let jsonArgs = jsonObj.arguments ?? jsonObj.parameters ?? {};
-        if (typeof jsonArgs === "object") {
-          args = jsonArgs;
-        } else if (typeof jsonArgs === "string") {
-          try {
-            args = JSON.parse(jsonArgs);
-          } catch {
-            args = { value: jsonArgs };
+        
+        // 只有当 JSON 中包含工具名时，才认为格式1成功
+        if (toolName) {
+          let jsonArgs = jsonObj.arguments ?? jsonObj.parameters ?? {};
+          if (typeof jsonArgs === "object") {
+            args = jsonArgs;
+          } else if (typeof jsonArgs === "string") {
+            try {
+              args = JSON.parse(jsonArgs);
+            } catch {
+              args = { value: jsonArgs };
+            }
           }
+          parsed = true;
         }
-        parsed = true;
+        // 如果 JSON 中没有 name 字段，不设置 parsed，继续尝试其他格式
       } catch {
         // 不是有效 JSON，继续尝试其他格式
       }
@@ -94,13 +99,20 @@ export function parseXmlToolCalls(content: string): ToolCallInfo[] {
       if (innerContent.startsWith("{")) {
         try {
           args = JSON.parse(innerContent);
-        } catch {
+          parsed = true;
+        } catch (err) {
+          console.warn("[parseXmlToolCalls] Failed to parse JSON args for name-attribute form:", err);
           args = { input: innerContent };
+          parsed = true;
         }
       } else if (innerContent) {
         args = { input: innerContent };
+        parsed = true;
+      } else {
+        // 无参数的工具调用
+        args = {};
+        parsed = true;
       }
-      parsed = true;
     }
     
     // 如果以上都失败，尝试将整个内容作为简单的工具名+参数
@@ -135,16 +147,18 @@ export function parseXmlToolCalls(content: string): ToolCallInfo[] {
 
 /**
  * 检查内容是否包含 <tool_call> 标签
+ *
+ * 注意：部分模型会输出带属性的形式，例如：<tool_call name="xxx">...</tool_call>
  */
 export function hasXmlToolCalls(content: string): boolean {
-  return /<tool_call>/.test(content);
+  return /<tool_call\b/i.test(content);
 }
 
 /**
  * 从内容中移除 <tool_call> 块，返回纯文本内容
  */
 export function stripXmlToolCalls(content: string): string {
-  return content.replace(/<tool_call>[\s\S]*?<\/tool_call>/g, "").trim();
+  return content.replace(/<tool_call\b[^>]*>[\s\S]*?<\/tool_call>/gi, "").trim();
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

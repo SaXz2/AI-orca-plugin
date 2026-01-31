@@ -2291,20 +2291,37 @@ graph TD
                if (!resolvedSkillId) {
                  result = `Error: Skill not found for tool: ${toolName}`;
                } else {
+                 // 🔴 重要：Skill 调用需要用户确认
                  try {
-                   const instructions = await getSkillInstructionsAsync(resolvedSkillId);
-                   if (!instructions) {
-                     result = `Error: Skill not found: ${resolvedSkillId}`;
+                   const skill = await getSkill(resolvedSkillId.id, resolvedSkillId.isGlobal);
+                   if (!skill) {
+                     result = `Error: Skill not found: ${resolvedSkillId.id}`;
                    } else {
-                     // 返回 Skill 的详细指令供 AI 使用
-                     const userInput = args.input || "";
-                     result = `${instructions}
+                     // 使用确认对话框询问用户
+                     const { createToolConfirmPromise } = await import("../components/ToolConfirmDialog");
+                     const userApproved = await createToolConfirmPromise(
+                       `skill: ${skill.metadata.name}`,
+                       { skillId: resolvedSkillId.id, input: args.input || "" }
+                     );
+                     
+                     if (!userApproved) {
+                       result = `用户拒绝执行 Skill。请尝试其他方式或直接回答用户的问题。`;
+                     } else {
+                       // 用户确认后，加载详细指令
+                       const instructions = await getSkillInstructionsAsync(resolvedSkillId);
+                       if (!instructions) {
+                         result = `Error: Skill not found: ${resolvedSkillId.id}`;
+                       } else {
+                         const userInput = args.input || "";
+                         result = `${instructions}
 
 ## 用户输入
 ${userInput}`;
+                       }
+                     }
                    }
                  } catch (err: any) {
-                   result = `Error: Failed to execute skill ${resolvedSkillId}: ${err?.message || "Unknown error"}`;
+                   result = `Error: Failed to execute skill ${resolvedSkillId.id}: ${err?.message || "Unknown error"}`;
                  }
                }
              } else {
