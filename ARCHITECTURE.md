@@ -34,7 +34,7 @@
 - 📁 **多文件支持** - PDF、Word、Excel、图片、视频处理
 - 🌐 **联网搜索** - 集成 Web 搜索、Wikipedia、货币转换
 - 🔄 **流式输出** - SSE 实时流式响应
-- 🎨 **Markdown 增强** - 支持代码高亮、表格、图表、思维导图
+- 🎨 **Markdown 增强** - 支持代码高亮、表格、图表
 
 ---
 
@@ -92,7 +92,6 @@ AI-orca-plugin/
 │   ├── components/               # 可复用组件
 │   │   ├── MarkdownMessage.tsx   # Markdown 渲染
 │   │   ├── LocalGraph.tsx        # 知识图谱
-│   │   ├── MindMapRenderer.tsx   # 思维导图
 │   │   ├── MultiModelResponse.tsx # 多模型响应
 │   │   └── ...
 │   │
@@ -577,7 +576,6 @@ Python 运行时：
 - 对比视图
 - 图片画廊
 - 知识图谱（`[GRAPH:blockId]`）
-- 思维导图（`[MINDMAP:blockId]`）
 
 #### LocalGraph.tsx
 知识图谱可视化：
@@ -585,12 +583,6 @@ Python 运行时：
 - 节点拖拽
 - 缩放和平移
 - 链接关系展示
-
-#### MindMapRenderer.tsx
-思维导图渲染：
-- 树状布局
-- 折叠/展开
-- 导出图片
 
 #### MemoryManager.tsx
 记忆管理界面：

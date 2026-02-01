@@ -117,6 +117,41 @@ const { Button } = orca.components;
 // Helper Functions
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * 获取模型的上下文长度限制
+ * @param settings AI 设置
+ * @param modelId 模型 ID
+ * @param providerId 可选的提供商 ID
+ * @returns 上下文长度（tokens），如果未配置则返回 undefined 使用默认值
+ */
+function getModelContextLength(
+  settings: AiChatSettings,
+  modelId: string,
+  providerId?: string
+): number | undefined {
+  // 如果指定了 providerId，直接查找该 provider
+  if (providerId) {
+    const provider = settings.providers.find(p => p.id === providerId);
+    if (provider) {
+      const model = provider.models.find(m => m.id === modelId);
+      if (model?.contextLength) {
+        return model.contextLength;
+      }
+    }
+  }
+
+  // 查找所有包含该模型的提供商
+  for (const provider of settings.providers) {
+    const model = provider.models.find(m => m.id === modelId);
+    if (model?.contextLength) {
+      return model.contextLength;
+    }
+  }
+
+  // 未配置，返回 undefined 使用默认值
+  return undefined;
+}
+
 type ScrollAnimationState = {
   rafId: number | null;
   cancelToken: number;
@@ -1086,7 +1121,7 @@ export default function AiChatPanel({ panelId }: PanelProps) {
 	      // 检查是否是内置 UI 命令（如 /table, /brief, /localgraph 等）
 	      const builtinCommands = [
 	        "table", "timeline", "compare", "list", "steps", "brief", "detail", "summary", "eli5", "formal", "diagram",
-	        "localgraph", "mindmap", "card", "skill",
+	        "localgraph", "card", "skill",
 	        "todoist", "todoist-all", "todoist-add", "todoist-done", "todoist-ai"
 	      ];
 	      const isBuiltinCommand = builtinCommands.includes(commandName);
@@ -1232,7 +1267,7 @@ graph TD
 \`\`\`
 要求：
 1. 使用 mermaid 代码块
-2. 根据内容选择合适的图表类型（flowchart、sequence、mindmap 等）
+2. 根据内容选择合适的图表类型（flowchart、sequence 等）
 3. 节点文字简洁明了
 4. 连线标注清晰`;
 	    }
@@ -1321,83 +1356,6 @@ graph TD
 	          id: nowId(),
 	          role: "assistant",
 	          content: graphContent,
-	          createdAt: Date.now(),
-	        };
-	        setMessages((prev) => [...prev, assistantMsg]);
-	        queueMicrotask(scrollToBottom);
-	      })();
-	      
-	      return; // 直接返回，不走 AI
-	    }
-
-	    // /mindmap - 思维导图（显示块及子块的树形结构）
-	    if (content.includes("/mindmap")) {
-	      const mindmapQuery = processedContent.replace(/\/mindmap/g, "").trim();
-	      const cleanedQuery = mindmapQuery.replace(/^(显示|查看|的)?\s*/g, "").replace(/\s*(的)?(思维)?(导图)?$/g, "").trim();
-	      
-	      // 添加用户消息
-	      const userMsg: Message = { 
-	        id: nowId(), 
-	        role: "user", 
-	        content, 
-	        createdAt: Date.now(),
-	      };
-	      setMessages((prev) => [...prev, userMsg]);
-	      
-	      // 直接获取 blockId 并渲染思维导图
-	      (async () => {
-	        let blockId: number | null = null;
-	        let pageName: string | null = null;
-	        
-	        if (cleanedQuery) {
-	          // 检查是否是 blockId 格式：纯数字、blockid 123、blockid:123
-	          const blockIdMatch = cleanedQuery.match(/^(?:blockid[:\s]*)?(\d+)$/i);
-	          if (blockIdMatch) {
-	            blockId = parseInt(blockIdMatch[1], 10);
-	          } else {
-	            // 否则当作页面名称，需要查找对应的 blockId
-	            pageName = cleanedQuery;
-            try {
-              const block = await orca.invokeBackend("get-block-by-alias", cleanedQuery);
-              if (block && block.id) {
-                blockId = block.id;
-              }
-            } catch (err) {
-            }
-          }
-	        } else {
-	          // 使用当前打开的页面
-	          try {
-	            const activePanel = orca.state.activePanel;
-	            if (activePanel && activePanel !== uiStore.aiChatPanelId) {
-	              const vp = orca.nav.findViewPanel(activePanel, orca.state.panels);
-	              if (vp?.view === "block" && vp.viewArgs?.blockId) {
-	                blockId = vp.viewArgs.blockId;
-	              }
-	            }
-	          } catch {}
-	        }
-	        
-	        if (!blockId) {
-	          const errorMsg = pageName 
-	            ? `找不到页面「${pageName}」，请检查名称是否正确`
-	            : "请先选择一个页面，或指定页面名称，例如：/mindmap 阿拉丁";
-	          const assistantMsg: Message = {
-	            id: nowId(),
-	            role: "assistant",
-	            content: errorMsg,
-	            createdAt: Date.now(),
-	          };
-	          setMessages((prev) => [...prev, assistantMsg]);
-	          return;
-	        }
-	        
-	        // 直接输出 mindmap 代码块格式，让 MarkdownMessage 渲染思维导图
-	        const mindmapContent = "```mindmap\n" + blockId + "\n```";
-	        const assistantMsg: Message = {
-	          id: nowId(),
-	          role: "assistant",
-	          content: mindmapContent,
 	          createdAt: Date.now(),
 	        };
 	        setMessages((prev) => [...prev, assistantMsg]);
@@ -1793,26 +1751,10 @@ graph TD
       // 有拖入块时禁用搜索类工具，强制 AI 使用已提供的上下文
       const hasHighPriorityContext = highPriorityContexts.length > 0;
       
-      // 💡 智能工具加载：根据用户输入检测需要的工具类别
-      const detectedCategories = detectToolCategories(processedContent);
-      const needsTools = detectedCategories.size > 0;
-      
-      // 如果没有检测到需要工具，跳过工具加载
+      // 💡 Tool-as-Skill 架构：使用单一 useSkill 工具
       let baseTools = hasHighPriorityContext 
         ? getToolsForDraggedContext() 
-        : (needsTools ? getToolsByCategories(detectedCategories) : []);
-      
-      // 动态加载 Skill 工具（只有检测到需要时）
-      if (needsTools && detectedCategories.has("skill")) {
-        try {
-          const skillTools = await getSkillToolsAsync();
-          if (skillTools.length > 0) {
-            baseTools = [...baseTools, ...skillTools];
-          }
-        } catch (err) {
-          console.warn("[AiChatPanel] Failed to load skill tools:", err);
-        }
-      }
+        : getTools(); // 返回单一 useSkill 工具
       
       // 如果启用了 Todoist AI 模式，注入 Todoist 工具
       if (enableTodoistTools) {
@@ -1827,7 +1769,7 @@ graph TD
       // 调试日志：显示加载的工具数量
       if (filteredTools.length > 0) {
         if (supportsTools) {
-          console.log(`[AiChatPanel] 智能工具加载: ${filteredTools.length} 个工具 (类别: ${[...detectedCategories].join(", ")})`);
+          console.log(`[AiChatPanel] Tool-as-Skill 架构: ${filteredTools.length} 个工具`);
         } else {
           console.log(`[AiChatPanel] 模型 ${model} 不支持 tools 能力，跳过工具加载`);
         }
@@ -1872,21 +1814,23 @@ graph TD
               modelId: model,
             });
             
-            let result = "";
-            for await (const chunk of streamChatWithRetry(
-              {
-              apiUrl: apiConfig.apiUrl,
-              apiKey: apiConfig.apiKey,
-              model,
-              protocol: apiConfig.protocol,
-              anthropicApiPath: apiConfig.anthropicApiPath,
-              temperature: options?.temperature ?? 0.3,
-                maxTokens: options?.maxTokens ?? 1000,
-                signal: aborter.signal,
-              },
-              ragApiMessages,
-              ragApiMessages,
-            )) {
+          let result = "";
+          const ragContextLength = getModelContextLength(settings, model);
+          for await (const chunk of streamChatWithRetry(
+            {
+            apiUrl: apiConfig.apiUrl,
+            apiKey: apiConfig.apiKey,
+            model,
+            protocol: apiConfig.protocol,
+            anthropicApiPath: apiConfig.anthropicApiPath,
+            temperature: options?.temperature ?? 0.3,
+              maxTokens: options?.maxTokens ?? 1000,
+              signal: aborter.signal,
+              maxContextTokens: ragContextLength,
+            },
+            ragApiMessages,
+            ragApiMessages,
+          )) {
               if (chunk.type === "content") {
                 result += chunk.content;
               }
@@ -1973,6 +1917,9 @@ graph TD
       // browserAIMode 时：收到 tool_calls 就执行工具，收到 content 就中止并发给浏览器
       let browserAIAborted = false;
 
+      // 获取模型的上下文长度限制
+      const modelContextLength = getModelContextLength(settings, model);
+
       for await (const chunk of streamChatWithRetry(
         {
           apiUrl: apiConfig.apiUrl,
@@ -1985,6 +1932,7 @@ graph TD
           signal: aborter.signal,
           tools: toolsToUse,
           timeoutMs: settings.streamTimeout,
+          maxContextTokens: modelContextLength,
         },
         apiMessages,
         apiMessagesFallback,
@@ -2421,6 +2369,7 @@ ${userInput}`;
 
         // 获取模型特定的 API 配置
         const toolApiConfig = getModelApiConfig(settings, model);
+        const toolContextLength = getModelContextLength(settings, model);
 
         try {
           for await (const chunk of streamChatWithRetry(
@@ -2434,6 +2383,7 @@ ${userInput}`;
               signal: aborter.signal,
               tools: enableTools ? filteredTools : undefined, // Last round: disable tools to force an answer
               timeoutMs: settings.streamTimeout,
+              maxContextTokens: toolContextLength,
             },
             standard,
             fallback

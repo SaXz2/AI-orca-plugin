@@ -31,10 +31,14 @@ import type {
 import { uiStore } from "../store/ui-store";
 import { searchWeb, formatSearchResults, type SearchConfig } from "./web-search-service";
 import { isImageSearchEnabled, isScriptAnalysisEnabled, isWebSearchEnabled, isWikipediaEnabled, isCurrencyEnabled } from "../store/tool-store";
-import { 
+import {
   getScriptAnalysisTools, 
   handleScriptAnalysisTool 
 } from "./script-analysis-tool";
+import { 
+  buildUseSkillTool, 
+  getEnabledSkills 
+} from "./tool-as-skill";
 import {
   searchWikipedia,
   formatWikipediaResult,
@@ -1085,16 +1089,46 @@ HKD(港币)、KRW(韩元)、TWD(台币)、AUD(澳元)、CAD(加元)等`,
 };
 
 /**
- * 获取工具列表（根据联网搜索开关动态添加）
+ * 获取工具列表（Tool-as-Skill 架构）
+ * 只返回单一的 useSkill 工具，所有其他工具作为 skill 按需调用
  */
 export function getTools(webSearchEnabled?: boolean, scriptAnalysisEnabled?: boolean): OpenAITool[] {
+  const webSearchOn = webSearchEnabled ?? isWebSearchEnabled();
+  const imageSearchOn = isImageSearchEnabled();
+  const wikipediaOn = isWikipediaEnabled();
+  const currencyOn = isCurrencyEnabled();
+  
+  // 获取启用的 skill 列表
+  const enabledSkills = getEnabledSkills(
+    webSearchOn,
+    imageSearchOn,
+    wikipediaOn,
+    currencyOn
+  );
+  
+  // 构建单一的 useSkill 工具
+  const useSkillTool = buildUseSkillTool(enabledSkills);
+  
+  // 如果脚本分析已开启，添加脚本分析工具（暂时保留原有方式）
+  const tools = [useSkillTool];
+  if (scriptAnalysisEnabled ?? isScriptAnalysisEnabled()) {
+    tools.push(...getScriptAnalysisTools());
+  }
+  
+  return tools;
+}
+
+/**
+ * 获取传统工具列表（仅用于兼容性，如拖拽上下文）
+ * @deprecated 逐步迁移到 Tool-as-Skill 架构
+ */
+export function getToolsLegacy(webSearchEnabled?: boolean, scriptAnalysisEnabled?: boolean): OpenAITool[] {
   const tools = [...TOOLS];
   const webSearchOn = webSearchEnabled ?? isWebSearchEnabled();
   const imageSearchOn = isImageSearchEnabled();
   const wikipediaOn = isWikipediaEnabled();
   const currencyOn = isCurrencyEnabled();
   
-  // Add search tools when web search is enabled (image search is optional).
   if (webSearchOn) {
     if (imageSearchOn) {
       tools.push(IMAGE_SEARCH_TOOL);
@@ -1102,17 +1136,14 @@ export function getTools(webSearchEnabled?: boolean, scriptAnalysisEnabled?: boo
     tools.push(WEB_SEARCH_TOOL);
   }
   
-  // Wikipedia 工具（独立开关）
   if (wikipediaOn) {
     tools.push(WIKIPEDIA_TOOL);
   }
   
-  // 汇率工具（独立开关）
   if (currencyOn) {
     tools.push(CURRENCY_TOOL);
   }
   
-  // 如果脚本分析已开启，添加脚本分析工具
   if (scriptAnalysisEnabled ?? isScriptAnalysisEnabled()) {
     tools.push(...getScriptAnalysisTools());
   }
@@ -1682,10 +1713,24 @@ function formatToolInstructions(tool: OpenAITool): string {
 }
 
 /**
- * 主入口：处理 AI 调用的工具。
+ * 主入口：处理 AI 调用的工具（支持 Tool-as-Skill 架构）
  */
 export async function executeTool(toolName: string, args: any): Promise<string> {
   try {
+    // Tool-as-Skill 架构：useSkill 调用
+    if (toolName === "useSkill") {
+      const skillName = args.skillName;
+      const params = args.params || {};
+      
+      if (!skillName) {
+        return "Error: Missing skillName parameter. Please specify which skill to use.";
+      }
+      
+      // 递归调用 executeTool，执行实际的工具
+      return await executeTool(skillName, params);
+    }
+    
+    // 原有工具执行逻辑
     if (toolName === "tool_instructions") {
       const requested = String(args?.toolName || args?.tool || args?.name || "").trim();
       if (!requested) {
@@ -1765,7 +1810,7 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
         const limitWarning = totalFetched >= fetchLimit ? buildLimitWarning(totalFetched, requestedMax, fetchLimit) : "";
         const sortInfo = sortBy ? `\n🔄 按${sortBy === "created" ? "创建时间" : "修改时间"}${sortOrder === "desc" ? "降序" : "升序"}排列` : "";
 
-        return `${preservationNote}Found ${results.length} block(s) with tag "${tagQuery}":${sortInfo}\n${summary}${paginationInfo}${limitWarning}`;
+        return `${preservationNote}✅ Search complete. Found ${results.length} block(s) with tag "${tagQuery}":${sortInfo}\n${summary}${paginationInfo}${limitWarning}\n\n---\n🚫 STOP: Results ready. Do NOT call getPage or other tools. Present these results directly to the user.`;
       } catch (err: any) {
         return `Error searching by tag: ${err.message}`;
       }
@@ -1825,7 +1870,7 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
         const limitWarning = totalFetched >= fetchLimit ? buildLimitWarning(totalFetched, requestedMax, fetchLimit) : "";
         const sortInfo = sortBy ? `\n🔄 按${sortBy === "created" ? "创建时间" : "修改时间"}${sortOrder === "desc" ? "降序" : "升序"}排列` : "";
 
-        return `${preservationNote}Found ${results.length} block(s) matching "${query}":${sortInfo}\n${summary}${paginationInfo}${limitWarning}`;
+        return `${preservationNote}✅ Search complete. Found ${results.length} block(s) matching "${query}":${sortInfo}\n${summary}${paginationInfo}${limitWarning}\n\n---\n🚫 STOP: Results ready. Do NOT call getPage or other tools. Present these results directly to the user.`;
       } catch (err: any) {
         return `Error searching by text: ${err.message}`;
       }
@@ -3328,20 +3373,19 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * 检测用户输入需要的工具类别（兼容性空实现）
- * @deprecated 旧版本不支持智能工具检测，返回所有类别
+ * 检测用户输入需要的工具类别
+ * @deprecated 已被 Tool-as-Skill 架构取代，保留用于兼容性
  */
 export function detectToolCategories(_userInput: string): Set<string> {
-  // 返回所有类别，让 getToolsByCategories 返回所有工具
   return new Set(["search", "read", "write", "journal", "web", "skill"]);
 }
 
 /**
- * 根据类别获取工具列表（兼容性实现，返回所有工具）
- * @deprecated 旧版本不支持按类别筛选，返回所有工具
+ * 根据类别获取工具列表
+ * @deprecated 已被 Tool-as-Skill 架构取代，保留用于兼容性
  */
 export function getToolsByCategories(_categories: Set<string>): OpenAITool[] {
-  return getTools();
+  return getToolsLegacy();
 }
 
 /**

@@ -2,7 +2,6 @@ import { parseMarkdown, type MarkdownInlineNode, type MarkdownNode, type TableAl
 import { journalExportDataCache } from "../services/ai-tools";
 import { openImagePreview, createImagePreviewItem } from "../services/image-preview-service";
 import LocalGraph from "./LocalGraph";
-import MindMapRenderer from "./MindMapRenderer";
 import type { SourceGroup, WebSearchSource } from "../utils/source-attribution";
 import { withTooltip } from "../utils/orca-tooltip";
 import {
@@ -1560,13 +1559,6 @@ function renderBlockNode(
 
     case "localgraph": {
       return createElement(LocalGraph, {
-        key,
-        blockId: node.blockId,
-      });
-    }
-
-    case "mindmap": {
-      return createElement(MindMapRenderer, {
         key,
         blockId: node.blockId,
       });
