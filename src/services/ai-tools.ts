@@ -43,7 +43,6 @@ import {
   getExchangeRates,
   formatExchangeRates,
 } from "./utility-tools";
-import { getSkillTools } from "./skill-service";
 
 // 辅助函数：从URL提取域名
 function extractDomain(url: string): string {
@@ -69,6 +68,9 @@ export const journalExportDataCache = new Map<string, JournalExportCacheEntry>()
 
 // 全局缓存：存储搜索结果（供自动增强使用）
 export const searchResultsCache = new Map<string, any[]>();
+
+// 全局缓存：Skill 工具名称到 Skill ID 的映射（兼容性导出）
+export const skillToolNameToSkillIdCache = new Map<string, string>();
 
 // 日志去重缓存 - 使用更智能的去重策略
 const loggedMessages = new Map<string, number>();
@@ -1114,8 +1116,6 @@ export function getTools(webSearchEnabled?: boolean, scriptAnalysisEnabled?: boo
   if (scriptAnalysisEnabled ?? isScriptAnalysisEnabled()) {
     tools.push(...getScriptAnalysisTools());
   }
-
-  tools.push(...getSkillTools());
   
   return tools;
 }
@@ -1200,7 +1200,6 @@ const SEARCH_TOOL_NAMES = new Set([
 export function getToolsForDraggedContext(): OpenAITool[] {
   return [
     ...TOOLS.filter(tool => !SEARCH_TOOL_NAMES.has(tool.function.name)),
-    ...getSkillTools(),
   ];
 }
 
@@ -1661,7 +1660,6 @@ function getToolDefinitionByName(toolName: string): OpenAITool | undefined {
     WIKIPEDIA_TOOL,
     CURRENCY_TOOL,
     ...getScriptAnalysisTools(),
-    ...getSkillTools(),
   ];
   return allTools.find((tool) => tool.function.name === normalized);
 }
@@ -3323,4 +3321,57 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
   } catch (error: any) {
     return `Error executing ${toolName}: ${error?.message ?? error}`;
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 兼容性导出（保持其他文件的引用不报错）
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * 检测用户输入需要的工具类别（兼容性空实现）
+ * @deprecated 旧版本不支持智能工具检测，返回所有类别
+ */
+export function detectToolCategories(_userInput: string): Set<string> {
+  // 返回所有类别，让 getToolsByCategories 返回所有工具
+  return new Set(["search", "read", "write", "journal", "web", "skill"]);
+}
+
+/**
+ * 根据类别获取工具列表（兼容性实现，返回所有工具）
+ * @deprecated 旧版本不支持按类别筛选，返回所有工具
+ */
+export function getToolsByCategories(_categories: Set<string>): OpenAITool[] {
+  return getTools();
+}
+
+/**
+ * 获取 Skill 工具列表（兼容性空实现）
+ * @deprecated 旧版本使用 skill-service.ts
+ */
+export async function getSkillToolsAsync(): Promise<OpenAITool[]> {
+  return [];
+}
+
+/**
+ * 获取 Skill 指令（兼容性空实现）
+ * @deprecated 旧版本使用 skill-service.ts
+ */
+export async function getSkillInstructionsAsync(_skillRef: { id: string; isGlobal: boolean }): Promise<string | null> {
+  return null;
+}
+
+/**
+ * 获取 Skill 工具名称（兼容性空实现）
+ * @deprecated 旧版本使用 skill-service.ts
+ */
+export function getSkillToolName(_skillId: string): string {
+  return `skill_${_skillId}`;
+}
+
+/**
+ * 从工具名称解析 Skill ID（兼容性空实现）
+ * @deprecated 旧版本使用 skill-service.ts
+ */
+export async function resolveSkillIdFromToolName(_toolName: string): Promise<{ id: string; isGlobal: boolean } | null> {
+  return null;
 }
