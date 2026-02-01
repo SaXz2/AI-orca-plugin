@@ -811,9 +811,10 @@ function ToolCallWithResult({
   index?: number;
 }) {
   // 检测结果是否为错误
-  const isError = result?.content?.startsWith("Error:") || 
-                  result?.content?.includes("失败") ||
-                  result?.content?.includes("拒绝");
+  // 更精确的错误判断：只有明确的错误格式才标记为失败
+  const isError = result?.content?.startsWith("Error:") ||
+                  result?.content?.startsWith("Wikipedia 查询失败:") ||
+                  result?.content?.startsWith("❌");
   const status = isLoading ? "loading" : isError ? "failed" : result ? "success" : "loading";
 
   // 计算动画延迟（stagger 效果）
@@ -872,9 +873,10 @@ function CollapsibleToolCalls({
     toolCalls.forEach((tc) => {
       const result = toolResults.get(tc.id);
       if (result) {
-        const isError = result.content?.startsWith("Error:") || 
-                       result.content?.includes("失败") ||
-                       result.content?.includes("拒绝");
+        // 更精确的错误判断：只有明确的错误格式才标记为失败
+        const isError = result.content?.startsWith("Error:") ||
+                       result.content?.startsWith("Wikipedia 查询失败:") ||
+                       result.content?.startsWith("❌");
         if (isError) {
           errors++;
         } else {
@@ -914,9 +916,10 @@ function CollapsibleToolCalls({
         ? { color: "#f59e0b", status: "running" } 
         : { color: "#6b7280", status: "pending" };
     }
-    const isError = result.content?.startsWith("Error:") || 
-                   result.content?.includes("失败") ||
-                   result.content?.includes("拒绝");
+    // 更精确的错误判断：只有明确的错误格式才标记为失败
+    const isError = result.content?.startsWith("Error:") ||
+                   result.content?.startsWith("Wikipedia 查询失败:") ||
+                   result.content?.startsWith("❌");
     return isError 
       ? { color: "#ef4444", status: "error" } 
       : { color: "#22c55e", status: "success" };

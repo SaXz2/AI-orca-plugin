@@ -328,9 +328,15 @@ export async function searchWikipedia(
     searchUrl.searchParams.set("format", "json");
     searchUrl.searchParams.set("origin", "*");
 
-    const searchResponse = await fetch(searchUrl.toString());
+    const searchResponse = await fetch(searchUrl.toString(), {
+      // 添加超时和重试机制
+      signal: AbortSignal.timeout(10000), // 10秒超时
+    });
+    
     if (!searchResponse.ok) {
-      throw new Error(`Wikipedia 搜索失败: ${searchResponse.status}`);
+      const errorDetail = `HTTP ${searchResponse.status} ${searchResponse.statusText}`;
+      console.error(`[Wikipedia] Search failed: ${errorDetail}`);
+      throw new Error(`Wikipedia 搜索失败: ${errorDetail}`);
     }
 
     const searchData = await searchResponse.json();
@@ -355,10 +361,13 @@ export async function searchWikipedia(
         "Accept": "application/json",
         "User-Agent": "OrcaAIChat/1.0",
       },
+      signal: AbortSignal.timeout(10000), // 10秒超时
     });
 
     if (!summaryResponse.ok) {
-      throw new Error(`Wikipedia 摘要获取失败: ${summaryResponse.status}`);
+      const errorDetail = `HTTP ${summaryResponse.status} ${summaryResponse.statusText}`;
+      console.error(`[Wikipedia] Summary fetch failed: ${errorDetail}`);
+      throw new Error(`Wikipedia 摘要获取失败: ${errorDetail}`);
     }
 
     const summaryData = await summaryResponse.json();
@@ -420,7 +429,22 @@ export async function searchWikipedia(
     };
   } catch (error: any) {
     console.error("[Wikipedia] Error:", error);
-    throw new Error(`Wikipedia 查询失败: ${error.message}`);
+    
+    // 提供更详细的错误信息
+    let errorMessage = error.message || "未知错误";
+    
+    // 判断错误类型
+    if (error.name === "TimeoutError" || error.name === "AbortError") {
+      errorMessage = `请求超时：Wikipedia API 响应时间过长 (>10秒)。可能原因：\n- 网络连接不稳定\n- Wikipedia 服务器响应慢\n- 访问被限制`;
+    } else if (error.message.includes("Failed to fetch") || error.message.includes("NetworkError")) {
+      errorMessage = `网络请求失败：无法连接到 Wikipedia。可能原因：\n- 网络连接中断\n- 被防火墙或代理阻止\n- Wikipedia 域名无法解析\n- CORS 跨域限制`;
+    } else if (error.message.includes("HTTP 403")) {
+      errorMessage = `访问被拒绝 (HTTP 403)：Wikipedia 服务器拒绝了请求。可能原因：\n- IP 地址被限制\n- User-Agent 被阻止\n- 访问频率过高`;
+    } else if (error.message.includes("HTTP 429")) {
+      errorMessage = `请求过于频繁 (HTTP 429)：请稍后再试。`;
+    }
+    
+    throw new Error(`Wikipedia 查询失败: ${errorMessage}`);
   }
 }
 

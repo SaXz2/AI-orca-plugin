@@ -1751,10 +1751,15 @@ graph TD
       // 有拖入块时禁用搜索类工具，强制 AI 使用已提供的上下文
       const hasHighPriorityContext = highPriorityContexts.length > 0;
       
-      // 💡 Tool-as-Skill 架构：使用单一 useSkill 工具
+      // 💡 工具加载策略
+      // - false: Tool-as-Skill（默认，使用 useSkill）
+      // - "pure": 纯延迟加载（返回空数组，完全按需加载）
+      // - "hybrid": 混合模式（高频工具直接可用，低频工具延迟加载）
+      const lazyLoadingMode: false | "pure" | "hybrid" = "hybrid"; // 🔥 修改这里切换模式
+      
       let baseTools = hasHighPriorityContext 
         ? getToolsForDraggedContext() 
-        : getTools(); // 返回单一 useSkill 工具
+        : getTools(undefined, undefined, lazyLoadingMode);
       
       // 如果启用了 Todoist AI 模式，注入 Todoist 工具
       if (enableTodoistTools) {

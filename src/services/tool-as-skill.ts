@@ -69,19 +69,29 @@ export function buildUseSkillTool(enabledSkills: string[] = Object.keys(SKILL_RE
     type: "function",
     function: {
       name: "useSkill",
-      description: `调用特定工具执行操作。每个工具都是一个独立的技能。
+      description: `调用工具执行笔记库操作或联网搜索。
 
-🔧 可用工具列表：
+⚠️ 何时使用：
+- 用户要求搜索/查找笔记内容
+- 用户要求创建/修改笔记
+- 用户要求获取日记内容
+- 需要实时信息（新闻、天气、汇率等）
+
+❌ 何时不用：
+- 回答常识问题（如"爱因斯坦是谁"、"什么是相对论"）
+- 闲聊对话
+- 用户没有明确要求操作笔记或联网搜索
+- 你已经知道答案的问题
+
+🔧 可用工具：
 ${skillDescriptions}
 
-📌 使用方法：
-1. 根据用户需求选择合适的 skillName
-2. 将工具参数作为 JSON 对象传入 params
+📌 用法：
+useSkill({skillName: "工具名", params: {参数对象}})
 
-⚠️ 注意：
-- 搜索结果已包含完整内容，通常不需要再调用 getPage
-- 优先使用笔记库工具，只在需要外部信息时使用联网工具
-- 只在用户明确要求创建时使用写入工具`,
+注意：
+- 搜索结果已含完整内容，不要再调 getPage
+- 只在用户明确要求时创建/修改笔记`,
       parameters: {
         type: "object",
         properties: {
@@ -92,10 +102,10 @@ ${skillDescriptions}
           },
           params: {
             type: "object",
-            description: "工具参数（JSON对象）。具体参数由所选工具决定。如果不确定参数，先调用 useSkill({skillName: 'tool_instructions', params: {toolName: '目标工具名'}}) 查看详细说明",
+            description: "工具参数（JSON对象）。具体参数由所选工具决定。如果不确定参数，可以先只传 skillName 获取参数定义",
           },
         },
-        required: ["skillName", "params"],
+        required: ["skillName"],
       },
     },
   };

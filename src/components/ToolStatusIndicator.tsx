@@ -127,7 +127,8 @@ export default function ToolStatusIndicator({
       break;
     case "failed":
       icon = "❌";
-      statusText = error ? error.slice(0, 80) : "执行失败";
+      // 显示更长的错误摘要，优先显示关键信息
+      statusText = error ? (error.length > 120 ? error.slice(0, 120) + "..." : error) : "执行失败";
       statusColor = "#ef4444"; // red
       break;
     case "cancelled":
@@ -437,10 +438,29 @@ export default function ToolStatusIndicator({
     // Error details (always visible for failed state)
     status === "failed" &&
       error &&
-      error.length > 50 &&
+      error.length > 80 &&
       createElement(
         "div",
-        { style: toolStatusErrorStyle },
+        { 
+          style: {
+            ...toolStatusErrorStyle,
+            marginTop: "8px",
+            padding: "10px 12px",
+            borderRadius: "8px",
+            background: "rgba(239, 68, 68, 0.06)",
+            border: "1px solid rgba(239, 68, 68, 0.15)",
+            fontSize: "12px",
+            color: "#ef4444",
+            lineHeight: 1.5,
+            whiteSpace: "pre-wrap",
+            wordBreak: "break-word",
+          }
+        },
+        createElement(
+          "div",
+          { style: { fontWeight: 600, marginBottom: "6px", fontSize: "11px" } },
+          "错误详情："
+        ),
         error
       )
   );

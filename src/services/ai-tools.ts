@@ -37,7 +37,8 @@ import {
 } from "./script-analysis-tool";
 import { 
   buildUseSkillTool, 
-  getEnabledSkills 
+  getEnabledSkills,
+  SKILL_REGISTRY
 } from "./tool-as-skill";
 import {
   searchWikipedia,
@@ -1089,15 +1090,65 @@ HKD(港币)、KRW(韩元)、TWD(台币)、AUD(澳元)、CAD(加元)等`,
 };
 
 /**
- * 获取工具列表（Tool-as-Skill 架构）
- * 只返回单一的 useSkill 工具，所有其他工具作为 skill 按需调用
+ * 获取工具列表
+ * @param webSearchEnabled 是否启用联网搜索
+ * @param scriptAnalysisEnabled 是否启用脚本分析
+ * @param lazyLoadingMode 延迟加载模式：
+ *   - false: Tool-as-Skill 架构（返回 useSkill 工具）
+ *   - "pure": 纯延迟加载（返回空数组）
+ *   - "hybrid": 混合模式（返回高频工具）
  */
-export function getTools(webSearchEnabled?: boolean, scriptAnalysisEnabled?: boolean): OpenAITool[] {
+export function getTools(
+  webSearchEnabled?: boolean, 
+  scriptAnalysisEnabled?: boolean,
+  lazyLoadingMode?: false | "pure" | "hybrid"
+): OpenAITool[] {
   const webSearchOn = webSearchEnabled ?? isWebSearchEnabled();
   const imageSearchOn = isImageSearchEnabled();
   const wikipediaOn = isWikipediaEnabled();
   const currencyOn = isCurrencyEnabled();
   
+  // 延迟加载模式：纯延迟加载，返回空数组
+  if (lazyLoadingMode === "pure") {
+    const tools: OpenAITool[] = [];
+    if (scriptAnalysisEnabled ?? isScriptAnalysisEnabled()) {
+      tools.push(...getScriptAnalysisTools());
+    }
+    return tools;
+  }
+  
+  // 延迟加载模式：混合模式，返回高频工具
+  if (lazyLoadingMode === "hybrid") {
+    const highFreqToolNames = [
+      "searchBlocksByText",
+      "getTodayJournal",
+      "createBlock"
+    ];
+    
+    const tools: OpenAITool[] = [];
+    
+    // 添加高频工具
+    for (const toolName of highFreqToolNames) {
+      const tool = TOOLS.find(t => t.function.name === toolName);
+      if (tool) tools.push(tool);
+    }
+    
+    // 添加联网工具（如果启用）
+    if (webSearchOn) {
+      if (imageSearchOn) tools.push(IMAGE_SEARCH_TOOL);
+      tools.push(WEB_SEARCH_TOOL);
+    }
+    if (wikipediaOn) tools.push(WIKIPEDIA_TOOL);
+    if (currencyOn) tools.push(CURRENCY_TOOL);
+    
+    if (scriptAnalysisEnabled ?? isScriptAnalysisEnabled()) {
+      tools.push(...getScriptAnalysisTools());
+    }
+    
+    return tools;
+  }
+  
+  // 默认：Tool-as-Skill 架构
   // 获取启用的 skill 列表
   const enabledSkills = getEnabledSkills(
     webSearchOn,
@@ -1720,13 +1771,22 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
     // Tool-as-Skill 架构：useSkill 调用
     if (toolName === "useSkill") {
       const skillName = args.skillName;
-      const params = args.params || {};
+      const params = args.params;
       
       if (!skillName) {
         return "Error: Missing skillName parameter. Please specify which skill to use.";
       }
       
-      // 递归调用 executeTool，执行实际的工具
+      // 如果没有传 params，返回工具的参数定义
+      if (params === undefined || params === null) {
+        const tool = getToolDefinitionByName(skillName);
+        if (!tool) {
+          return `Skill not found: ${skillName}. Available skills: ${Object.keys(SKILL_REGISTRY).join(", ")}`;
+        }
+        return formatToolInstructions(tool) + "\n\n💡 请使用 useSkill({skillName: \"" + skillName + "\", params: {...}}) 调用此工具";
+      }
+      
+      // 有 params，执行实际的工具
       return await executeTool(skillName, params);
     }
     
