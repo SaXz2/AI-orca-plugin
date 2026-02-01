@@ -9,7 +9,6 @@ import type { OpenAITool } from "./openai-client";
 import {
   searchBlocksByTag,
   searchBlocksByText,
-  searchBlocksByMultipleTexts,
   queryBlocksByTag,
   queryBlocksAdvanced,
   getTagSchema,
@@ -44,203 +43,7 @@ import {
   getExchangeRates,
   formatExchangeRates,
 } from "./utility-tools";
-import {
-  fetchWebContent,
-  formatFetchedContent,
-} from "./web-fetcher";
-import { loadToolPrompt } from "./tool-prompt-loader";
-
-// 获取 Skill 工具列表（新的 SkillsManager 实现）
-function getSkillTools(): OpenAITool[] {
-  // 动态生成 Skill 工具列表
-  // 注意：这是同步函数，Skills 列表需要在初始化时加载
-  // 实际的 Skills 列表由 AiChatPanel 在发送消息时动态获取
-  return [];
-}
-
-/**
- * 三层渐进加载架构
- * Level 1: 元数据（启动时加载）- 名称、描述、标签
- * Level 2: 指令（请求匹配时加载）- 详细使用指南
- * Level 3: 资源（执行时加载）- 脚本、模板、文档
- */
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Skill Tool Name Helpers
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * 生成稳定、可复现且符合 OpenAI 规范的 Skill 工具名。
- *
- * 约束：工具名称只能包含字母、数字、下划线、连字符。
- *
- * 设计目标：
- * - 对中文/特殊字符友好（不会被清空成同一个名字）
- * - 名称稳定（不依赖数组 index，避免列表变化导致映射错乱）
- * - 尽量避免重复（使用 64-bit FNV-1a hash 作为稳定后缀）
- */
-function fnv1a64Hex(input: string): string {
-  // 64-bit FNV-1a
-  let hash = 0xcbf29ce484222325n;
-  const prime = 0x100000001b3n;
-  for (let i = 0; i < input.length; i++) {
-    hash ^= BigInt(input.charCodeAt(i));
-    hash = (hash * prime) & 0xffffffffffffffffn;
-  }
-  return hash.toString(16).padStart(16, "0");
-}
-
-function skillIdToSlug(skillId: string): string {
-  // 1) 把空白变成下划线
-  // 2) 移除非 [a-zA-Z0-9_-] 字符
-  // 3) 合并多余下划线
-  const slug = skillId
-    .trim()
-    .replace(/\s+/g, "_")
-    .replace(/[^a-zA-Z0-9_-]/g, "")
-    .replace(/_+/g, "_")
-    .replace(/^_+|_+$/g, "");
-
-  // 过长的函数名可能被模型/SDK 拒绝；这里保守截断 slug。
-  const capped = (slug || "s").slice(0, 24);
-  return capped || "s";
-}
-
-/**
- * Exported: other modules (precheck / tool execution) must use the same naming.
- */
-export function getSkillToolName(skillId: string): string {
-  const slug = skillIdToSlug(skillId);
-  const hash = fnv1a64Hex(skillId);
-  // Always starts with "skill_" (letter), and only contains allowed chars.
-  return `skill_${slug}_${hash}`;
-}
-
-/**
- * In-memory cache for displaying and resolving skill tool names.
- *
- * NOTE: Tool names are generated deterministically from skillId, so this cache is only
- * a convenience for sync lookups (UI display). It is populated when skill tools are loaded.
- */
-export const skillToolNameToSkillIdCache = new Map<string, string>();
-
-export async function resolveSkillIdFromToolName(toolName: string): Promise<{ id: string; isGlobal: boolean } | null> {
-  if (!toolName.startsWith("skill_")) return null;
-  try {
-    const { listSkills } = await import("./skills-manager");
-    const skillRefs = await listSkills();
-    for (const ref of skillRefs) {
-      if (getSkillToolName(ref.id) === toolName) {
-        return ref;
-      }
-    }
-    return null;
-  } catch (err) {
-    console.warn("[SkillTools] Failed to resolve skill ID from tool name:", err);
-    return null;
-  }
-}
-
-/**
- * Level 1: 获取 Skill 元数据列表（轻量级）
- * 用于 AI 发现可用的 Skills，成本极低
- */
-export async function getSkillMetadataAsync(): Promise<OpenAITool[]> {
-  try {
-    const { listSkills, getSkill } = await import("./skills-manager");
-    const skillRefs = await listSkills();
-    const tools: OpenAITool[] = [];
-
-    // Reset cache to avoid stale entries when skills list changes
-    skillToolNameToSkillIdCache.clear();
-    
-    for (let i = 0; i < skillRefs.length; i++) {
-      const ref = skillRefs[i];
-      try {
-        const skill = await getSkill(ref.id, ref.isGlobal);
-        if (!skill) continue;
-        
-        // 生成符合 OpenAI 规范的工具名称（稳定映射）
-        const toolName = getSkillToolName(ref.id);
-        
-        // 验证工具名称是否符合规范
-        if (!/^[a-zA-Z0-9_-]+$/.test(toolName)) {
-          console.error(`[SkillTools] Generated invalid tool name: "${toolName}" from skillId: "${ref.id}"`);
-          continue; // 跳过无效的工具
-        }
-        
-        console.log(`[SkillTools] Skill "${ref.id}" (${ref.isGlobal ? 'global' : 'local'}) → tool name "${toolName}"`);
-        
-        // Level 1: 只返回元数据，不包含详细指令
-        // 在 description 中包含原始 Skill ID，以便后续查找
-        // Populate cache for UI display
-        skillToolNameToSkillIdCache.set(toolName, ref.id);
-
-        tools.push({
-          type: "function",
-          function: {
-            name: toolName,
-            description: `[Skill: ${ref.id}] ${skill.metadata.description || skill.metadata.name || ref.id}`,
-            parameters: {
-              type: "object",
-              properties: {
-                input: {
-                  type: "string",
-                  description: "Skill 的输入内容或参数",
-                }
-              },
-              required: ["input"]
-            }
-          }
-        });
-      } catch (err) {
-        console.warn(`[SkillTools] Failed to load skill metadata ${ref.id}:`, err);
-      }
-    }
-    
-    return tools;
-  } catch (err) {
-    console.error("[SkillTools] Failed to get skill metadata:", err);
-    return [];
-  }
-}
-
-/**
- * Level 2: 获取特定 Skill 的详细指令
- * 当 AI 判断需要使用某个 Skill 时调用
- * @param skillRef Skill 引用（包含 id 和 isGlobal）
- */
-export async function getSkillInstructionsAsync(skillRef: { id: string; isGlobal: boolean }): Promise<string | null> {
-  try {
-    const { getSkill } = await import("./skills-manager");
-    const skill = await getSkill(skillRef.id, skillRef.isGlobal);
-    if (!skill) return null;
-    
-    // Level 2: 返回详细指令
-    return `
-# 技能：${skill.metadata.name}
-
-## 技能说明
-${skill.metadata.description || ""}
-
-## 执行指令
-${skill.instruction}
-
----
-
-请根据上述指令处理用户输入，并提供结果。`;
-  } catch (err) {
-    console.error(`[SkillTools] Failed to get skill instructions for ${skillRef.id}:`, err);
-    return null;
-  }
-}
-
-/**
- * 向后兼容：getSkillToolsAsync 现在只返回 Level 1 元数据
- */
-export async function getSkillToolsAsync(): Promise<OpenAITool[]> {
-  return getSkillMetadataAsync();
-}
+import { getSkillTools } from "./skill-service";
 
 // 辅助函数：从URL提取域名
 function extractDomain(url: string): string {
@@ -264,26 +67,57 @@ const JOURNAL_EXPORT_CACHE_MAX = 5;
 // 全局缓存：存储大型日记导出数据（供前端使用）
 export const journalExportDataCache = new Map<string, JournalExportCacheEntry>();
 
+// 全局缓存：存储搜索结果（供自动增强使用）
+export const searchResultsCache = new Map<string, any[]>();
+
+// 日志去重缓存 - 使用更智能的去重策略
+const loggedMessages = new Map<string, number>();
+const LOG_THROTTLE_MS = 5000; // 5秒内相同消息只输出一次
+
 /**
  * 从工具结果中提取搜索结果
- * 注意：不在 tool 返回内容里注入隐藏标记（保持上下文干净），这里直接解析文本。
+ * 支持两种方式：
+ * 1. 从缓存中获取（如果缓存存在）
+ * 2. 直接从工具结果内容中解析（作为备选）
  */
 export function extractSearchResultsFromToolResults(
   toolResults?: Map<string, { content: string; name: string }>
 ): any[] {
   if (!toolResults) return [];
-
+  
   const allSearchResults: any[] = [];
-
-  for (const [, result] of toolResults.entries()) {
-    if (result.name !== "webSearch") continue;
-
-    const parsedResults = parseSearchResultsFromContent(result.content);
-    if (parsedResults.length > 0) {
-      allSearchResults.push(...parsedResults);
+  
+  for (const [toolCallId, result] of toolResults.entries()) {
+    if (result.name === "webSearch") {
+      // 方式1：从缓存中获取
+      const cacheKeyMatch = result.content.match(/<!-- search-cache:([^>]+) -->/);
+      if (cacheKeyMatch) {
+        const cacheKey = cacheKeyMatch[1];
+        const cachedResults = searchResultsCache.get(cacheKey);
+        if (cachedResults && cachedResults.length > 0) {
+          allSearchResults.push(...cachedResults);
+          
+          // 智能日志去重
+          const logKey = `cache-${cacheKey}`;
+          const now = Date.now();
+          const lastLogged = loggedMessages.get(logKey) || 0;
+          
+          if (now - lastLogged > LOG_THROTTLE_MS) {
+            loggedMessages.set(logKey, now);
+          }
+          continue; // 已从缓存获取，跳过解析
+        }
+      }
+      
+      // 方式2：直接从工具结果内容中解析搜索结果
+      // 格式：1. [标题](URL)\n   发布时间: xxx\n   内容摘要
+      const parsedResults = parseSearchResultsFromContent(result.content);
+      if (parsedResults.length > 0) {
+        allSearchResults.push(...parsedResults);
+      }
     }
   }
-
+  
   return allSearchResults;
 }
 
@@ -442,125 +276,137 @@ export const TOOLS: OpenAITool[] = [
   {
     type: "function",
     function: {
-      name: "searchNotes",
-      description: `全文搜索笔记内容，支持多关键词查询。
-
-【参数说明】
-- queries: 搜索关键词，支持字符串或数组。字符串会按空格/逗号自动分词
-- combineMode: 组合模式，"or"匹配任一关键词(默认)，"and"匹配所有关键词
-- topic: 聚焦主题，优先返回包含该主题的结果
-- maxResults: 最大结果数，默认50，最大100
-- sortBy: 排序方式，"relevance"(相关性,默认)/"modified"/"created"
-
-【示例】
-- 单词搜索: queries="会议记录"
-- 多词OR搜索: queries=["项目A", "进度", "deadline"]
-- 多词AND搜索: queries=["项目A", "进度"], combineMode="and"
-- 带主题聚焦: queries=["任务", "完成"], topic="本周工作"`,
+      name: "tool_instructions",
+      description: `获取指定工具的用法说明（仅返回该工具）。`,
       parameters: {
         type: "object",
         properties: {
-          queries: {
-            oneOf: [
-              { type: "string" },
-              { type: "array", items: { type: "string" } }
-            ],
-            description: "搜索关键词，字符串或数组。字符串会按空格/逗号分词",
-          },
-          query: {
+          toolName: {
             type: "string",
-            description: "(兼容旧参数) 搜索关键词",
+            description: "工具名称，如 createPage、searchBlocksByText。",
           },
-          combineMode: {
+        },
+        required: ["toolName"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "searchBlocksByTag",
+      description: `按标签搜索笔记，默认返回内容+标签属性（block-ref 自动展开为块摘要）。briefMode=true 仅标题摘要，不含属性/子块。用于 #标签查询。tag_query 必填（"#标签名"，空格分多标签）；属性过滤用 query_blocks_by_tag。`,
+      parameters: {
+        type: "object",
+        properties: {
+          tag_query: {
             type: "string",
-            enum: ["and", "or"],
-            description: "组合模式: or=匹配任一(默认), and=匹配所有",
-          },
-          topic: {
-            type: "string",
-            description: "聚焦主题，优先返回包含该主题的结果",
+            description: "标签查询，必须带#号，如'#TODO'或'#TODO #Project'",
           },
           maxResults: {
             type: "number",
-            description: "最大结果数，默认50，最大100",
+            description: "最大结果数，默认20，最大50",
+          },
+          countOnly: {
+            type: "boolean",
+            description: "true=只返回数量，用于'有多少条'类问题",
+          },
+          briefMode: {
+            type: "boolean",
+            description: "true=只返回标题+摘要",
           },
           sortBy: {
             type: "string",
-            enum: ["relevance", "modified", "created"],
-            description: "排序方式，默认relevance",
+            enum: ["created", "modified"],
+            description: "排序字段：created（创建时间）或 modified（修改时间）",
           },
-        },
-        required: [],
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "getPage",
-      description: `按名称获取页面内容（包含所有子块）。
-
-【示例】pageName="项目A" 或 pageName="2024-01-15"`,
-      parameters: {
-        type: "object",
-        properties: {
-          pageName: {
+          sortOrder: {
             type: "string",
-            description: "页面名称或别名",
+            enum: ["asc", "desc"],
+            description: "排序顺序：asc（升序/最早）或 desc（降序/最新），默认 desc",
           },
         },
-        required: ["pageName"],
+        required: ["tag_query"],
       },
     },
   },
   {
     type: "function",
     function: {
-      name: "getBlocksText",
-      description: `按ID获取块的文本内容（包含所有子块）。
+      name: "searchBlocksByText",
+      description: `全文搜索笔记内容。
 
-【示例】blockIds=[123, 456]`,
+【何时使用】查找包含某些文字的笔记，模糊搜索
+【参数】query必填，搜索关键词
+【注意】如果用户明确提到#标签，优先用searchBlocksByTag`,
       parameters: {
         type: "object",
         properties: {
-          blockIds: {
-            type: "array",
-            items: { type: "number" },
-            description: "块ID数组",
+          query: {
+            type: "string",
+            description: "搜索关键词",
+          },
+          maxResults: {
+            type: "number",
+            description: "最大结果数，默认20，最大50",
+          },
+          countOnly: {
+            type: "boolean",
+            description: "true=只返回数量",
+          },
+          briefMode: {
+            type: "boolean",
+            description: "true=只返回标题+摘要",
+          },
+          sortBy: {
+            type: "string",
+            enum: ["created", "modified"],
+            description: "排序字段",
+          },
+          sortOrder: {
+            type: "string",
+            enum: ["asc", "desc"],
+            description: "排序顺序，默认 desc",
           },
         },
-        required: ["blockIds"],
+        required: ["query"],
       },
     },
   },
   {
     type: "function",
     function: {
-      name: "queryByTagProperty",
-      description: `按标签属性过滤查询。用于查找特定状态/优先级的笔记。
-
-【示例】
-- 查找已完成任务：tagName="Task", property="状态", value="Done"
-- 查找高优先级：tagName="Task", property="优先级", value="高"
-- 查找正在读的书：tagName="book", property="状态", value="reading"`,
+      name: "query_blocks_by_tag",
+      description: `按标签+属性条件查询，返回内容+标签属性（block-ref 自动展开为块摘要）。用于按属性过滤（如状态/优先级）。tagName 不带#；filters 用文本值。`,
       parameters: {
         type: "object",
         properties: {
           tagName: {
             type: "string",
-            description: "标签名，不带#号",
+            description: "标签名，不带#号，如'Task'",
           },
-          property: {
-            type: "string",
-            description: "属性名称",
-          },
-          value: {
-            type: "string",
-            description: "属性值",
+          filters: {
+            type: "array",
+            description: "属性过滤条件",
+            items: {
+              type: "object",
+              properties: {
+                name: { type: "string", description: "属性名称" },
+                op: {
+                  type: "string",
+                  enum: ["==", "!=", ">", "<", ">=", "<=", "contains"],
+                  description: "操作符",
+                },
+                value: {
+                  type: "string",
+                  description: "属性值（直接用文本，如 Canceled、Done、reading）",
+                },
+              },
+              required: ["name", "op", "value"],
+            },
           },
           maxResults: {
             type: "number",
-            description: "最大结果数，默认20",
+            description: "最大结果数",
           },
         },
         required: ["tagName"],
@@ -571,84 +417,73 @@ export const TOOLS: OpenAITool[] = [
     type: "function",
     function: {
       name: "query_blocks",
-      description: `Execute complex queries against an Orca note repository using the advanced QueryDescription2 format.
+      description: `组合多条件复杂搜索（AND/OR）。
 
-QUERY STRUCTURE:
-The query system uses a hierarchical structure with groups and conditions:
+【条件类型】
+- tag: 按标签，需name字段
+- text: 按文本，需text字段  
+- task: 按任务状态，需completed字段(true/false)
+- journal: 按日记范围，需startOffset/endOffset（负数=过去天数）
 
-1. QUERY GROUPS (kind values):
-   - 100: SELF_AND - All conditions must match
-   - 101: SELF_OR - At least one condition must match
-   - 106: CHAIN_AND - All conditions must match in either the ancestors (inside) or descendants (outside) or itself
-
-2. CONDITION TYPES (kind values):
-   - 3: Journal query - Match journal blocks in date ranges
-   - 4: Tag query - Match blocks with specific tags and their properties
-   - 6: Reference query - Match blocks referencing other blocks
-   - 8: Text query - Match blocks containing specific text
-   - 9: Block query - Match blocks by their properties (type, parent, children, etc.)
-   - 11: Task query - Match task blocks with completion status
-   - 12: Block match query - Match specific blocks by ID
-
-The root group must be 100 (SELF_AND).
-
-CONDITIONS ARRAY:
-When using groups (kind 100, 101, 106), the 'conditions' array can contain:
-- Individual query conditions (objects with kind 3,4,6,8,9,11,12)
-- Nested groups (objects with kind 100, 101, 106 and their own conditions array)
-- Each condition object must have a 'kind' field to identify its type
-
-DATE SPECIFICATIONS:
-- Relative dates: {"t": 1, "v": -7, "u": "d"} (7 days ago)
-- Absolute dates: {"t": 2, "v": 1640995200000} (timestamp)
-- Units: s=seconds, m=minutes, h=hours, d=days, w=weeks, M=months, y=years
-
-OPERATIONS for tag properties:
-- 1: equals, 2: not equals, 3: includes, 4: not includes
-- 5: has, 6: not has, 7: greater than, 8: less than
-- 9: greater or equal, 10: less or equal, 11: is null, 12: not null
-
-SORTING & PAGINATION:
-- sort: [["_created", "DESC"], ["_text", "ASC"]]
-- Built-in fields: _created, _modified, _text, _journal and _refcount
-- page: 1 (starting from 1), pageSize: 50 (default)
-
-COMMON QUERY PATTERNS:
-
-1. Find blocks below or above of other blocks (chain AND):
-{"q": {"kind": 100, "conditions": [{"kind": 106, "conditions": [{"kind": 8, "text": "project"}]}, {"kind": 8, "text": "deadline"}]}}
-
-2. AND query (multiple conditions must match):
-{"q": {"kind": 100, "conditions": [{"kind": 4, "name": "project"}, {"kind": 8, "text": "deadline"}]}}
-
-3. OR query (any condition matches, used for merging queries together):
-{"q": {"kind": 100, "conditions": [{"kind": 101, "conditions": [{"kind": 4, "name": "urgent"}, {"kind": 4, "name": "important"}]}]}}
-
-4. Journal blocks in date range:
-{"q": {"kind": 100, "conditions": [{"kind": 3, "start": {"t": 2, "v": 1640995200000}, "end": {"t": 2, "v": 1641081600000}}]}}
-
-5. Blocks with tag properties:
-{"q": {"kind": 100, "conditions": [{"kind": 4, "name": "task", "properties": [{"name": "priority", "op": 1, "value": "high"}]}]}}
-
-6. Find all incomplete tasks:
-{"q": {"kind": 100, "conditions": [{"kind": 11, "completed": false}]}}`,
+【注意】journal条件只返回引用，要看日记内容用getTodayJournal/getRecentJournals`,
       parameters: {
         type: "object",
         properties: {
-          q: {
-            type: "object",
-            description: "Query description object with kind and conditions",
-          },
-          sort: {
+          conditions: {
             type: "array",
-            description: "Sort order, e.g. [[\"_created\", \"DESC\"]]",
+            items: {
+              type: "object",
+              properties: {
+                type: { 
+                  type: "string", 
+                  enum: ["tag", "text", "task", "journal", "ref", "block", "blockMatch"] 
+                },
+                name: { type: "string", description: "标签名（type=tag时）" },
+                text: { type: "string", description: "关键词（type=text时）" },
+                completed: { type: "boolean", description: "完成状态（type=task时）" },
+                startOffset: { type: "number", description: "起始天数，如-7=7天前（type=journal时）" },
+                endOffset: { type: "number", description: "结束天数，0=今天（type=journal时）" },
+                blockId: { type: "number", description: "块ID（type=ref时）" },
+                hasTags: { type: "boolean", description: "是否有标签（type=block时）" },
+              },
+              required: ["type"],
+            },
           },
-          pageSize: {
+          combineMode: {
+            type: "string",
+            enum: ["and", "or"],
+            description: "组合方式，默认and",
+          },
+          maxResults: {
             type: "number",
-            description: "Number of results, default 20, max 50",
+            description: "最大结果数，默认20，最大50",
           },
         },
-        required: ["q"],
+        required: ["conditions"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "getRecentJournals",
+      description: `获取最近几天日记的完整内容（文字、图片等）。
+
+【何时使用】"最近几天的日记"、"这周写了什么"
+【参数】days: 天数，默认7，最大7
+【注意】超过7天用getJournalsByDateRange，只要今天用getTodayJournal`,
+      parameters: {
+        type: "object",
+        properties: {
+          days: {
+            type: "number",
+            description: "天数，默认7，最大7",
+          },
+          includeChildren: {
+            type: "boolean",
+            description: "包含子块，默认true",
+          },
+        },
       },
     },
   },
@@ -677,13 +512,13 @@ COMMON QUERY PATTERNS:
       description: `获取指定日期的日记完整内容。
 
 【何时使用】"昨天的日记"、"1月5号写了什么"
-【参数】date: 格式YYYY-MM-DD如"2026-01-05"，或"yesterday"`,
+【参数】date: 格式YYYY-MM-DD如"2026-01-05"，或"today"/"yesterday"`,
       parameters: {
         type: "object",
         properties: {
           date: {
             type: "string",
-            description: "日期，格式YYYY-MM-DD或yesterday",
+            description: "日期，格式YYYY-MM-DD或today/yesterday",
           },
           includeChildren: {
             type: "boolean",
@@ -697,37 +532,30 @@ COMMON QUERY PATTERNS:
   {
     type: "function",
     function: {
-      name: "getJournals",
-      description: `获取日记（范围查询）。
+      name: "getJournalsByDateRange",
+      description: `按日期范围获取日记。
 
-【用法】优先级：days > month > week > startDate/endDate
-- 最近N天：days=7（最近7天）、days=30（最近30天）
-- 某月：month="2024-05"
-- 某周：week="this"（本周）或 week="last"（上周）
-- 自定义范围：startDate="2024-05-01", endDate="2024-05-15"`,
+【用法】
+- 最近N天: rangeType="range", value="last-7-days"/"last-30-days"/"last-90-days"
+- 某月: rangeType="month", value="2024-05"
+- 某周: rangeType="week", value="this-week"/"last-week"
+- 某年: rangeType="year", value="2024"（建议maxResults=30）
+- 自定义: rangeType="range", value="2024-05-01", endValue="2024-05-15"`,
       parameters: {
         type: "object",
         properties: {
-          days: {
-            type: "number",
-            description: "最近N天，如7表示最近7天",
-          },
-          month: {
+          rangeType: {
             type: "string",
-            description: "某月，格式YYYY-MM如2024-05",
+            enum: ["year", "month", "week", "range"],
+            description: "范围类型",
           },
-          week: {
+          value: {
             type: "string",
-            enum: ["this", "last"],
-            description: "本周或上周",
+            description: "范围值，见上方说明",
           },
-          startDate: {
+          endValue: {
             type: "string",
-            description: "自定义起始日期YYYY-MM-DD",
-          },
-          endDate: {
-            type: "string",
-            description: "自定义结束日期YYYY-MM-DD",
+            description: "结束日期，仅自定义范围时需要",
           },
           includeChildren: {
             type: "boolean",
@@ -735,9 +563,30 @@ COMMON QUERY PATTERNS:
           },
           maxResults: {
             type: "number",
-            description: "最大结果数，默认31",
+            description: "最大结果数，默认31，最大366",
           },
         },
+        required: ["rangeType", "value"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_tag_schema",
+      description: `获取标签的属性定义（属性名、类型、选项值）。
+
+【何时使用】用户问"#Task有哪些属性"、"#book的结构"
+【注意】不要在查询前调用，直接用query_blocks_by_tag查询即可`,
+      parameters: {
+        type: "object",
+        properties: {
+          tagName: {
+            type: "string",
+            description: "标签名，不带#号",
+          },
+        },
+        required: ["tagName"],
       },
     },
   },
@@ -770,6 +619,58 @@ COMMON QUERY PATTERNS:
           },
         },
         required: ["pageName"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "getPage",
+      description: `按名称读取页面完整内容。
+
+【何时使用】用户指定要看某个页面："打开[[某页面]]"
+【注意】搜索结果已包含内容，通常不需要再调用此工具`,
+      parameters: {
+        type: "object",
+        properties: {
+          pageName: {
+            type: "string",
+            description: "页面名称",
+          },
+          includeChildren: {
+            type: "boolean",
+            description: "包含子块，默认true",
+          },
+        },
+        required: ["pageName"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "getBlock",
+      description: `按ID读取块的完整内容。
+
+【何时使用】需要查看特定块ID的内容
+【注意】如果知道页面名称，优先用getPage；搜索结果已包含内容，通常不需要再调用`,
+      parameters: {
+        type: "object",
+        properties: {
+          blockId: {
+            type: "number",
+            description: "块ID，数字类型",
+          },
+          includeChildren: {
+            type: "boolean",
+            description: "包含子块，默认true",
+          },
+          includeMeta: {
+            type: "boolean",
+            description: "包含创建/修改时间",
+          },
+        },
+        required: ["blockId"],
       },
     },
   },
@@ -905,10 +806,18 @@ COMMON QUERY PATTERNS:
     type: "function",
     function: {
       name: "updateTagProperties",
-      description: `修改标签属性值。
+      description: `更新块上已有标签的属性（支持 replace/merge/append）。
 
-【示例】把 #book 的 status 改为 "已读"：
-{"blockId": 123, "tagName": "book", "properties": [{"name": "status", "value": "已读"}]}`,
+【何时使用】需要修改标签属性或追加 block-refs 引用
+【参数】
+- blockId: 目标块ID
+- tagName: 标签名，不带#号
+- properties: 要更新的属性数组
+- mode: 更新模式（replace/merge/append），默认 merge
+【更新模式】
+- replace: 完全替换所有属性，未提及的属性会被清除
+- merge: 更新提及的属性，保留未提及的属性（默认）
+- append: 仅对 block-refs 追加并去重，其它属性按 merge 处理`,
       parameters: {
         type: "object",
         properties: {
@@ -918,16 +827,36 @@ COMMON QUERY PATTERNS:
           },
           tagName: {
             type: "string",
-            description: "标签名，不带#",
+            description: "标签名，不带#号",
+          },
+          mode: {
+            type: "string",
+            enum: ["replace", "merge", "append"],
+            description: "更新模式：replace/merge/append，默认 merge",
           },
           properties: {
             type: "array",
-            description: "要更新的属性",
+            description: "要更新的标签属性数组",
             items: {
               type: "object",
               properties: {
                 name: { type: "string", description: "属性名" },
-                value: { type: "string", description: "新值" },
+                value: {
+                  description: "属性值，block-refs 可为 blockId 数组或 blockid 字符串",
+                  oneOf: [
+                    { type: "string" },
+                    { type: "number" },
+                    {
+                      type: "array",
+                      items: {
+                        oneOf: [
+                          { type: "string" },
+                          { type: "number" },
+                        ],
+                      },
+                    },
+                  ],
+                },
               },
               required: ["name", "value"],
             },
@@ -1088,27 +1017,11 @@ export const WIKIPEDIA_TOOL: OpenAITool = {
 
 【参数】
 - query: 搜索关键词
-- lang: 语言代码（可选）
-  * zh: 中文（默认）
-  * en: 英文
-  * ja: 日文
-  * de: 德文
-  * fr: 法文
-  * es: 西班牙文
-  * 等其他语言代码
-- fallback: 是否在当前语言没有结果时自动尝试其他语言（默认 true）
-
-【语言选择建议】
-- 中文查询 → 优先 zh，可能内容较少
-- 英文查询 → 优先 en，通常内容最详细
-- 科技/学术主题 → 建议 en，内容更全面
-- 本地化主题（如中国历史）→ 建议 zh
-- 不同语言版本内容可能差异很大，可以尝试多个语言
+- lang: 语言代码，默认 zh（中文），可选 en（英文）、ja（日文）等
 
 【注意】
-- 返回完整词条内容，可能很长
-- 长内容会自动分段返回
-- 包含图片链接（如果有）`,
+- 优先使用中文 Wikipedia，如果没有结果会自动尝试英文
+- 返回结果包含摘要和链接，可能包含图片`,
     parameters: {
       type: "object",
       properties: {
@@ -1118,62 +1031,10 @@ export const WIKIPEDIA_TOOL: OpenAITool = {
         },
         lang: {
           type: "string",
-          description: "语言代码，默认 zh（中文）。可选：en（英文）、ja（日文）、de（德文）、fr（法文）等",
-          enum: ["zh", "en", "ja", "de", "fr", "es", "ru", "it", "pt", "ko"],
-        },
-        fallback: {
-          type: "boolean",
-          description: "当前语言没有结果时是否自动尝试英文，默认 true",
+          description: "语言代码，默认 zh（中文）",
         },
       },
       required: ["query"],
-    },
-  },
-};
-
-/**
- * 网页内容抓取工具
- */
-export const FETCH_URL_TOOL: OpenAITool = {
-  type: "function",
-  function: {
-    name: "fetch_url",
-    description: `抓取指定 URL 的网页内容。
-
-【何时使用】
-- 用户提供了具体的网址链接
-- 需要查看某个网页的详细内容
-- 需要提取网页中的表格、数据、文章等信息
-- Wikipedia 表格内容不完整时，可以直接抓取 Wikipedia 页面
-
-【参数】
-- url: 要抓取的网页 URL（必须是完整的 http:// 或 https:// 链接）
-- max_length: 最大内容长度（可选，默认 100000 字符）
-
-【返回内容】
-- 网页标题
-- 转换为 Markdown 格式的内容
-- 保留表格、列表、标题等结构
-- 自动清理广告、脚本等无关内容
-
-【注意】
-- 只支持公开可访问的网页
-- 某些网站可能有反爬虫限制
-- 内容过长会自动截断
-- 不支持需要登录的页面`,
-    parameters: {
-      type: "object",
-      properties: {
-        url: {
-          type: "string",
-          description: "要抓取的网页 URL（完整的 http:// 或 https:// 链接）",
-        },
-        max_length: {
-          type: "number",
-          description: "最大内容长度（字符数），默认 100000",
-        },
-      },
-      required: ["url"],
     },
   },
 };
@@ -1222,171 +1083,7 @@ HKD(港币)、KRW(韩元)、TWD(台币)、AUD(澳元)、CAD(加元)等`,
 };
 
 /**
- * 工具类别定义
- */
-export type ToolCategory = 
-  | "core"       // 核心工具（tool_instructions）
-  | "search"     // 笔记搜索
-  | "journal"    // 日记
-  | "read"       // 读取
-  | "write"      // 写入
-  | "web"        // 联网搜索
-  | "code"       // 代码执行
-  | "file"       // 本地文件
-  | "analysis"   // 统计分析
-  | "skill";     // 技能
-
-/**
- * 工具名称到类别的映射
- */
-const TOOL_CATEGORIES: Record<string, ToolCategory> = {
-  // 搜索
-  "searchNotes": "search",
-  "queryByTagProperty": "search",
-  "query_blocks": "search",
-  "searchBlocksByReference": "search",
-  "getSavedAiConversations": "search",
-  // 日记
-  "getTodayJournal": "journal",
-  "getJournalByDate": "journal",
-  "getJournals": "journal",
-  // 读取
-  "getPage": "read",
-  "getBlocksText": "read",
-  "getBlockMeta": "read",
-  "getBlockLinks": "read",
-  // 写入
-  "createBlock": "write",
-  "createPage": "write",
-  "insertTag": "write",
-  "updateTagProperties": "write",
-  // 联网
-  "webSearch": "web",
-  "imageSearch": "web",
-  "wikipedia": "web",
-  "fetch_url": "web",
-  "currency": "web",
-  // 代码
-  "runCode": "code",
-  "runPythonCode": "code",
-  "runLocalPythonScript": "code",
-  // 文件
-  "readLocalFile": "file",
-  "writeLocalFile": "file",
-  "deleteLocalFile": "file",
-  "listLocalDir": "file",
-  // 分析
-  "analyzeNotesStats": "analysis",
-  "searchKeywordOccurrences": "analysis",
-  "analyzeWordFrequency": "analysis",
-  "executeCustomAnalysis": "analysis",
-};
-
-/**
- * 根据用户输入检测需要的工具类别
- */
-export function detectToolCategories(userInput: string): Set<ToolCategory> {
-  const categories = new Set<ToolCategory>();
-  const input = userInput.toLowerCase();
-  
-  // 搜索类关键词
-  if (/#\w|#\u4e00-\u9fff|查找|搜索|笔记|有哪些|找一下|找到|search|find|\[\[/.test(input)) {
-    categories.add("search");
-    categories.add("read");
-  }
-  
-  // 日记类关键词
-  if (/日记|今天|昨天|最近|这周|上周|本月|上个月|journal|总结一下|回顾/.test(input)) {
-    categories.add("journal");
-  }
-  
-  // 写入类关键词
-  if (/创建|添加|写入|新建|记录|保存|打标签|create|add|write|save/.test(input)) {
-    categories.add("write");
-    categories.add("read");
-  }
-  
-  // 联网类关键词
-  if (/联网|搜索|查一下|百科|网上|实时|最新|新闻|天气|股票|汇率|图片|web|wiki|google|search online|http/.test(input)) {
-    categories.add("web");
-  }
-  
-  // 代码类关键词
-  if (/计算|代码|运行|执行|python|javascript|code|run|execute|公式/.test(input)) {
-    categories.add("code");
-  }
-  
-  // 文件类关键词
-  if (/本地文件|读取文件|写入文件|删除文件|文件列表|目录|local file|read file|write file/.test(input)) {
-    categories.add("file");
-  }
-  
-  // 分析类关键词
-  if (/统计|分析|词频|有多少|出现次数|stats|analyze|frequency/.test(input)) {
-    categories.add("analysis");
-  }
-  
-  // 技能类关键词（查番剧、周报等）
-  if (/番剧|动漫|周报|总结今天|回顾今天|anime|skill/.test(input)) {
-    categories.add("skill");
-    categories.add("web"); // 技能可能需要联网
-  }
-  
-  return categories;
-}
-
-/**
- * 根据类别获取工具列表
- */
-export function getToolsByCategories(categories: Set<ToolCategory>): OpenAITool[] {
-  const tools: OpenAITool[] = [];
-  
-  // 始终包含核心工具
-  categories.add("core");
-  
-  // 从 TOOLS 数组中筛选
-  for (const tool of TOOLS) {
-    const category = TOOL_CATEGORIES[tool.function.name];
-    if (category && categories.has(category)) {
-      tools.push(tool);
-    }
-  }
-  
-  // 联网工具（需要额外检查开关）
-  if (categories.has("web")) {
-    if (isWebSearchEnabled()) {
-      if (isImageSearchEnabled()) {
-        tools.push(IMAGE_SEARCH_TOOL);
-      }
-      tools.push(WEB_SEARCH_TOOL);
-    }
-    if (isWikipediaEnabled()) {
-      tools.push(WIKIPEDIA_TOOL);
-    }
-    tools.push(FETCH_URL_TOOL);
-    if (isCurrencyEnabled()) {
-      tools.push(CURRENCY_TOOL);
-    }
-  }
-  
-  // 代码/文件/分析工具
-  if (categories.has("code") || categories.has("file") || categories.has("analysis")) {
-    if (isScriptAnalysisEnabled()) {
-      tools.push(...getScriptAnalysisTools());
-    }
-  }
-  
-  // 技能工具
-  if (categories.has("skill")) {
-    tools.push(...getSkillTools());
-  }
-  
-  return tools;
-}
-
-/**
  * 获取工具列表（根据联网搜索开关动态添加）
- * @deprecated 建议使用 getToolsByCategories 按需加载
  */
 export function getTools(webSearchEnabled?: boolean, scriptAnalysisEnabled?: boolean): OpenAITool[] {
   const tools = [...TOOLS];
@@ -1407,9 +1104,6 @@ export function getTools(webSearchEnabled?: boolean, scriptAnalysisEnabled?: boo
   if (wikipediaOn) {
     tools.push(WIKIPEDIA_TOOL);
   }
-  
-  // 网页抓取工具（总是可用）
-  tools.push(FETCH_URL_TOOL);
   
   // 汇率工具（独立开关）
   if (currencyOn) {
@@ -1560,7 +1254,7 @@ type TagPropertyInput = {
   type?: number;
 };
 
-type TagPropertyMergeMode = "replace" | "merge";
+type TagPropertyMergeMode = "replace" | "merge" | "append";
 
 /**
  * 解析 block-refs 类型的值，统一为可去重的数组。
@@ -1645,8 +1339,7 @@ function normalizeTagPropertyList(
 }
 
 /**
- * 合并标签属性（replace/merge）。
- * merge 模式对 block-refs 类型自动追加去重。
+ * 合并标签属性（replace/merge/append）。
  */
 function mergeTagProperties(
   existing: TagPropertyInput[],
@@ -1700,8 +1393,7 @@ function mergeTagProperties(
     const schemaType = typeMap.get(key);
     const resolvedType = update.type ?? existingProp?.type ?? schemaType;
 
-    // block-refs 类型 (type=2) 自动追加去重
-    if (resolvedType === 2) {
+    if (mode === "append" && resolvedType === 2) {
       const combinedValue = mergeBlockRefs(existingProp?.value, update.value);
       addProp({
         name: update.name,
@@ -1967,7 +1659,6 @@ function getToolDefinitionByName(toolName: string): OpenAITool | undefined {
     WEB_SEARCH_TOOL,
     IMAGE_SEARCH_TOOL,
     WIKIPEDIA_TOOL,
-    FETCH_URL_TOOL,
     CURRENCY_TOOL,
     ...getScriptAnalysisTools(),
     ...getSkillTools(),
@@ -1997,224 +1688,17 @@ function formatToolInstructions(tool: OpenAITool): string {
  */
 export async function executeTool(toolName: string, args: any): Promise<string> {
   try {
-    // searchNotes - 全文搜索（支持多词查询）
-    if (toolName === "searchNotes") {
-      try {
-        // 支持新参数 queries 和旧参数 query
-        const queries = args.queries || args.query;
-        if (!queries) {
-          return "Error: 请提供搜索关键词 (queries 或 query)。";
-        }
-        
-        const combineMode = args.combineMode || "or";
-        const topic = args.topic;
-        const maxResults = Math.min(args.maxResults || 50, 100);
-        const sortBy = args.sortBy || "relevance";
-        
-        // 使用新的多词搜索函数
-        const results = await searchBlocksByMultipleTexts({
-          queries,
-          combineMode,
-          topic,
-          maxResults,
-          sortBy,
-        });
-        
-        // 获取搜索关键词用于显示
-        const keywordsDisplay = Array.isArray(queries) 
-          ? queries.join(", ") 
-          : queries;
-        
-        if (results.length === 0) {
-          return `未找到包含 "${keywordsDisplay}" 的笔记。`;
-        }
-        
-        const preservationNote = addLinkPreservationNote(results.length);
-        
-        // 格式化结果，包含相关性分数和匹配关键词
-        const summary = results.map((r: any, i: number) => {
-          const base = formatBlockResult(r, i);
-          const extras: string[] = [];
-          if (r.relevanceScore !== undefined) {
-            extras.push(`相关性: ${r.relevanceScore}`);
-          }
-          if (r.matchedKeywords?.length) {
-            extras.push(`匹配: ${r.matchedKeywords.join(", ")}`);
-          }
-          return extras.length ? `${base}\n   ℹ️ ${extras.join(" | ")}` : base;
-        }).join("\n\n");
-        
-        // 生成搜索摘要
-        const modeDesc = combineMode === "and" ? "AND" : "OR";
-        const topicDesc = topic ? `，主题: "${topic}"` : "";
-        const header = `✅ 找到 ${results.length} 条笔记 (关键词: "${keywordsDisplay}", 模式: ${modeDesc}${topicDesc})`;
-        
-        return `${preservationNote}${header}\n${summary}`;
-      } catch (err: any) {
-        return `搜索出错: ${err.message}`;
+    if (toolName === "tool_instructions") {
+      const requested = String(args?.toolName || args?.tool || args?.name || "").trim();
+      if (!requested) {
+        return "Error: Missing toolName parameter.";
       }
-    }
-    
-    // getPage - 按名称获取页面内容
-    else if (toolName === "getPage") {
-      try {
-        const pageName = String(args.pageName || "").trim();
-        if (!pageName) {
-          return "Error: 请提供页面名称 (pageName)。";
-        }
-        
-        const result = await getPageByName(pageName, true);
-        const linkTitle = result.title.replace(/[\[\]]/g, "");
-        const body = result.fullContent ?? result.content;
-        
-        return `# ${linkTitle}\n\n${body}\n\n---\n📄 [查看原页面](orca-block:${result.id})`;
-      } catch (err: any) {
-        if (err.message?.includes("not found")) {
-          return `未找到页面 "${args.pageName}"。`;
-        }
-        return `获取页面出错: ${err.message}`;
+      const tool = getToolDefinitionByName(requested);
+      if (!tool) {
+        return `Tool not found: ${requested}`;
       }
-    }
-    
-    // getBlocksText - 按ID获取块文本内容
-    else if (toolName === "getBlocksText") {
-      try {
-        let blockIds = args.blockIds;
-        if (!Array.isArray(blockIds) || blockIds.length === 0) {
-          return "Error: 请提供块ID数组 (blockIds)。";
-        }
-        
-        // 解析块ID（支持 orca-block:xxx 格式）
-        const parsedIds = blockIds.map((id: any) => {
-          if (typeof id === "string") {
-            const match = id.match(/^(?:orca-block:|blockid:)?(\d+)$/i);
-            if (match) return parseInt(match[1], 10);
-          }
-          return typeof id === "number" ? id : null;
-        }).filter((id: number | null) => id !== null);
-        
-        if (parsedIds.length === 0) {
-          return "Error: 无效的块ID。";
-        }
-        
-        const results: string[] = [];
-        for (const blockId of parsedIds) {
-          const block = orca.state.blocks[blockId] || await orca.invokeBackend("get-block", blockId);
-          if (!block) {
-            results.push(`块 ${blockId}: 未找到`);
-            continue;
-          }
-          
-          // 获取块树
-          let fullContent = extractBlockText(block.content);
-          try {
-            const treeResult = await orca.invokeBackend("get-block-tree", blockId);
-            if (treeResult) {
-              const blocks = extractBlocksFromTree(treeResult, 0, 100);
-              if (blocks.length > 1) {
-                fullContent = blocks.map(b => "  ".repeat(b.depth) + b.content).join("\n");
-              }
-            }
-          } catch {}
-          
-          const title = (block.aliases?.[0] || fullContent.split("\n")[0]?.substring(0, 50) || `块 #${blockId}`).replace(/[\[\]]/g, "");
-          results.push(`## ${title}\nblockId: ${blockId}\n\n${fullContent}`);
-        }
-        
-        return results.join("\n\n---\n\n");
-      } catch (err: any) {
-        return `获取块内容出错: ${err.message}`;
-      }
-    }
-    
-    // 新简化工具：queryByTagProperty - 按标签属性过滤
-    else if (toolName === "queryByTagProperty") {
-      try {
-        const tagName = String(args.tagName || "").trim().replace(/^#/, "");
-        if (!tagName) {
-          return "Error: 请提供标签名 (tagName)。";
-        }
-        
-        const maxResults = Math.min(args.maxResults || 20, 50);
-        const property = args.property;
-        const value = args.value;
-        
-        // 构建过滤条件
-        const filters = property && value ? [{ name: property, op: "==" as const, value }] : [];
-        
-        const results = await queryBlocksByTag(tagName, { properties: filters, maxResults });
-        
-        if (results.length === 0) {
-          const filterDesc = property ? ` (${property}=${value})` : "";
-          return `未找到 #${tagName}${filterDesc} 的笔记。`;
-        }
-        
-        const preservationNote = addLinkPreservationNote(results.length);
-        const summary = results.map((r: any, i: number) => {
-          const base = formatBlockResult(r, i);
-          const props = formatPropertyValues(r.propertyValues);
-          return `${base}${props}`;
-        }).join("\n\n");
-        
-        return `${preservationNote}✅ 找到 ${results.length} 条 #${tagName} 笔记：\n${summary}`;
-      } catch (err: any) {
-        return `查询出错: ${err.message}`;
-      }
-    }
-    
-    // query_blocks - 高级组合查询 (QueryDescription2 格式)
-    else if (toolName === "query_blocks") {
-      try {
-        const q = args.q;
-        if (!q || typeof q !== "object") {
-          return "Error: 请提供查询描述对象 (q)。";
-        }
-        
-        const pageSize = Math.min(args.pageSize || 20, 50);
-        const sort = args.sort || [["_modified", "DESC"]];
-        
-        // 直接使用 QueryDescription2 格式调用后端
-        const description = {
-          q,
-          sort,
-          pageSize,
-        };
-        
-        const result = await orca.invokeBackend("query", description);
-        const payload = result?.data ?? result;
-        
-        // 解析结果
-        let blocks: any[] = [];
-        if (Array.isArray(payload)) {
-          blocks = payload;
-        } else if (payload?.blocks && Array.isArray(payload.blocks)) {
-          blocks = payload.blocks;
-        } else if (payload?.results && Array.isArray(payload.results)) {
-          blocks = payload.results;
-        }
-        
-        if (blocks.length === 0) {
-          return `未找到匹配的笔记。`;
-        }
-        
-        // 格式化结果
-        const results: string[] = [];
-        for (let i = 0; i < Math.min(blocks.length, pageSize); i++) {
-          const block = blocks[i];
-          const blockId = block.id || block.blockId;
-          const content = extractBlockText(block.content) || "";
-          const title = (block.aliases?.[0] || content.split("\n")[0]?.substring(0, 50) || `块 #${blockId}`).replace(/[\[\]]/g, "");
-          results.push(`### ${i + 1}. ${title}\nblockId: ${blockId}\n${content.substring(0, 500)}${content.length > 500 ? "..." : ""}`);
-        }
-        
-        return `✅ 找到 ${blocks.length} 条笔记：\n\n${results.join("\n\n")}`;
-      } catch (err: any) {
-        return `查询出错: ${err.message}`;
-      }
-    }
-    
-    // 兼容旧工具名：searchBlocksByTag
-    else if (toolName === "searchBlocksByTag") {
+      return formatToolInstructions(tool);
+    } else if (toolName === "searchBlocksByTag") {
       try {
         const tagQuery = args.tag_query || args.tagQuery || args.tag;
         
@@ -2391,109 +1875,47 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
       } catch (err: any) {
         return `Error querying tag with filters: ${err.message}`;
       }
-    // 新统一工具：getJournals - 范围查询日记
-    } else if (toolName === "getJournals") {
+    } else if (toolName === "getRecentJournals") {
       try {
-        const includeChildren = args.includeChildren !== false;
-        const maxResults = args.maxResults || 31;
-        
-        // 优先级: days > month > week > startDate/endDate
-        if (args.days !== undefined) {
-          // 最近N天
-          const days = Math.abs(Math.trunc(Number(args.days))) || 7;
-          
-          if (days <= 7) {
-            // 小范围：直接返回内容
-            const results = await getRecentJournals(days, includeChildren, days);
-            if (results.length === 0) {
-              return `最近 ${days} 天没有日记。`;
-            }
-            const preservationNote = addLinkPreservationNote(results.length);
-            const summary = results.map((r: any, i: number) => formatBlockResult(r, i)).join("\n\n");
-            return `${preservationNote}最近 ${days} 天的日记（${results.length} 篇）：\n${summary}`;
-          } else {
-            // 大范围：返回导出按钮
-            const results = await getJournalsByDateRange("range", `last-${days}-days`, undefined, includeChildren, Math.min(maxResults, 366));
-            if (results.length === 0) {
-              return `最近 ${days} 天没有日记。`;
-            }
-            const exportData = results.map((r: any) => {
-              const content = (r.fullContent || r.content || "").trim();
-              return {
-                date: r.title || "",
-                content,
-                blockId: r.id,
-                created: r.created ? (r.created instanceof Date ? r.created.toISOString() : r.created) : undefined,
-                modified: r.modified ? (r.modified instanceof Date ? r.modified.toISOString() : r.modified) : undefined,
-                wordCount: content.length,
-                tags: r.tags || [],
-                hasImages: /!\[.*?\]\(.*?\)/.test(content) || content.includes("orca-file:"),
-                hasLinks: /\[\[.*?\]\]/.test(content) || /\[.*?\]\(orca-block:/.test(content),
-                childCount: r.childCount || 0,
-                blocks: r.rawTree ? extractBlocksFromTree(r.rawTree) : undefined,
-              };
-            }).filter((entry: any) => entry.content.length > 0);
-            if (exportData.length === 0) {
-              return `最近 ${days} 天的日记都没有内容。`;
-            }
-            const cacheId = `range-last-${days}-days-${Date.now()}`;
-            setJournalExportCache(cacheId, `最近${days}天`, exportData);
-            return `\`\`\`journal-export\ncache:${cacheId}\n\`\`\``;
-          }
-        } else if (args.month) {
-          // 某月
-          const results = await getJournalsByDateRange("month", args.month, undefined, includeChildren, Math.min(maxResults, 31));
-          if (results.length === 0) {
-            return `${args.month} 没有日记。`;
-          }
-          const exportData = results.map((r: any) => {
-            const content = (r.fullContent || r.content || "").trim();
-            return {
-              date: r.title || "",
-              content,
-              blockId: r.id,
-              created: r.created ? (r.created instanceof Date ? r.created.toISOString() : r.created) : undefined,
-              modified: r.modified ? (r.modified instanceof Date ? r.modified.toISOString() : r.modified) : undefined,
-              wordCount: content.length,
-              tags: r.tags || [],
-              hasImages: /!\[.*?\]\(.*?\)/.test(content) || content.includes("orca-file:"),
-              hasLinks: /\[\[.*?\]\]/.test(content) || /\[.*?\]\(orca-block:/.test(content),
-              childCount: r.childCount || 0,
-              blocks: r.rawTree ? extractBlocksFromTree(r.rawTree) : undefined,
-            };
-          }).filter((entry: any) => entry.content.length > 0);
-          if (exportData.length === 0) {
-            return `${args.month} 的日记都没有内容。`;
-          }
-          const monthMatch = args.month.match(/^(\d{4})-(\d{1,2})$/);
-          const rangeLabel = monthMatch ? `${monthMatch[1]}年${parseInt(monthMatch[2])}月` : args.month;
-          const cacheId = `month-${args.month}-${Date.now()}`;
-          setJournalExportCache(cacheId, rangeLabel, exportData);
-          return `\`\`\`journal-export\ncache:${cacheId}\n\`\`\``;
-        } else if (args.week) {
-          // 本周/上周
-          const weekValue = args.week === "last" ? "last-week" : "this-week";
-          const results = await getJournalsByDateRange("week", weekValue, undefined, includeChildren, 7);
-          if (results.length === 0) {
-            return `${args.week === "last" ? "上周" : "本周"}没有日记。`;
-          }
-          const preservationNote = addLinkPreservationNote(results.length);
-          const summary = results.map((r: any, i: number) => formatBlockResult(r, i)).join("\n\n");
-          return `${preservationNote}${args.week === "last" ? "上周" : "本周"}的日记（${results.length} 篇）：\n${summary}`;
-        } else if (args.startDate && args.endDate) {
-          // 自定义范围
-          const results = await getJournalsByDateRange("range", args.startDate, args.endDate, includeChildren, Math.min(maxResults, 366));
-          if (results.length === 0) {
-            return `${args.startDate} 至 ${args.endDate} 没有日记。`;
-          }
-          const preservationNote = addLinkPreservationNote(results.length);
-          const summary = results.map((r: any, i: number) => formatBlockResult(r, i)).join("\n\n");
-          return `${preservationNote}${args.startDate} 至 ${args.endDate} 的日记（${results.length} 篇）：\n${summary}`;
-        } else {
-          return "Error: 请提供查询参数（days/month/week/startDate+endDate）。";
+        let days = args.days ?? 7;
+        const includeChildren = args.includeChildren !== false; // default true
+
+        if (Array.isArray(days)) {
+          days = days[0];
         }
+
+        let normalizedDays = Number.isFinite(Number(days))
+          ? Math.abs(Math.trunc(Number(days)))
+          : 7;
+        
+        // 限制最大 7 天
+        if (normalizedDays > 7) {
+          return `⛔ days 参数最大为 7，你请求了 ${normalizedDays} 天。
+
+如需查询更长时间范围的日记，请使用 getJournalsByDateRange 工具：
+- 某月日记：rangeType="month", value="2025-01"
+- 某周日记：rangeType="week", value="this-week"
+
+不要再用 getRecentJournals 查询超过 7 天的日记。`;
+        }
+
+
+        const results = await getRecentJournals(
+          normalizedDays,
+          includeChildren,
+          normalizedDays // maxResults = days
+        );
+
+        if (results.length === 0) {
+          return `No journal entries found in the last ${normalizedDays} day(s).`;
+        }
+
+        const preservationNote = addLinkPreservationNote(results.length);
+        const summary = results.map((r: any, i: number) => formatBlockResult(r, i)).join("\n\n");
+
+        return `${preservationNote}Found ${results.length} journal entries in the last ${normalizedDays} day(s):\n${summary}`;
       } catch (err: any) {
-        return `查询日记出错: ${err.message}`;
+        return `Error getting recent journals: ${err.message}`;
       }
     } else if (toolName === "getTodayJournal") {
       try {
@@ -2542,6 +1964,271 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
         return `No journal entry found for ${dateStr}.`;
       } catch (err: any) {
         return `Error getting journal for specified date: ${err.message}`;
+      }
+    } else if (toolName === "getJournalsByDateRange") {
+      try {
+        const rangeType = args.rangeType;
+        const value = args.value;
+        const endValue = args.endValue;
+        const includeChildren = args.includeChildren !== false;
+        const maxResults = args.maxResults || 31;
+
+        if (!rangeType || !value) {
+          return "Error: rangeType and value parameters are required.";
+        }
+
+        if (!["year", "month", "week", "range"].includes(rangeType)) {
+          return "Error: rangeType must be one of: year, month, week, range";
+        }
+
+        if (rangeType === "range" && !endValue) {
+          return "Error: endValue is required when rangeType is 'range'";
+        }
+
+
+        // 年份查询：直接获取数据并返回导出按钮
+        if (rangeType === "year") {
+          
+          const results = await getJournalsByDateRange(
+            "year",
+            value,
+            undefined,
+            includeChildren,
+            366 // 最多一年的天数
+          );
+          
+          if (results.length === 0) {
+            return `${value}年没有找到任何日记。`;
+          }
+          
+          // 过滤掉没有内容的日记，并添加元数据
+          const exportData = results
+            .map((r: any) => {
+              const content = (r.fullContent || r.content || "").trim();
+              return {
+                date: r.title || "",
+                content,
+                blockId: r.id,
+                // 元数据
+                created: r.created ? (r.created instanceof Date ? r.created.toISOString() : r.created) : undefined,
+                modified: r.modified ? (r.modified instanceof Date ? r.modified.toISOString() : r.modified) : undefined,
+                wordCount: content.length,
+                tags: r.tags || [],
+                hasImages: /!\[.*?\]\(.*?\)/.test(content) || content.includes("orca-file:"),
+                hasLinks: /\[\[.*?\]\]/.test(content) || /\[.*?\]\(orca-block:/.test(content),
+                childCount: r.childCount || 0,
+                // 子块详情（每个块的内容和时间）
+                blocks: r.rawTree ? extractBlocksFromTree(r.rawTree) : undefined,
+              };
+            })
+            .filter((entry: any) => entry.content.length > 0);
+          
+          if (exportData.length === 0) {
+            return `${value}年的日记都没有内容。`;
+          }
+          
+          const rangeLabel = `${value}年`;
+          
+          // 存入缓存，返回缓存 ID
+          const cacheId = `year-${value}-${Date.now()}`;
+          setJournalExportCache(cacheId, rangeLabel, exportData);
+
+          // 返回 journal-export 代码块，前端会渲染为导出按钮
+          return `\`\`\`journal-export\ncache:${cacheId}\n\`\`\``;
+        }
+
+        const results = await getJournalsByDateRange(
+          rangeType as "year" | "month" | "week" | "range",
+          value,
+          endValue,
+          includeChildren,
+          maxResults
+        );
+
+        if (results.length === 0) {
+          return `No journal entries found for the specified range (${rangeType}: ${value}${endValue ? ` to ${endValue}` : ""}).`;
+        }
+
+        // 月份查询：只显示统计 + 导出按钮，不显示完整内容
+        if (rangeType === "month") {
+          // 过滤掉没有内容的日记，并添加元数据
+          const exportData = results
+            .map((r: any) => {
+              const content = (r.fullContent || r.content || "").trim();
+              return {
+                date: r.title || "",
+                content,
+                blockId: r.id,
+                // 元数据
+                created: r.created ? (r.created instanceof Date ? r.created.toISOString() : r.created) : undefined,
+                modified: r.modified ? (r.modified instanceof Date ? r.modified.toISOString() : r.modified) : undefined,
+                wordCount: content.length,
+                tags: r.tags || [],
+                hasImages: /!\[.*?\]\(.*?\)/.test(content) || content.includes("orca-file:"),
+                hasLinks: /\[\[.*?\]\]/.test(content) || /\[.*?\]\(orca-block:/.test(content),
+                childCount: r.childCount || 0,
+                // 子块详情（每个块的内容和时间）
+                blocks: r.rawTree ? extractBlocksFromTree(r.rawTree) : undefined,
+              };
+            })
+            .filter((entry: any) => entry.content.length > 0);
+          
+          // 解析月份标签
+          const monthMatch = value.match(/^(\d{4})-(\d{1,2})$/);
+          const rangeLabel = monthMatch ? `${monthMatch[1]}年${parseInt(monthMatch[2])}月` : value;
+
+          if (exportData.length === 0) {
+            return `${rangeLabel}的日记都没有内容。`;
+          }
+
+          // 存入缓存，返回缓存 ID
+          const cacheId = `month-${value}-${Date.now()}`;
+          setJournalExportCache(cacheId, rangeLabel, exportData);
+
+          // 返回 journal-export 代码块，前端会渲染为导出按钮
+          return `\`\`\`journal-export\ncache:${cacheId}\n\`\`\``;
+        }
+
+        // last-N-days 查询：显示导出按钮
+        const lastDaysMatch = value.match(/^last-(\d+)-days$/);
+        if (rangeType === "range" && lastDaysMatch) {
+          const days = parseInt(lastDaysMatch[1], 10);
+          const exportData = results
+            .map((r: any) => {
+              const content = (r.fullContent || r.content || "").trim();
+              return {
+                date: r.title || "",
+                content,
+                blockId: r.id,
+                // 元数据
+                created: r.created ? (r.created instanceof Date ? r.created.toISOString() : r.created) : undefined,
+                modified: r.modified ? (r.modified instanceof Date ? r.modified.toISOString() : r.modified) : undefined,
+                wordCount: content.length,
+                tags: r.tags || [],
+                hasImages: /!\[.*?\]\(.*?\)/.test(content) || content.includes("orca-file:"),
+                hasLinks: /\[\[.*?\]\]/.test(content) || /\[.*?\]\(orca-block:/.test(content),
+                childCount: r.childCount || 0,
+                // 子块详情（每个块的内容和时间）
+                blocks: r.rawTree ? extractBlocksFromTree(r.rawTree) : undefined,
+              };
+            })
+            .filter((entry: any) => entry.content.length > 0);
+          
+          const rangeLabel = `最近${days}天`;
+
+          if (exportData.length === 0) {
+            return `${rangeLabel}的日记都没有内容。`;
+          }
+
+          // 存入缓存，返回缓存 ID
+          const cacheId = `range-last-${days}-days-${Date.now()}`;
+          setJournalExportCache(cacheId, rangeLabel, exportData);
+
+          // 返回 journal-export 代码块，前端会渲染为导出按钮
+          return `\`\`\`journal-export\ncache:${cacheId}\n\`\`\``;
+        }
+
+        const preservationNote = addLinkPreservationNote(results.length);
+        const summary = results.map((r: any, i: number) => formatBlockResult(r, i)).join("\n\n");
+
+        return `${preservationNote}Found ${results.length} journal entries for ${rangeType}: ${value}${endValue ? ` to ${endValue}` : ""}:\n${summary}`;
+      } catch (err: any) {
+        return `Error getting journals for date range: ${err.message}`;
+      }
+    } else if (toolName === "query_blocks") {
+      try {
+        // Advanced query with multiple conditions
+        const conditions = args.conditions;
+        const combineMode = args.combineMode || "and";
+        const requestedMax = args.maxResults || 50;
+        const actualLimit = Math.min(requestedMax, 50);
+
+        if (!Array.isArray(conditions) || conditions.length === 0) {
+          return "Error: At least one condition is required for query_blocks.";
+        }
+
+
+        const convertedConditions: QueryCondition[] = conditions.map((c: any) => {
+          switch (c.type) {
+            case "tag":
+              return { type: "tag" as const, name: c.name || "" };
+            case "text":
+              return { type: "text" as const, text: c.text || "" };
+            case "task":
+              return { type: "task" as const, completed: c.completed };
+            case "journal":
+              let startOffset = normalizeJournalOffset(c.startOffset, -7);
+              let endOffset = normalizeJournalOffset(c.endOffset, 0);
+              if (startOffset > endOffset) {
+                [startOffset, endOffset] = [endOffset, startOffset];
+              }
+              return {
+                type: "journal" as const,
+                start: { type: "relative" as const, value: startOffset, unit: "d" as const },
+                end: { type: "relative" as const, value: endOffset, unit: "d" as const },
+              };
+            case "ref":
+              return { type: "ref" as const, blockId: c.blockId || 0 };
+            case "block":
+              return { type: "block" as const, hasTags: c.hasTags };
+            case "blockMatch":
+              return { type: "blockMatch" as const, blockId: c.blockId || 0 };
+            default:
+              return { type: "tag" as const, name: "" };
+          }
+        });
+
+        const results = await queryBlocksAdvanced({
+          conditions: convertedConditions,
+          combineMode: combineMode as QueryCombineMode,
+          pageSize: actualLimit,
+        });
+
+        if (results.length === 0) {
+          return `No blocks found matching the ${combineMode.toUpperCase()} query.`;
+        }
+
+        const preservationNote = addLinkPreservationNote(results.length);
+        const summary = results.map((r: any, i: number) => formatBlockResult(r, i)).join("\n\n");
+        const limitWarning = buildLimitWarning(results.length, requestedMax, actualLimit);
+
+        return `${preservationNote}Found ${results.length} block(s) matching ${combineMode.toUpperCase()} query:\n${summary}${limitWarning}`;
+      } catch (err: any) {
+        return `Error executing complex query: ${err.message}`;
+      }
+    } else if (toolName === "get_tag_schema") {
+      try {
+        let tagName = args.tagName || args.tag_name || args.tag;
+
+        if (Array.isArray(tagName)) {
+          tagName = tagName[0];
+        }
+
+        if (!tagName) {
+          return "Error: Missing tag name parameter";
+        }
+
+        const schema = await getTagSchema(tagName);
+
+        if (schema.properties.length === 0) {
+          return `Tag "${tagName}" found but has no properties defined.`;
+        }
+
+        let result = `Schema for tag "${schema.tagName}":\n\n`;
+        schema.properties.forEach((prop: any, i: number) => {
+          result += `${i + 1}. **${prop.name}** (${prop.typeName}, type code: ${prop.type})\n`;
+          if (prop.options && prop.options.length > 0) {
+            result += `   Options:\n`;
+            prop.options.forEach((opt: any) => {
+              result += `   - "${opt.label}" → value: ${opt.value}\n`;
+            });
+          }
+        });
+
+        result += `\n**Usage tip**: When querying with property filters, use the numeric values shown above for choice properties.\n`;
+        return result;
+      } catch (err: any) {
+        return `Error getting schema for tag "${args.tagName}": ${err.message}`;
       }
     } else if (toolName === "searchBlocksByReference") {
       try {
@@ -2600,6 +2287,126 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
         return `${preservationNote}Found ${results.length} block(s) referencing "[[${pageName}]]":\n${summary}${paginationInfo}${limitWarning}`;
       } catch (err: any) {
         return `Error searching references to "${args.pageName}": ${err.message}`;
+      }
+    } else if (toolName === "getPage") {
+      try {
+        let pageName = args.pageName || args.page_name || args.page || args.name || args.alias || args.title;
+        const includeChildren = args.includeChildren !== false;
+
+        if (Array.isArray(pageName)) {
+          pageName = pageName[0];
+        }
+
+        if (!pageName) {
+          return "Error: Missing page name parameter.";
+        }
+
+
+        try {
+          const result = await getPageByName(pageName, includeChildren);
+          const linkTitle = result.title.replace(/[\[\]]/g, "");
+          const body = result.fullContent ?? result.content;
+
+          return `# ${linkTitle}\n\n${body}\n\n---\n📄 [查看原页面](orca-block:${result.id})`;
+        } catch (error: any) {
+          if (error.message?.includes("not found")) {
+            return `Page "${pageName}" not found.`;
+          }
+          throw error;
+        }
+      } catch (err: any) {
+        return `Error getting page "${args.pageName}": ${err.message}`;
+      }
+    } else if (toolName === "getBlock") {
+      try {
+        let blockIdRaw = args.blockId || args.block_id || args.id;
+        const includeChildren = args.includeChildren !== false;
+        const includeMeta = args.includeMeta === true;
+
+        // Handle orca-block:xxx and blockid:xxx formats
+        if (typeof blockIdRaw === "string") {
+          const match = blockIdRaw.match(/^(?:orca-block:|blockid:)?(\d+)$/i);
+          if (match) blockIdRaw = parseInt(match[1], 10);
+        }
+
+        const blockId = toFiniteNumber(blockIdRaw);
+
+        if (!blockId) {
+          return "Error: Missing or invalid blockId parameter. Please provide a valid block ID number.";
+        }
+
+
+        // Get block from state or backend
+        let block = orca.state.blocks[blockId] || await orca.invokeBackend("get-block", blockId);
+        if (!block) {
+          return `Block ${blockId} not found.`;
+        }
+
+        // Format date helper
+        const formatDate = (date: any): string => {
+          if (!date) return "未知";
+          const d = new Date(date);
+          if (isNaN(d.getTime())) return "未知";
+          const year = d.getFullYear();
+          const month = String(d.getMonth() + 1).padStart(2, "0");
+          const day = String(d.getDate()).padStart(2, "0");
+          const hour = String(d.getHours()).padStart(2, "0");
+          const min = String(d.getMinutes()).padStart(2, "0");
+          return `${year}-${month}-${day} ${hour}:${min}`;
+        };
+
+        // Build content - extract text from content (may be string or ContentFragment[])
+        let content = extractBlockText(block.content);
+        // Ensure content is a string before splitting
+        const contentStr = typeof content === "string" ? content : "";
+        
+        // Extract title: priority is aliases > first line of content
+        let title: string;
+        if (Array.isArray(block.aliases) && block.aliases.length > 0) {
+          // Use aliases (page names) joined with " / "
+          const validAliases = block.aliases
+            .map((a: any) => String(a).trim())
+            .filter((a: string) => a.length > 0);
+          title = validAliases.length > 0 
+            ? validAliases.join(" / ")
+            : contentStr.split("\n")[0]?.substring(0, 50) || `Block #${blockId}`;
+        } else {
+          title = contentStr.split("\n")[0]?.substring(0, 50) || `Block #${blockId}`;
+        }
+        title = title.replace(/[\[\]]/g, "");
+
+        // Get children content if requested
+        let childrenContent = "";
+        if (includeChildren && block.children && block.children.length > 0) {
+          const childContents: string[] = [];
+          for (const childId of block.children) {
+            const childBlock = orca.state.blocks[childId] || await orca.invokeBackend("get-block", childId);
+            if (childBlock && childBlock.content) {
+              const childText = extractBlockText(childBlock.content);
+              if (childText) {
+                childContents.push(`  - ${childText}`);
+              }
+            }
+          }
+          if (childContents.length > 0) {
+            childrenContent = "\n\n**子块内容：**\n" + childContents.join("\n");
+          }
+        }
+
+        // Build meta info if requested
+        let metaInfo = "";
+        if (includeMeta) {
+          const metaParts: string[] = [];
+          if (block.created) metaParts.push(`创建: ${formatDate(block.created)}`);
+          if (block.modified) metaParts.push(`修改: ${formatDate(block.modified)}`);
+          if (metaParts.length > 0) {
+            metaInfo = `\n📅 ${metaParts.join(" | ")}`;
+          }
+        }
+
+        return `# ${title}${metaInfo}\n\n${content}${childrenContent}\n\n---\n📄 [查看原块](orca-block:${blockId})`;
+      } catch (err: any) {
+        return `Error getting block ${args.blockId}: ${err.message}`;
       }
     } else if (toolName === "getBlockMeta") {
       try {
@@ -2788,12 +2595,9 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
         const tagName = normalizeTagNameForTool(tagNameRaw);
         if (!tagName) return "Error: tagName 不能为空。";
 
-        // 兼容旧的 append 参数，统一转为 merge
-        let mode: TagPropertyMergeMode = "merge";
-        if (modeRaw) {
-          const modeStr = String(modeRaw).toLowerCase();
-          if (modeStr === "replace") mode = "replace";
-          // append 已并入 merge，不再报错
+        const mode = (modeRaw ? String(modeRaw) : "merge").toLowerCase() as TagPropertyMergeMode;
+        if (!["replace", "merge", "append"].includes(mode)) {
+          return "Error: mode 参数无效，必须是 replace/merge/append。";
         }
 
         if (typeof propertiesRaw === "string") {
@@ -3170,9 +2974,13 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
         // 使用故障转移搜索
         const response = await searchWithFallback(query, instances, maxResults);
         
-        // 直接返回格式化结果（不注入隐藏标记）
+        // 存储原始搜索结果供自动增强使用
+        const cacheKey = `websearch-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+        searchResultsCache.set(cacheKey, response.results || []);
+        
+        // 在格式化结果中包含缓存键（隐藏在HTML注释中）
         const formattedResults = formatSearchResults(response);
-        return formattedResults;
+        return `${formattedResults}\n<!-- search-cache:${cacheKey} -->`;
       } catch (err: any) {
         return `Error searching web: ${err.message}`;
       }
@@ -3393,16 +3201,15 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
       try {
         const query = args.query;
         const lang = args.lang || "zh";
-        const fallback = args.fallback !== false; // 默认 true
         
         if (!query) {
           return "Error: 请提供搜索关键词";
         }
         
-        const result = await searchWikipedia(query, lang, true, fallback);
+        const result = await searchWikipedia(query, lang);
         
         if (!result) {
-          return `未在 Wikipedia (${lang}) 中找到关于"${query}"的内容。${fallback ? "已尝试英文版本。" : ""}`;
+          return `未在 Wikipedia 中找到关于"${query}"的内容。`;
         }
         
         return formatWikipediaResult(result);
@@ -3431,52 +3238,6 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
         }
       } catch (err: any) {
         return `汇率查询失败: ${err.message}`;
-      }
-    } else if (toolName === "fetch_url") {
-      // 网页内容抓取工具
-      try {
-        const url = args.url;
-        const maxLength = args.max_length || 50000; // 减少默认长度
-        
-        if (!url) {
-          return "Error: 请提供 URL";
-        }
-        
-        // 验证 URL 格式
-        if (!url.startsWith("http://") && !url.startsWith("https://")) {
-          return "Error: URL 必须以 http:// 或 https:// 开头";
-        }
-        
-        console.log(`[fetch_url] Fetching: ${url}`);
-        
-        const result = await fetchWebContent(url, {
-          maxLength,
-          timeout: 15000, // 15 秒超时
-        });
-        
-        return formatFetchedContent(result);
-      } catch (err: any) {
-        const errorMessage = err.message || "未知错误";
-        const url = args.url || "";
-        
-        // 检测是否是 403 错误
-        if (errorMessage.includes("403")) {
-          // 针对知乎的特殊建议
-          if (url.includes("zhihu.com")) {
-            return `❌ 知乎反爬虫保护\n\n**问题：** 知乎检测到非浏览器访问，拒绝了请求 (403)\n\n**建议解决方案：**\n1. **总结一下这个问题/回答的关键信息**\n   - 我可以帮你分析问题、提供观点\n   \n2. **复制知乎内容粘贴给我**\n   - 手动打开链接，复制文字内容\n   - 我可以基于你的内容进行分析\n\n3. **使用浏览器插件**\n   - 安装类似 "Simple Allow Copy" 的插件\n   - 更方便地复制知乎内容\n\n💡 **技术原因：** 知乎有较强的反爬虫机制，会检测请求头、访问频率等，即使模拟浏览器也很难绕过。`;
-          }
-          
-          // 其他网站的 403 错误
-          return `❌ 网站拒绝访问 (403)\n\n**问题：** 该网站检测到非浏览器访问，拒绝了请求\n\n**建议解决方案：**\n1. **复制网页内容粘贴给我**\n   - 手动打开链接，复制文字内容\n   - 我可以基于你的内容进行分析\n   \n2. **直接描述问题**\n   - 告诉我你想了解什么\n   - 我会尽力帮你回答\n\n💡 **原因：** 该网站有反爬虫保护，会检测并阻止自动化访问。`;
-        }
-        
-        // 超时错误
-        if (errorMessage.includes("超时") || errorMessage.includes("timeout")) {
-          return `❌ 网页请求超时\n\n**问题：** 网页加载时间过长，超过 15 秒限制\n\n**建议解决方案：**\n1. **检查网络连接**\n2. **尝试其他链接或网站**\n3. **复制网页内容粘贴给我**`;
-        }
-        
-        // 默认错误消息
-        return `❌ 网页抓取失败: ${errorMessage}\n\n💡 可能的原因：\n- 网站拒绝访问或有反爬虫保护\n- URL 不正确或网页不存在\n- 网络连接问题\n- 网站需要登录才能访问\n\n**建议：** 可以将网页内容复制粘贴给我，我来帮你分析。`;
       }
     } else if (toolName === "generateFlashcards") {
       // 闪卡生成工具 - 返回结构化数据供前端处理
@@ -3557,58 +3318,9 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
         return scriptResult;
       }
       
-      // 尝试处理 Skill 工具
-      if (toolName.startsWith("skill_")) {
-        try {
-          // 从工具名称反查 Skill ID
-          const { listSkills, getSkill } = await import("./skills-manager");
-          const skillRefs = await listSkills();
-          
-          let matchedSkillRef: { id: string; isGlobal: boolean } | null = null;
-          for (const ref of skillRefs) {
-            if (getSkillToolName(ref.id) === toolName) {
-              matchedSkillRef = ref;
-              break;
-            }
-          }
-          
-          if (!matchedSkillRef) {
-            return `Skill not found for tool: ${toolName}`;
-          }
-          
-          // 获取 Skill 详情
-          const skill = await getSkill(matchedSkillRef.id, matchedSkillRef.isGlobal);
-          if (!skill) {
-            return `Skill not found: ${matchedSkillRef.id}`;
-          }
-          
-          // 返回 Skill 的指令和输入
-          const input = args.input || "";
-          return `# 执行技能：${skill.metadata.name}
-
-## 用户输入
-${input}
-
-## 技能指令
-${skill.instruction}
-
----
-
-请根据上述指令处理用户输入。`;
-        } catch (err: any) {
-          return `Error executing skill: ${err.message}`;
-        }
-      }
-      
       return `Unknown tool: ${toolName}`;
     }
   } catch (error: any) {
-    // 工具执行出错时，尝试附加详细说明帮助 AI 修正
-    const instruction = await loadToolPrompt(toolName);
-    const errorMsg = `Error executing ${toolName}: ${error?.message ?? error}`;
-    if (instruction) {
-      return `${errorMsg}\n\n---\n**工具使用说明：**\n${instruction}`;
-    }
-    return errorMsg;
+    return `Error executing ${toolName}: ${error?.message ?? error}`;
   }
 }
