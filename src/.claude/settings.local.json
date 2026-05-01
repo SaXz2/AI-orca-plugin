@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx tsx -e ' *)",
+      "Bash(node -e ' *)",
+      "Bash(npx tsx --eval ' *)",
+      "Bash(npx tsx *)",
+      "Bash(npx tsc *)"
+    ]
+  }
+}

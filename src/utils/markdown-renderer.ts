@@ -559,7 +559,8 @@ function parseMarkdownInternal(text: string): MarkdownNode[] {
 
     if (rawLine.trim() === "") {
       flushParagraph();
-      flushList();
+      // 不 flushList()，空白行不应该中断列表
+      // 列表会在遇到非列表行、其他块元素或输入结束时正确 flush
       continue;
     }
 
