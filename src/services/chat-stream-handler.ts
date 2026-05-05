@@ -446,8 +446,8 @@ export async function* streamChatWithRetry(
   const timeoutMs = options.timeoutMs ?? 30000;
   const enableContextCompression = options.enableContextCompression ?? true;
   const maxContextTokens = options.maxContextTokens ?? 128000;
-  const compressionThreshold = options.compressionThreshold ?? Math.floor(maxContextTokens * 0.8);
-  const preserveRecentMessages = options.preserveRecentMessages ?? 6;
+  const compressionThreshold = options.compressionThreshold ?? Math.floor(maxContextTokens * 0.9);
+  const preserveRecentMessages = options.preserveRecentMessages ?? 10;
   
   let content = "";
   let reasoning = "";

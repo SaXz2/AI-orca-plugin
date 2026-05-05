@@ -61,7 +61,7 @@ import {
 } from "../services/session-service";
 import { exportSessionAsFile, saveSessionToJournal, saveMessagesToJournal } from "../services/export-service";
 import { sessionStore, updateSessionStore, clearSessionStore } from "../store/session-store";
-import { TOOLS, FLASHCARD_TOOL, executeTool, getToolsForDraggedContext, getTools, extractSearchResultsFromToolResults, getSkillToolsAsync, getSkillInstructionsAsync, getSkillToolName, resolveSkillIdFromToolName, detectToolCategories, getToolsByCategories } from "../services/ai-tools";
+import { FLASHCARD_TOOL, executeTool, getToolsForDraggedContext, getTools, extractSearchResultsFromToolResults, getSkillToolsAsync, getSkillInstructionsAsync, getSkillToolName, resolveSkillIdFromToolName } from "../services/ai-tools";
 import { TODOIST_TOOLS, executeTodoistTool, isTodoistTool } from "../services/todoist-tools";
 import { startPythonServer, stopPythonServer, getPythonServerStatus, browserAIChat, browserAIStatus as checkBrowserAIStatus } from "../services/python-runtime";
 import { getToolStatus, isToolDisabled, shouldAskForTool, isAgenticRAGEnabled, getAgenticRAGConfig } from "../store/tool-store";
@@ -1750,16 +1750,10 @@ graph TD
       // 根据是否有拖入的块来选择工具列表
       // 有拖入块时禁用搜索类工具，强制 AI 使用已提供的上下文
       const hasHighPriorityContext = highPriorityContexts.length > 0;
-      
-      // 💡 工具加载策略
-      // - false: Tool-as-Skill（默认，使用 useSkill）
-      // - "pure": 纯延迟加载（返回空数组，完全按需加载）
-      // - "hybrid": 混合模式（高频工具直接可用，低频工具延迟加载）
-      const lazyLoadingMode: false | "pure" | "hybrid" = "hybrid"; // 🔥 修改这里切换模式
-      
-      let baseTools = hasHighPriorityContext 
-        ? getToolsForDraggedContext() 
-        : getTools(undefined, undefined, lazyLoadingMode);
+
+      let baseTools = hasHighPriorityContext
+        ? getToolsForDraggedContext()
+        : getTools();
       
       // 如果启用了 Todoist AI 模式，注入 Todoist 工具
       if (enableTodoistTools) {

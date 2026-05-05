@@ -42,27 +42,27 @@ export const TOOL_CATEGORIES: ToolCategory[] = [
   {
     name: "search",
     label: "搜索",
-    tools: ["searchNotes", "queryByTagProperty", "query_blocks", "searchBlocksByReference"],
+    tools: ["query_blocks"],
   },
   {
     name: "read",
     label: "读取",
-    tools: ["getPage", "getBlocksText", "getBlockMeta", "getBlockLinks"],
+    tools: ["get_blocks_text", "get_page"],
   },
   {
     name: "journal",
     label: "日记",
-    tools: ["getTodayJournal", "getJournalByDate", "getJournals"],
+    tools: ["get_today_journal"],
+  },
+  {
+    name: "meta",
+    label: "元数据",
+    tools: ["get_tags_and_pages"],
   },
   {
     name: "write",
     label: "写入",
-    tools: ["createBlock", "createPage", "insertTag", "updateTagProperties"],
-  },
-  {
-    name: "other",
-    label: "其他",
-    tools: ["getSavedAiConversations"],
+    tools: ["insert_markdown", "insert_tags", "create_page", "create_tags", "move_blocks", "delete_blocks", "remove_tags"],
   },
 ];
 
@@ -70,22 +70,18 @@ export const TOOL_CATEGORIES: ToolCategory[] = [
  * 工具显示名称映射
  */
 export const TOOL_DISPLAY_NAMES: Record<string, string> = {
-  searchNotes: "全文搜索",
-  queryByTagProperty: "标签属性查询",
   query_blocks: "高级查询",
-  searchBlocksByReference: "反链搜索",
-  getPage: "读取页面",
-  getBlocksText: "读取块内容",
-  getBlockMeta: "获取元数据",
-  getBlockLinks: "获取链接",
-  getTodayJournal: "今日日记",
-  getJournalByDate: "指定日期日记",
-  getJournals: "日记范围查询",
-  createBlock: "创建块",
-  createPage: "创建页面",
-  insertTag: "添加标签",
-  updateTagProperties: "更新标签属性",
-  getSavedAiConversations: "已保存对话",
+  get_blocks_text: "读取块内容",
+  get_page: "查找所属页面",
+  get_today_journal: "今日日志",
+  get_tags_and_pages: "标签与页面列表",
+  insert_markdown: "插入内容",
+  insert_tags: "添加标签",
+  create_page: "创建页面",
+  create_tags: "创建标签定义",
+  move_blocks: "移动块",
+  delete_blocks: "删除块",
+  remove_tags: "移除标签",
 };
 
 /**

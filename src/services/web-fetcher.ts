@@ -1,6 +1,6 @@
 /**
  * Web Fetcher Service - 通用网页内容抓取工具
- * 
+ *
  * 功能：
  * - 抓取任意 URL 的网页内容
  * - 自动清理 HTML，提取主要内容
@@ -15,6 +15,53 @@ export interface FetchedWebContent {
   contentLength: number;
   contentType?: string;
   statusCode: number;
+}
+
+// 禁止访问的 IP 范围（私有网络、本地回环、链路本地等）
+const BLOCKED_IP_PATTERNS = [
+  /^127\./,           // 127.0.0.0/8
+  /^10\./,            // 10.0.0.0/8
+  /^172\.(1[6-9]|2\d|3[01])\./,  // 172.16.0.0/12
+  /^192\.168\./,      // 192.168.0.0/16
+  /^169\.254\./,      // 169.254.0.0/16 (link-local)
+  /^0\./,             // 0.0.0.0/8
+  /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./,  // 100.64.0.0/10 (CGNAT)
+];
+
+// 仅允许的 URL schemes
+const ALLOWED_SCHEMES = new Set(["https:", "http:"]);
+
+function isPrivateIP(hostname: string): boolean {
+  return BLOCKED_IP_PATTERNS.some(pattern => pattern.test(hostname));
+}
+
+function validateUrl(url: string): URL {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new Error("无效的 URL 格式");
+  }
+
+  if (!ALLOWED_SCHEMES.has(parsed.protocol)) {
+    throw new Error(`不支持的协议: ${parsed.protocol}`);
+  }
+
+  if (isPrivateIP(parsed.hostname)) {
+    throw new Error("不允许访问私有网络地址");
+  }
+
+  // 阻止常见云元数据端点
+  if (parsed.hostname === "169.254.169.254") {
+    throw new Error("不允许访问云元数据服务");
+  }
+
+  // 限制 URL 长度防止 DoS
+  if (url.length > 4096) {
+    throw new Error("URL 过长");
+  }
+
+  return parsed;
 }
 
 /**
@@ -175,21 +222,24 @@ export async function fetchWebContent(
   const timeout = options?.timeout || 15000; // 减少到 15 秒
   const maxLength = options?.maxLength || 50000; // 减少默认长度到 50000
   
-  console.log(`[WebFetcher] Fetching: ${url}`);
+  // SSRF 防护：验证 URL 合法性
+  const validatedUrl = validateUrl(url);
+
+  console.log(`[WebFetcher] Fetching: ${validatedUrl.href}`);
   const startTime = Date.now();
-  
+
   try {
     // 创建超时控制
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeout);
-    
+
     // 使用针对特定网站优化的请求头
-    const headers = getHeaders(url);
+    const headers = getHeaders(validatedUrl.href);
     
-    const response = await fetch(url, {
+    const response = await fetch(validatedUrl.href, {
       headers,
       signal: controller.signal,
-      redirect: 'follow', // 自动跟随重定向
+      redirect: 'follow',
     });
     
     clearTimeout(timeoutId);
@@ -221,10 +271,10 @@ export async function fetchWebContent(
       content = content.substring(0, maxLength) + '\n\n... (内容过长，已截断)';
     }
     
-    console.log(`[WebFetcher] Success: ${url} (fetch: ${fetchTime}ms, parse: ${parseTime}ms, ${content.length} chars)`);
-    
+    console.log(`[WebFetcher] Success: ${validatedUrl.href} (fetch: ${fetchTime}ms, parse: ${parseTime}ms, ${content.length} chars)`);
+
     return {
-      url,
+      url: validatedUrl.href,
       title,
       content,
       contentLength: content.length,

@@ -9,7 +9,12 @@
       "Bash(openspec list:*)",
       "Bash(openspec show:*)",
       "Bash(cat:*)",
-      "Bash(npm run test)"
+      "Bash(npm run test)",
+      "Bash(npx tsc *)",
+      "Bash(grep -A5 '\"outDir\"\\\\|\"rootDir\"' tsconfig.json)",
+      "Bash(cat tsconfig.json)",
+      "Bash(xxd)",
+      "Bash(node _fix_temp.mjs)"
     ]
   }
 }

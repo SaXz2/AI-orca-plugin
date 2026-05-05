@@ -204,7 +204,7 @@ function getPluginName(): string {
 async function readFile(path: string): Promise<string | null> {
   const pluginName = getPluginName();
   try {
-    const content = await orca.plugins.readFile(pluginName, path, "string", true);
+    const content = await orca.plugins.readFile(pluginName, path, "string");
     if (!content) return null;
     return typeof content === "string"
       ? content
@@ -216,13 +216,13 @@ async function readFile(path: string): Promise<string | null> {
 
 async function writeFile(path: string, content: string): Promise<void> {
   const pluginName = getPluginName();
-  await orca.plugins.writeFile(pluginName, path, content, true);
+  await orca.plugins.writeFile(pluginName, path, content);
 }
 
 async function deleteFile(path: string): Promise<void> {
   const pluginName = getPluginName();
   try {
-    await orca.plugins.removeFile(pluginName, path, true);
+    await orca.plugins.removeFile(pluginName, path);
   } catch {
     // Ignore deletion errors
   }
@@ -238,7 +238,7 @@ async function getSessionFilePath(sessionId: string): Promise<string | null> {
   // 1. 尝试标准命名（快速路径）
   const standardPath = `${SESSIONS_DIR}/${sessionId}.json`;
   try {
-    const exists = await orca.plugins.existsFile(pluginName, standardPath, true);
+    const exists = await orca.plugins.existsFile(pluginName, standardPath);
     if (exists) return standardPath;
   } catch {
     // 继续查找
@@ -246,7 +246,7 @@ async function getSessionFilePath(sessionId: string): Promise<string | null> {
   
   // 2. 扫描目录，通过 JSON 内容匹配 ID
   try {
-    const allFiles = await orca.plugins.listFiles(pluginName, true);
+    const allFiles = await orca.plugins.listFiles(pluginName);
     const sessionFiles = allFiles.filter(f => {
       const normalized = f.replace(/\\/g, "/");
       return normalized.startsWith(SESSIONS_DIR + "/") && normalized.endsWith(".json") && !normalized.endsWith("index.json");
@@ -420,7 +420,7 @@ function extractTitleFromFilename(filename: string): string | null {
 async function syncIndexWithFiles(index: SessionIndex): Promise<void> {
   const pluginName = getPluginName();
   try {
-    const allFiles = await orca.plugins.listFiles(pluginName, true);
+    const allFiles = await orca.plugins.listFiles(pluginName);
     const sessionFiles = allFiles.filter(f => {
       const normalized = f.replace(/\\/g, "/");
       return normalized.startsWith(SESSIONS_DIR + "/") && 

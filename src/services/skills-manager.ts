@@ -149,13 +149,13 @@ function buildSkillMetadataContent(metadata: Partial<SkillMetadata>, instruction
 /** 列出指定 scope 的所有文件 */
 async function listFilesForScope(isGlobal: boolean): Promise<string[]> {
   const pluginName = getPluginName(isGlobal);
-  return orca.plugins.listFiles(pluginName, isGlobal);
+  return orca.plugins.listFiles(pluginName);
 }
 
 /** 读取指定 scope 的文件 */
 async function readFileForScope(path: string, isGlobal: boolean): Promise<string | null> {
   const pluginName = getPluginName(isGlobal);
-  const content = await orca.plugins.readFile(pluginName, path, "string", isGlobal);
+  const content = await orca.plugins.readFile(pluginName, path, "string");
   if (!content) return null;
   return typeof content === 'string' 
     ? content 
@@ -165,19 +165,19 @@ async function readFileForScope(path: string, isGlobal: boolean): Promise<string
 /** 写入指定 scope 的文件 */
 async function writeFileForScope(path: string, content: string, isGlobal: boolean): Promise<void> {
   const pluginName = getPluginName(isGlobal);
-  await orca.plugins.writeFile(pluginName, path, content, isGlobal);
+  await orca.plugins.writeFile(pluginName, path, content);
 }
 
 /** 删除指定 scope 的文件 */
 async function removeFileForScope(path: string, isGlobal: boolean): Promise<void> {
   const pluginName = getPluginName(isGlobal);
-  await orca.plugins.removeFile(pluginName, path, isGlobal);
+  await orca.plugins.removeFile(pluginName, path);
 }
 
 /** 删除指定 scope 的文件夹 */
 async function removeFolderForScope(path: string, isGlobal: boolean): Promise<void> {
   const pluginName = getPluginName(isGlobal);
-  await orca.plugins.removeFolder(pluginName, path, isGlobal);
+  await orca.plugins.removeFolder(pluginName, path);
 }
 
 /** 从文件列表中提取 Skill IDs */
@@ -627,10 +627,10 @@ export async function ensureBuiltInSkills(): Promise<void> {
 ## 执行工具要求
 
 **必须使用的工具**:
-- \`getTodayJournal\` - 获取今天日记的完整内容
+- \`get_today_journal\` - 获取今天日记的完整内容
 
 **执行流程**:
-1. 调用 \`getTodayJournal\` 工具获取今天的日记内容
+1. 调用 \`get_today_journal\` 工具获取今天的日记内容
 2. 分析日记内容，提取关键信息
 3. 按照下面的格式组织内容
 4. 生成结构化的回顾总结
@@ -641,7 +641,7 @@ export async function ensureBuiltInSkills(): Promise<void> {
 
 ### 基本用法
 
-1. 调用 getTodayJournal 获取今天的日记
+1. 调用 get_today_journal 获取今天的日记
 2. 提取 3-5 条关键事件
 3. 列出已完成的重要任务
 4. 整理未完成的事项
@@ -674,12 +674,12 @@ export async function ensureBuiltInSkills(): Promise<void> {
 ## 执行规则
 
 **严格要求**:
-- ✅ 必须先调用 getTodayJournal 工具获取今天的日记
+- ✅ 必须先调用 get_today_journal 工具获取今天的日记
 - ✅ 只使用日记中的真实内容，不要编造
 - ✅ 按照上述格式输出，保持一致性
 - ✅ 关键事件最多 5 条，按重要性排序
 - ❌ 不要使用其他工具
-- ❌ 不要跳过 getTodayJournal 步骤
+- ❌ 不要跳过 get_today_journal 步骤
 
 ## 最佳实践
 
@@ -713,10 +713,10 @@ export async function ensureBuiltInSkills(): Promise<void> {
 ## 执行工具要求
 
 **必须使用的工具**:
-- \`getJournalsByDateRange\` - 按日期范围获取日记
+- \`query_blocks\` - 按日期范围获取日记
 
 **执行流程**:
-1. 调用 \`getJournalsByDateRange\` 工具获取本周的日记
+1. 调用 \`query_blocks\` 工具获取本周的日记
 2. 分析日记内容，按项目/部门分类
 3. 提取关键成果、问题和下周计划
 4. 按照下面的格式组织内容
@@ -728,7 +728,7 @@ export async function ensureBuiltInSkills(): Promise<void> {
 
 ### 基本用法
 
-1. 调用 getJournalsByDateRange 获取本周的日记
+1. 调用 query_blocks 获取本周的日记
 2. 按项目或部门分类整理
 3. 提取关键成果和亮点
 4. 总结遇到的问题和解决方案
@@ -779,14 +779,14 @@ export async function ensureBuiltInSkills(): Promise<void> {
 ## 执行规则
 
 **严格要求**:
-- ✅ 必须先调用 getJournalsByDateRange 工具获取本周日记
+- ✅ 必须先调用 query_blocks 工具获取本周日记
 - ✅ 只使用日记中的真实内容，不要编造
 - ✅ 按照上述格式输出，保持一致性
 - ✅ 本周成果最多 5 条，按重要性排序
 - ✅ 项目进展最多 3 个项目
 - ✅ 问题最多 3 个，每个问题需要原因、解决方案和结果
 - ❌ 不要使用其他工具
-- ❌ 不要跳过 getJournalsByDateRange 步骤
+- ❌ 不要跳过 query_blocks 步骤
 - ❌ 不要编造数据或进度
 
 ## 最佳实践

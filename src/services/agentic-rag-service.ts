@@ -379,7 +379,7 @@ function buildPlanningPrompt(
   // 检查是否已经尝试过本地检索但没有结果
   const localSearchFailed = memory.failedStrategies.size > 0 && 
     Array.from(memory.failedStrategies.keys()).some(k => 
-      k.startsWith("searchBlocksByText:") || k.startsWith("searchBlocksByTag:") || k.startsWith("getRecentJournals:")
+      k.startsWith("query_blocks:") || k.startsWith("get_today_journal:")
     );
 
   const webSearchNote = enableWebSearch
@@ -400,20 +400,16 @@ ${userQuery}
 ${stepsSummary}${triedStrategies}${failedInfo}${findingsInfo}
 
 【可用的检索工具】
-- searchBlocksByTag: 按标签搜索（用户提到 #标签 时）
-- searchBlocksByText: 全文搜索笔记内容
-- query_blocks_by_tag: 按标签+属性条件搜索（如 Status=Done）
-- query_blocks: 组合多条件搜索
-- getRecentJournals: 获取最近日记（days 参数，最大 7）
-- getTodayJournal: 获取今天日记
-- getJournalByDate: 获取指定日期日记
-- searchBlocksByReference: 搜索引用某页面的笔记
-- getPage: 读取指定页面内容${webSearchNote}
+- query_blocks: 组合条件搜索笔记（支持标签、文本、属性过滤）
+- get_blocks_text: 读取指定块的完整内容
+- get_page: 查找块所属页面并读取内容
+- get_today_journal: 获取今天日记
+- get_tags_and_pages: 列出所有标签和页面${webSearchNote}
 
 【决策规则】
 1. 首次收到问题时，必须先检索相关信息，不要直接说"信息不足"
-2. 如果问题涉及用户个人笔记/日记/学习记录，优先使用 getRecentJournals 或 searchBlocksByText
-3. 如果问题涉及特定标签，使用 searchBlocksByTag
+2. 如果问题涉及用户个人笔记/日记/学习记录，优先使用 query_blocks 或 get_today_journal
+3. 如果问题涉及特定标签，使用 query_blocks 带 tag 参数
 4. 如果问题涉及外部知识（人物、动漫、游戏、历史、科学等），且启用了 webSearch，应该使用 webSearch
 5. 如果之前的本地检索没有结果，且问题需要外部知识，必须使用 webSearch（如果可用）
 6. 不要重复使用完全相同的工具和参数组合
@@ -642,7 +638,7 @@ function buildDefaultPlan(userQuery: string, enableWebSearch: boolean = false): 
     if (queryLower.includes("今天") || queryLower.includes("今日")) {
       return {
         needsRetrieval: true,
-        tool: "getTodayJournal",
+        tool: "get_today_journal",
         args: { includeChildren: true },
         reasoning: "问题涉及今天的日记，获取今日日记内容",
         expectedInfo: "今天的日记记录",
@@ -650,10 +646,10 @@ function buildDefaultPlan(userQuery: string, enableWebSearch: boolean = false): 
     }
     return {
       needsRetrieval: true,
-      tool: "getRecentJournals",
-      args: { days: 7 },
+      tool: "query_blocks",
+      args: { query: "最近日记", maxResults: 20 },
       reasoning: "问题涉及日记/最近内容，需要查询最近的日记记录",
-      expectedInfo: "最近7天的日记内容",
+      expectedInfo: "最近的日记内容",
     };
   }
   
@@ -662,7 +658,7 @@ function buildDefaultPlan(userQuery: string, enableWebSearch: boolean = false): 
     const tagMatch = userQuery.match(/#(\S+)/);
     return {
       needsRetrieval: true,
-      tool: "searchBlocksByTag",
+      tool: "query_blocks",
       args: { tag_query: tagMatch ? tagMatch[0] : "#" },
       reasoning: "问题包含标签，需要按标签搜索相关笔记",
       expectedInfo: `带有 ${tagMatch ? tagMatch[0] : "标签"} 的笔记`,
@@ -692,7 +688,7 @@ function buildDefaultPlan(userQuery: string, enableWebSearch: boolean = false): 
   
   return {
     needsRetrieval: true,
-    tool: "searchBlocksByText",
+    tool: "query_blocks",
     args: { query: keywords || userQuery.substring(0, 20) },
     reasoning: "需要在笔记中搜索相关内容",
     expectedInfo: `包含关键词 "${keywords || userQuery.substring(0, 20)}" 的笔记`,
@@ -1060,17 +1056,18 @@ export function getToolDisplayName(toolName: string): string {
     return getSkillDisplayName(toolName);
   }
   const names: Record<string, string> = {
-    searchBlocksByTag: "搜索标签",
-    searchBlocksByText: "全文搜索",
-    query_blocks_by_tag: "标签属性查询",
     query_blocks: "组合查询",
-    getRecentJournals: "获取最近日记",
-    getTodayJournal: "获取今日日记",
-    getJournalByDate: "获取指定日期日记",
-    getJournalsByDateRange: "获取日期范围日记",
-    searchBlocksByReference: "搜索引用",
-    getPage: "读取页面",
-    getBlock: "读取块",
+    get_blocks_text: "读取块内容",
+    get_page: "查找页面",
+    get_today_journal: "获取今日日记",
+    get_tags_and_pages: "标签与页面",
+    insert_markdown: "插入内容",
+    insert_tags: "添加标签",
+    create_page: "创建页面",
+    create_tags: "创建标签",
+    move_blocks: "移动块",
+    delete_blocks: "删除块",
+    remove_tags: "移除标签",
     webSearch: "联网搜索",
   };
   return names[toolName] || toolName;

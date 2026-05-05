@@ -71,98 +71,18 @@ const SKILL_CONFIG: ToolDisplayConfig = {
  */
 const TOOL_CONFIGS: Record<string, ToolDisplayConfig> = {
   // ─────────────────────────────────────────────────────────────────────────────
-  // Create Tools (✨ sparkle animation)
+  // Orca Note 原生 MCP 工具
   // ─────────────────────────────────────────────────────────────────────────────
-  createBlock: {
-    category: "create",
-    icon: "✨",
-    animation: "sparkle",
-    displayName: "创建块",
-    loadingText: "正在创建块...",
-    successText: "已创建新块",
-    successIcon: "✅",
-  },
-  createPage: {
-    category: "create",
-    icon: "✨",
-    animation: "sparkle",
-    displayName: "创建页面",
-    loadingText: "正在创建页面...",
-    successText: "已创建页面",
-    successIcon: "✅",
-  },
-  insertTag: {
-    category: "create",
-    icon: "✨",
-    animation: "sparkle",
-    displayName: "添加标签",
-    loadingText: "正在添加标签...",
-    successText: "已添加标签",
-    successIcon: "✅",
-  },
-  updateTagProperties: {
-    category: "create",
-    icon: "✨",
-    animation: "sparkle",
-    displayName: "更新标签属性",
-    loadingText: "正在更新标签属性...",
-    successText: "已更新标签属性",
-    successIcon: "✅",
-  },
-
-  // ─────────────────────────────────────────────────────────────────────────────
-  // Search Tools (🔍 pulse animation)
-  // ─────────────────────────────────────────────────────────────────────────────
-  searchNotes: {
-    category: "search",
-    icon: "🔍",
-    animation: "pulse",
-    displayName: "全文搜索",
-    loadingText: "正在搜索文本...",
-    successText: "搜索完成",
-    successIcon: "✅",
-  },
-  queryByTagProperty: {
-    category: "search",
-    icon: "🔍",
-    animation: "pulse",
-    displayName: "标签属性查询",
-    loadingText: "正在查询标签属性...",
-    successText: "查询完成",
-    successIcon: "✅",
-  },
-  query_blocks: {
-    category: "search",
-    icon: "🔍",
-    animation: "pulse",
-    displayName: "高级查询",
-    loadingText: "正在高级查询...",
-    successText: "查询完成",
-    successIcon: "✅",
-  },
-  searchBlocksByReference: {
-    category: "search",
-    icon: "🔍",
-    animation: "pulse",
-    displayName: "反链搜索",
-    loadingText: "正在搜索引用...",
-    successText: "搜索完成",
-    successIcon: "✅",
-  },
-
-  // ─────────────────────────────────────────────────────────────────────────────
-  // Query Tools (📖 flip animation)
-  // ─────────────────────────────────────────────────────────────────────────────
-  getPage: {
+  get_today_journal: {
     category: "query",
-    icon: "📖",
+    icon: "📅",
     animation: "flip",
-    displayName: "读取页面",
-    loadingText: "正在获取页面...",
-    successText: "已获取页面",
+    displayName: "今日日志",
+    loadingText: "正在获取今日日志...",
+    successText: "已获取今日日志",
     successIcon: "✅",
   },
-  getBlocksText: {
+  get_blocks_text: {
     category: "query",
     icon: "📖",
     animation: "flip",
@@ -171,51 +91,97 @@ const TOOL_CONFIGS: Record<string, ToolDisplayConfig> = {
     successText: "已获取块内容",
     successIcon: "✅",
   },
-  getBlockMeta: {
+  get_page: {
     category: "query",
-    icon: "📖",
+    icon: "📄",
     animation: "flip",
-    displayName: "获取元数据",
-    loadingText: "正在获取元数据...",
-    successText: "已获取元数据",
+    displayName: "查找页面",
+    loadingText: "正在查找页面...",
+    successText: "已找到页面",
     successIcon: "✅",
   },
-  getTodayJournal: {
-    category: "query",
-    icon: "📖",
-    animation: "flip",
-    displayName: "今日日记",
-    loadingText: "正在获取今日日记...",
-    successText: "已获取日记",
+  get_tags_and_pages: {
+    category: "search",
+    icon: "🏷️",
+    animation: "pulse",
+    displayName: "标签页面列表",
+    loadingText: "正在获取标签和页面...",
+    successText: "已获取列表",
     successIcon: "✅",
   },
-  getJournalByDate: {
-    category: "query",
-    icon: "📅",
-    animation: "flip",
-    displayName: "指定日期日记",
-    loadingText: "正在获取指定日期日记...",
-    successText: "已获取日记",
+  insert_markdown: {
+    category: "create",
+    icon: "✨",
+    animation: "sparkle",
+    displayName: "插入内容",
+    loadingText: "正在插入内容...",
+    successText: "内容已插入",
     successIcon: "✅",
   },
-  getJournals: {
-    category: "query",
-    icon: "📆",
-    animation: "flip",
-    displayName: "日记范围查询",
-    loadingText: "正在获取日记范围...",
-    successText: "已获取日记",
+  insert_tags: {
+    category: "create",
+    icon: "✨",
+    animation: "sparkle",
+    displayName: "添加标签",
+    loadingText: "正在添加标签...",
+    successText: "标签已添加",
     successIcon: "✅",
   },
-  getBlockLinks: {
-    category: "query",
-    icon: "🔗",
-    animation: "flip",
-    displayName: "链接图谱",
-    loadingText: "正在获取链接关系...",
-    successText: "已获取链接图谱",
+  create_page: {
+    category: "create",
+    icon: "✨",
+    animation: "sparkle",
+    displayName: "创建页面",
+    loadingText: "正在创建页面...",
+    successText: "页面已创建",
     successIcon: "✅",
   },
+  create_tags: {
+    category: "create",
+    icon: "✨",
+    animation: "sparkle",
+    displayName: "创建标签定义",
+    loadingText: "正在创建标签定义...",
+    successText: "标签定义已创建",
+    successIcon: "✅",
+  },
+  move_blocks: {
+    category: "create",
+    icon: "📦",
+    animation: "pulse",
+    displayName: "移动块",
+    loadingText: "正在移动块...",
+    successText: "块已移动",
+    successIcon: "✅",
+  },
+  delete_blocks: {
+    category: "create",
+    icon: "🗑️",
+    animation: "pulse",
+    displayName: "删除块",
+    loadingText: "正在删除块...",
+    successText: "块已删除",
+    successIcon: "✅",
+  },
+  remove_tags: {
+    category: "create",
+    icon: "🏷️",
+    animation: "pulse",
+    displayName: "移除标签",
+    loadingText: "正在移除标签...",
+    successText: "标签已移除",
+    successIcon: "✅",
+  },
+  query_blocks: {
+    category: "search",
+    icon: "🔍",
+    animation: "pulse",
+    displayName: "高级查询",
+    loadingText: "正在查询...",
+    successText: "查询完成",
+    successIcon: "✅",
+  },
+
   getSavedAiConversations: {
     category: "query",
     icon: "💬",
@@ -268,13 +234,13 @@ export function generateResultSummary(toolName: string, result: string): string 
     // Create results - show success message
     if (config.category === "create") {
       if (parsed.success) {
-        if (toolName === "createBlock" && parsed.blockId) {
+        if (toolName === "insert_markdown" && parsed.blockId) {
           return `已创建块 #${parsed.blockId}`;
         }
-        if (toolName === "createPage" && parsed.pageName) {
+        if (toolName === "create_page" && parsed.pageName) {
           return `已创建页面「${parsed.pageName}」`;
         }
-        if (toolName === "insertTag" && parsed.tagName) {
+        if (toolName === "insert_tags" && parsed.tagName) {
           return `已添加标签 #${parsed.tagName}`;
         }
         return config.successText;

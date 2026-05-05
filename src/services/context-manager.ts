@@ -183,7 +183,7 @@ function createSummaryMessage(
 function defaultSummarizer(messages: OpenAIChatMessage[]): string {
   const points: string[] = [];
 
-  // Extract user questions/requests
+  // Extract user questions/requests (longer excerpts)
   const userMessages = messages.filter((m) => m.role === "user");
   if (userMessages.length > 0) {
     const topics = userMessages
@@ -192,47 +192,68 @@ function defaultSummarizer(messages: OpenAIChatMessage[]): string {
           typeof m.content === "string"
             ? m.content
             : ((m.content as unknown) as any[] | undefined)?.find((p: any) => p.type === "text")?.text || "";
-        // Take first 100 chars as topic
-        return content.slice(0, 100).trim();
+        return content.slice(0, 200).trim();
       })
       .filter((t) => t.length > 0);
 
     if (topics.length > 0) {
-      points.push(`用户讨论的主题: ${topics.slice(0, 3).join("; ")}`);
+      points.push(`用户讨论: ${topics.slice(0, 5).join(" | ")}`);
     }
   }
 
-  // Extract assistant key actions
+  // Extract tool calls with results summary
   const assistantMessages = messages.filter((m) => m.role === "assistant");
   const toolCalls = assistantMessages.flatMap((m) => m.tool_calls || []);
-  if (toolCalls.length > 0) {
-    const toolNames = [...new Set(toolCalls.map((tc) => tc.function?.name).filter(Boolean))];
-    points.push(`使用的工具: ${toolNames.join(", ")}`);
-  }
-
-  // Extract tool results summary
   const toolResults = messages.filter((m) => m.role === "tool");
-  if (toolResults.length > 0) {
-    points.push(`工具调用次数: ${toolResults.length}`);
+
+  if (toolCalls.length > 0 || toolResults.length > 0) {
+    const toolCallNames = [...new Set(toolCalls.map((tc) => tc.function?.name).filter(Boolean))];
+    const toolSummary: string[] = [];
+    if (toolCallNames.length > 0) {
+      toolSummary.push(`调用工具: ${toolCallNames.join(", ")}`);
+    }
+    // Include key data from tool results
+    const resultPreviews: string[] = [];
+    for (const tr of toolResults.slice(0, 5)) {
+      const content = typeof tr.content === "string" ? tr.content : "";
+      if (content.length > 0) {
+        // Extract success/error and first data
+        try {
+          const parsed = JSON.parse(content);
+          const preview: any = {};
+          if (parsed.success !== undefined) preview.success = parsed.success;
+          if (parsed.totalCount !== undefined) preview.totalCount = parsed.totalCount;
+          if (parsed.error) preview.error = parsed.error;
+          if (parsed.message) preview.message = parsed.message;
+          resultPreviews.push(JSON.stringify(preview));
+        } catch {
+          resultPreviews.push(content.slice(0, 100));
+        }
+      }
+    }
+    if (resultPreviews.length > 0) {
+      toolSummary.push(`工具结果: ${resultPreviews.join("; ")}`);
+    }
+    points.push(toolSummary.join(" | "));
   }
 
   // Include abbreviated key exchanges
   const keyExchanges: string[] = [];
-  for (let i = 0; i < Math.min(messages.length, 6); i += 2) {
+  for (let i = 0; i < Math.min(messages.length, 8); i += 2) {
     const userMsg = messages[i];
     const assistantMsg = messages[i + 1];
 
     if (userMsg?.role === "user") {
       const userContent =
         typeof userMsg.content === "string"
-          ? userMsg.content.slice(0, 80)
+          ? userMsg.content.slice(0, 150)
           : "[complex content]";
       let exchangeText = `Q: ${userContent}`;
 
       if (assistantMsg?.role === "assistant") {
         const assistantContent =
           typeof assistantMsg.content === "string"
-            ? assistantMsg.content.slice(0, 80)
+            ? assistantMsg.content.slice(0, 150)
             : assistantMsg.tool_calls
             ? `[called: ${assistantMsg.tool_calls.map((t) => t.function?.name).join(", ")}]`
             : "[complex response]";
