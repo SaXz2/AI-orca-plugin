@@ -120,8 +120,14 @@ export default function McpServerSettingsModal({ isOpen, onClose }: Props) {
     setNewServer(null);
   };
 
-  const handleDelete = (serverId: string) => {
-    disconnectFromServer(serverId).catch(() => {});
+  const handleDelete = async (serverId: string) => {
+    // 先断开连接，再删除配置
+    try {
+      await disconnectFromServer(serverId);
+    } catch (e: any) {
+      orca.notify("warn", `断开服务器失败: ${e?.message || "未知错误"}`);
+      // 即使断开失败，仍然删除配置（用户主动操作）
+    }
     removeMcpServer(serverId);
     if (expandedServer === serverId) setExpandedServer(null);
   };

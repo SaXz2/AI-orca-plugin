@@ -7,6 +7,7 @@
 
 import { proxy } from "valtio";
 import type { MCPServerConfig } from "../services/mcp-client";
+import type { OpenAITool } from "../services/openai-client";
 
 // ─── 类型 ────────────────────────────────────────────────────────────────────
 
@@ -24,6 +25,8 @@ interface MCPStore {
   serverStatuses: Record<string, MCPServerStatus>;
   /** 被禁用的 MCP 工具名（openaiName 格式: mcp__<serverId>__<toolName>） */
   disabledTools: string[];
+  /** 所有已发现的外部 MCP 工具（运行时缓存，不持久化） */
+  discoveredTools: OpenAITool[];
 }
 
 // ─── Store ───────────────────────────────────────────────────────────────────
@@ -32,6 +35,7 @@ export const mcpStore = proxy<MCPStore>({
   servers: [],
   serverStatuses: {},
   disabledTools: [],
+  discoveredTools: [],
 });
 
 // ─── 默认配置 ────────────────────────────────────────────────────────────────
@@ -49,6 +53,10 @@ const DEFAULT_MCP_SERVER: MCPServerConfig = {
 const STORAGE_KEY = "ai-chat-mcp-servers";
 const DISABLED_KEY = "ai-chat-mcp-disabled-tools";
 
+let saveMcpTimer: ReturnType<typeof setTimeout> | null = null;
+let saveDisabledTimer: ReturnType<typeof setTimeout> | null = null;
+const DEBOUNCE_MS = 400;
+
 async function saveMcpSettings(): Promise<void> {
   try {
     const data = JSON.stringify(mcpStore.servers);
@@ -59,6 +67,11 @@ async function saveMcpSettings(): Promise<void> {
   }
 }
 
+function saveMcpSettingsDebounced(): void {
+  if (saveMcpTimer) clearTimeout(saveMcpTimer);
+  saveMcpTimer = setTimeout(() => saveMcpSettings(), DEBOUNCE_MS);
+}
+
 async function saveDisabledTools(): Promise<void> {
   try {
     const data = JSON.stringify(mcpStore.disabledTools);
@@ -67,6 +80,11 @@ async function saveDisabledTools(): Promise<void> {
   } catch (e) {
     console.warn("[MCP Store] 保存禁用工具失败:", e);
   }
+}
+
+function saveDisabledToolsDebounced(): void {
+  if (saveDisabledTimer) clearTimeout(saveDisabledTimer);
+  saveDisabledTimer = setTimeout(() => saveDisabledTools(), DEBOUNCE_MS);
 }
 
 export async function loadMcpSettings(): Promise<void> {
@@ -120,6 +138,7 @@ export function addMcpServer(config: MCPServerConfig): void {
 export function removeMcpServer(id: string): void {
   mcpStore.servers = mcpStore.servers.filter((s) => s.id !== id);
   delete mcpStore.serverStatuses[id];
+  removeDiscoveredToolsForServer(id);
   saveMcpSettings();
 }
 
@@ -127,7 +146,7 @@ export function updateMcpServer(id: string, patch: Partial<MCPServerConfig>): vo
   const idx = mcpStore.servers.findIndex((s) => s.id === id);
   if (idx === -1) return;
   mcpStore.servers[idx] = { ...mcpStore.servers[idx], ...patch };
-  saveMcpSettings();
+  saveMcpSettingsDebounced();
 }
 
 export function setServerStatus(id: string, status: Partial<MCPServerStatus>): void {
@@ -141,6 +160,41 @@ export function setServerStatus(id: string, status: Partial<MCPServerStatus>): v
 
 export function getMcpServers(): MCPServerConfig[] {
   return mcpStore.servers;
+}
+
+// ─── 已发现工具缓存 ───────────────────────────────────────────────────────────
+
+/** 替换指定服务器的已发现工具 */
+export function setDiscoveredToolsForServer(serverId: string, tools: OpenAITool[]): void {
+  // 辅助函数放在内部避免循环导入
+  const prefix = `mcp__`;
+  mcpStore.discoveredTools = [
+    ...mcpStore.discoveredTools.filter((t) => {
+      const name = t.function.name;
+      if (!name.startsWith(prefix)) return true;
+      const rest = name.slice(prefix.length);
+      const sep = rest.indexOf("__");
+      return sep === -1 || rest.slice(0, sep) !== serverId;
+    }),
+    ...tools,
+  ];
+}
+
+/** 移除指定服务器的所有已发现工具 */
+export function removeDiscoveredToolsForServer(serverId: string): void {
+  const prefix = `mcp__`;
+  mcpStore.discoveredTools = mcpStore.discoveredTools.filter((t) => {
+    const name = t.function.name;
+    if (!name.startsWith(prefix)) return true;
+    const rest = name.slice(prefix.length);
+    const sep = rest.indexOf("__");
+    return sep === -1 || rest.slice(0, sep) !== serverId;
+  });
+}
+
+/** 获取所有已发现工具（不过滤禁用） */
+export function getDiscoveredTools(): OpenAITool[] {
+  return mcpStore.discoveredTools;
 }
 
 // ─── 工具启用/禁用 ───────────────────────────────────────────────────────────
@@ -157,7 +211,7 @@ export function setMcpToolDisabled(toolName: string, disabled: boolean): void {
   } else {
     mcpStore.disabledTools = mcpStore.disabledTools.filter((t) => t !== toolName);
   }
-  saveDisabledTools();
+  saveDisabledToolsDebounced();
 }
 
 /** 切换工具的启用/禁用状态 */

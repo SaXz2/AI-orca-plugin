@@ -72,9 +72,13 @@ export function createMCPClient(config: MCPServerConfig) {
   let nextId = 1;
   let sessionId: string | null = null;
 
+  const isNotification = (method: string) => method.startsWith("notifications/");
+
   async function sendRequest(method: string, params?: any): Promise<any> {
-    const id = nextId++;
-    const body: MCPRequest = { jsonrpc: "2.0", method, params, id };
+    // 通知类方法不包含 id 字段（MCP 规范）
+    const body: any = isNotification(method)
+      ? { jsonrpc: "2.0", method, params }
+      : { jsonrpc: "2.0", method, params, id: nextId++ };
 
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
@@ -101,10 +105,15 @@ export function createMCPClient(config: MCPServerConfig) {
     }
 
     if (!response.ok) {
+      // 通知类方法即使返回错误也不阻塞（调用方会 try/catch）
+      if (isNotification(method)) return undefined;
       const errorText = await response.text().catch(() => "");
       const detail = errorText ? ` — ${errorText.slice(0, 200)}` : "";
       throw new Error(`MCP HTTP ${response.status}: ${response.statusText}${detail}`);
     }
+
+    // 通知类方法无需解析响应体
+    if (isNotification(method)) return undefined;
 
     const contentType = response.headers.get("Content-Type") || "";
 
