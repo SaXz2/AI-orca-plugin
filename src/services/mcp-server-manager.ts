@@ -5,6 +5,7 @@
  * - 连接/断开服务器
  * - 发现远程工具并转换为 OpenAI function-calling 格式
  * - 路由工具调用到对应的远程服务器
+ * - 工具启用/禁用过滤
  */
 
 import type { OpenAITool } from "./openai-client";
@@ -17,6 +18,7 @@ import {
   mcpStore,
   loadMcpSettings,
   setServerStatus,
+  isMcpToolDisabled,
 } from "../store/mcp-store";
 
 // ─── 工具名命名空间 ──────────────────────────────────────────────────────────
@@ -47,7 +49,7 @@ const toolRegistry = new Map<string, { serverId: string; originalName: string }>
 // serverId → MCPClient
 const activeConnections = new Map<string, ReturnType<typeof createMCPClient>>();
 
-// 缓存的 OpenAITool[]，供 getTools() 同步读取
+// 缓存完整 OpenAITool[]（含被禁用的），getAllDiscoveredTools 从中过滤
 let cachedMcpOpenAITools: OpenAITool[] = [];
 
 // ─── Schema 转换 ─────────────────────────────────────────────────────────────
@@ -80,22 +82,36 @@ function convertMCPToolToOpenAI(
   return openaiTool;
 }
 
-// ─── 缓存重建 ────────────────────────────────────────────────────────────────
-
-function rebuildCachedTools(): void {
-  const tools: OpenAITool[] = [];
-  for (const [name, { serverId }] of toolRegistry) {
-    // 从 toolRegistry 无法重建完整 schema，但 getAllDiscoveredTools()
-    // 只在 init 阶段被 getTools() 调用，此时缓存已在 connectToServer 中填充
-  }
-  // 实际缓存在 connectToServer 中填充
-}
-
 // ─── 公共 API ────────────────────────────────────────────────────────────────
 
-/** 获取所有已发现的外部 MCP 工具（同步） */
+/** 获取所有已发现的外部 MCP 工具（已过滤禁用的） */
 export function getAllDiscoveredTools(): OpenAITool[] {
-  return cachedMcpOpenAITools;
+  return cachedMcpOpenAITools.filter(
+    (t) => !isMcpToolDisabled(t.function.name)
+  );
+}
+
+/** 获取指定服务器的所有工具（含启用/禁用状态） */
+export function getToolsForServer(serverId: string): Array<{
+  name: string;
+  originalName: string;
+  description: string;
+  enabled: boolean;
+}> {
+  return cachedMcpOpenAITools
+    .filter((t) => {
+      const parsed = parseMcpOpenAIName(t.function.name);
+      return parsed?.serverId === serverId;
+    })
+    .map((t) => {
+      const parsed = parseMcpOpenAIName(t.function.name)!;
+      return {
+        name: t.function.name,
+        originalName: parsed.originalName,
+        description: t.function.description,
+        enabled: !isMcpToolDisabled(t.function.name),
+      };
+    });
 }
 
 /** 检查工具名是否为外部 MCP 工具 */
@@ -176,7 +192,7 @@ export async function connectToServer(serverId: string): Promise<void> {
       lastErrorAt: Date.now(),
     });
     console.warn(`[MCP] 服务器 "${server.name}" 连接失败:`, err?.message);
-    // 不抛出，由 Promise.allSettled 处理
+    throw err; // 让调用方（initMcpServers）知道失败
   }
 }
 
@@ -190,22 +206,17 @@ export async function disconnectFromServer(serverId: string): Promise<void> {
 
   // 从注册表和缓存中移除该服务器的工具
   for (const [name, entry] of toolRegistry) {
-    if (entry.serverId === serverId) {
-      toolRegistry.delete(name);
-    }
+    if (entry.serverId === serverId) toolRegistry.delete(name);
   }
   cachedMcpOpenAITools = cachedMcpOpenAITools.filter((t) => {
     const parsed = parseMcpOpenAIName(t.function.name);
     return parsed?.serverId !== serverId;
   });
 
-  setServerStatus(serverId, {
-    connected: false,
-    toolCount: 0,
-  });
+  setServerStatus(serverId, { connected: false, toolCount: 0 });
 }
 
-/** 初始化所有已配置的 MCP 服务器（不阻塞） */
+/** 初始化所有已配置的 MCP 服务器 */
 export async function initMcpServers(): Promise<void> {
   await loadMcpSettings();
 

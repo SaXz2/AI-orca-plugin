@@ -1,10 +1,10 @@
 /**
- * MCP JSON-RPC 2.0 HTTP 客户端
+ * MCP JSON-RPC 2.0 HTTP 客户端（Streamable HTTP 传输）
  *
- * 纯 HTTP 传输层，实现标准 MCP 协议：
- * - initialize → 握手协商协议版本和能力
- * - tools/list → 发现远程工具
- * - tools/call → 调用远程工具
+ * 实现 MCP Streamable HTTP 协议（2025 规范）：
+ * - Accept: application/json, text/event-stream
+ * - Mcp-Session-Id 会话管理
+ * - SSE 响应解析（用于 tools/call 流式返回）
  *
  * 不依赖 Valtio / React，可独立测试。
  */
@@ -43,36 +43,95 @@ interface MCPResponse {
   id: number;
 }
 
+// ─── SSE 解析 ────────────────────────────────────────────────────────────────
+
+/**
+ * 从 SSE 文本流中提取第一个 data 事件的 JSON
+ * SSE 格式: "data: {...}\n\n"
+ */
+function parseSSEResponse(text: string): any {
+  const lines = text.split("\n");
+  for (const line of lines) {
+    if (line.startsWith("data: ")) {
+      const jsonStr = line.slice(6);
+      try {
+        return JSON.parse(jsonStr);
+      } catch {
+        // 继续尝试下一个 data 行
+      }
+    }
+  }
+  throw new Error("SSE 响应中未找到有效的 JSON 数据");
+}
+
 // ─── 客户端工厂 ──────────────────────────────────────────────────────────────
 
-const REQUEST_TIMEOUT_MS = 10000;
+const REQUEST_TIMEOUT_MS = 30000; // 30s，工具调用可能需要更长时间
 
 export function createMCPClient(config: MCPServerConfig) {
   let nextId = 1;
+  let sessionId: string | null = null;
 
   async function sendRequest(method: string, params?: any): Promise<any> {
     const id = nextId++;
     const body: MCPRequest = { jsonrpc: "2.0", method, params, id };
 
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      "Accept": "application/json, text/event-stream",
+      ...config.headers,
+    };
+
+    // 回传会话 ID
+    if (sessionId) {
+      headers["Mcp-Session-Id"] = sessionId;
+    }
+
     const response = await fetch(config.url, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...config.headers,
-      },
+      headers,
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
 
-    if (!response.ok) {
-      throw new Error(`MCP HTTP ${response.status}: ${response.statusText}`);
+    // 提取/更新会话 ID
+    const newSessionId = response.headers.get("Mcp-Session-Id") || response.headers.get("mcp-session-id");
+    if (newSessionId) {
+      sessionId = newSessionId;
     }
 
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => "");
+      const detail = errorText ? ` — ${errorText.slice(0, 200)}` : "";
+      throw new Error(`MCP HTTP ${response.status}: ${response.statusText}${detail}`);
+    }
+
+    const contentType = response.headers.get("Content-Type") || "";
+
+    // ── SSE 响应（text/event-stream）───────────────────────────────
+    if (contentType.includes("text/event-stream")) {
+      const text = await response.text();
+      const data = parseSSEResponse(text);
+
+      if (data.error) {
+        throw new Error(`MCP error ${data.error.code}: ${data.error.message}`);
+      }
+      return data.result;
+    }
+
+    // ── JSON 响应 ──────────────────────────────────────────────────
     let data: MCPResponse;
     try {
       data = await response.json();
     } catch {
-      throw new Error("MCP 响应 JSON 解析失败");
+      // 尝试按 SSE 解析纯文本
+      const text = await response.text().catch(() => "");
+      if (text.includes("data: ")) {
+        const sseData = parseSSEResponse(text);
+        if (sseData.error) throw new Error(`MCP error ${sseData.error.code}: ${sseData.error.message}`);
+        return sseData.result;
+      }
+      throw new Error("MCP 响应解析失败");
     }
 
     if (data.error) {
@@ -87,12 +146,16 @@ export function createMCPClient(config: MCPServerConfig) {
 
     async initialize(): Promise<void> {
       await sendRequest("initialize", {
-        protocolVersion: "2024-11-05",
+        protocolVersion: "2025-03-26",
         capabilities: {},
         clientInfo: { name: "orca-ai-chat", version: "1.0.0" },
       });
-      // 发送 initialized 通知（无需等待响应）
-      await sendRequest("notifications/initialized", {});
+      // initialized 通知 — 部分服务器不支持，失败不阻塞
+      try {
+        await sendRequest("notifications/initialized", {});
+      } catch {
+        // 忽略：服务器可能未实现此通知
+      }
     },
 
     async listTools(): Promise<MCPToolDefinition[]> {
@@ -105,7 +168,7 @@ export function createMCPClient(config: MCPServerConfig) {
     },
 
     close(): void {
-      // HTTP 客户端无需显式断开连接
+      sessionId = null;
     },
   };
 }
