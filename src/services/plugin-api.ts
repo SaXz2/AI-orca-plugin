@@ -24,7 +24,7 @@ import { getAiChatSettings, getModelApiConfig, validateCurrentConfig, DEFAULT_SY
 import { getAiChatPluginName } from "../ui/ai-chat-ui";
 import { buildConversationMessages } from "./message-builder";
 import { streamChatWithRetry, type StreamChunk, type ToolCallInfo } from "./chat-stream-handler";
-import { TOOLS, executeTool } from "./ai-tools";
+import { TOOLS, executeTool, getTools } from "./ai-tools";
 import type { Message } from "./session-service";
 import { nowId } from "../utils/text-utils";
 
@@ -175,7 +175,6 @@ export const AiChatPluginAPI = {
       model = settings.selectedModelId,
       systemPrompt = DEFAULT_SYSTEM_PROMPT,
       enableTools = true,
-      tools = TOOLS,
       temperature = settings.temperature,
       maxTokens = settings.maxTokens,
       history = [],
@@ -184,6 +183,9 @@ export const AiChatPluginAPI = {
       maxToolRounds = settings.maxToolRounds || 5,
       signal,
     } = options;
+
+    // 动态获取工具列表（包含外部 MCP 工具）
+    const tools = options.tools ?? getTools();
 
     // 获取 API 配置
     const apiConfig = getModelApiConfig(settings, model);
@@ -390,7 +392,7 @@ export const AiChatPluginAPI = {
    * @returns 工具定义列表
    */
   getAvailableTools() {
-    return TOOLS.map(tool => ({
+    return getTools().map(tool => ({
       name: tool.function.name,
       description: tool.function.description,
       parameters: tool.function.parameters,

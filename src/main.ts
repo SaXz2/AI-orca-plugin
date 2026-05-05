@@ -6,6 +6,8 @@ import { AiChatPluginAPI } from "./services/plugin-api";
 import { ensureBuiltInSkills } from "./services/skills-manager";
 import { initCommands } from "./services/commands-loader";
 import { loadVisionModelConfig } from "./services/vision-model-service";
+import { initMcpServers } from "./services/mcp-server-manager";
+import { loadMcpSettings, ensureDefaultMcpServer } from "./store/mcp-store";
 
 let pluginName: string;
 let hideableObserver: MutationObserver | null = null;
@@ -97,6 +99,11 @@ export async function load(_name: string) {
 
   // 初始化 Commands 目录（确保默认命令模板存在）
   await initCommands();
+
+  // 初始化 MCP 服务器连接（非阻塞，允许失败）
+  await loadMcpSettings();
+  ensureDefaultMcpServer();
+  initMcpServers().catch((err) => console.warn("[MCP] 初始化出错:", err));
 
   // 挂载 Plugin API 到全局，供外部插件调用
   (window as any).AiChatPluginAPI = AiChatPluginAPI;

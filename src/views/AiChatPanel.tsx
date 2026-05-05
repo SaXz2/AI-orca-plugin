@@ -31,6 +31,7 @@ import GlobalImagePreview from "../components/GlobalImagePreview";
 import TodoistModals from "./TodoistModals";
 import TodoistSettingsModal from "./TodoistSettingsModal";
 import SkillManagerModal from "./SkillManagerModal";
+import McpServerSettingsModal from "./McpServerSettingsModal";
 import { todoistModalStore } from "../store/todoist-store";
 import { injectChatStyles } from "../styles/chat-animations";
 import {
@@ -383,6 +384,9 @@ export default function AiChatPanel({ panelId }: PanelProps) {
 
   // Todoist settings modal state
   const [showTodoistSettings, setShowTodoistSettings] = useState(false);
+
+  // MCP server settings modal state
+  const [showMcpSettings, setShowMcpSettings] = useState(false);
 
   // Python server state
   const [pythonServerStatus, setPythonServerStatus] = useState<"running" | "stopped" | "starting">("stopped");
@@ -3509,6 +3513,7 @@ ${userInput}`;
         onOpenWebSearchSettings: () => setShowWebSearchSettings(true),
         onOpenVisionModelSettings: () => setShowVisionModelSettings(true),
         onOpenTodoistSettings: () => setShowTodoistSettings(true),
+        onOpenMcpSettings: () => setShowMcpSettings(true),
         onStartPythonServer: handleStartPythonServer,
         onStopPythonServer: handleStopPythonServer,
         pythonServerStatus,
@@ -3619,6 +3624,11 @@ ${userInput}`;
     createElement(TodoistSettingsModal, {
       visible: showTodoistSettings,
       onClose: () => setShowTodoistSettings(false),
+    }),
+    // MCP Server Settings Modal
+    createElement(McpServerSettingsModal, {
+      isOpen: showMcpSettings,
+      onClose: () => setShowMcpSettings(false),
     }),
     // Global Image Preview Modal
     createElement(GlobalImagePreview),

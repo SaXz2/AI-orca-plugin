@@ -70,118 +70,6 @@ const SKILL_CONFIG: ToolDisplayConfig = {
  * Tool-specific display configurations
  */
 const TOOL_CONFIGS: Record<string, ToolDisplayConfig> = {
-  // ─────────────────────────────────────────────────────────────────────────────
-  // Orca Note 原生 MCP 工具
-  // ─────────────────────────────────────────────────────────────────────────────
-  get_today_journal: {
-    category: "query",
-    icon: "📅",
-    animation: "flip",
-    displayName: "今日日志",
-    loadingText: "正在获取今日日志...",
-    successText: "已获取今日日志",
-    successIcon: "✅",
-  },
-  get_blocks_text: {
-    category: "query",
-    icon: "📖",
-    animation: "flip",
-    displayName: "读取块内容",
-    loadingText: "正在获取块内容...",
-    successText: "已获取块内容",
-    successIcon: "✅",
-  },
-  get_page: {
-    category: "query",
-    icon: "📄",
-    animation: "flip",
-    displayName: "查找页面",
-    loadingText: "正在查找页面...",
-    successText: "已找到页面",
-    successIcon: "✅",
-  },
-  get_tags_and_pages: {
-    category: "search",
-    icon: "🏷️",
-    animation: "pulse",
-    displayName: "标签页面列表",
-    loadingText: "正在获取标签和页面...",
-    successText: "已获取列表",
-    successIcon: "✅",
-  },
-  insert_markdown: {
-    category: "create",
-    icon: "✨",
-    animation: "sparkle",
-    displayName: "插入内容",
-    loadingText: "正在插入内容...",
-    successText: "内容已插入",
-    successIcon: "✅",
-  },
-  insert_tags: {
-    category: "create",
-    icon: "✨",
-    animation: "sparkle",
-    displayName: "添加标签",
-    loadingText: "正在添加标签...",
-    successText: "标签已添加",
-    successIcon: "✅",
-  },
-  create_page: {
-    category: "create",
-    icon: "✨",
-    animation: "sparkle",
-    displayName: "创建页面",
-    loadingText: "正在创建页面...",
-    successText: "页面已创建",
-    successIcon: "✅",
-  },
-  create_tags: {
-    category: "create",
-    icon: "✨",
-    animation: "sparkle",
-    displayName: "创建标签定义",
-    loadingText: "正在创建标签定义...",
-    successText: "标签定义已创建",
-    successIcon: "✅",
-  },
-  move_blocks: {
-    category: "create",
-    icon: "📦",
-    animation: "pulse",
-    displayName: "移动块",
-    loadingText: "正在移动块...",
-    successText: "块已移动",
-    successIcon: "✅",
-  },
-  delete_blocks: {
-    category: "create",
-    icon: "🗑️",
-    animation: "pulse",
-    displayName: "删除块",
-    loadingText: "正在删除块...",
-    successText: "块已删除",
-    successIcon: "✅",
-  },
-  remove_tags: {
-    category: "create",
-    icon: "🏷️",
-    animation: "pulse",
-    displayName: "移除标签",
-    loadingText: "正在移除标签...",
-    successText: "标签已移除",
-    successIcon: "✅",
-  },
-  query_blocks: {
-    category: "search",
-    icon: "🔍",
-    animation: "pulse",
-    displayName: "高级查询",
-    loadingText: "正在查询...",
-    successText: "查询完成",
-    successIcon: "✅",
-  },
-
   getSavedAiConversations: {
     category: "query",
     icon: "💬",
@@ -193,6 +81,16 @@ const TOOL_CONFIGS: Record<string, ToolDisplayConfig> = {
   },
 };
 
+const MCP_CONFIG: ToolDisplayConfig = {
+  category: "query",
+  icon: "🔌",
+  animation: "pulse",
+  displayName: "外部工具",
+  loadingText: "正在调用外部工具...",
+  successText: "外部工具执行完成",
+  successIcon: "✅",
+};
+
 /**
  * Get display configuration for a tool
  * @param toolName - The name of the tool
@@ -201,6 +99,15 @@ const TOOL_CONFIGS: Record<string, ToolDisplayConfig> = {
 export function getToolDisplayConfig(toolName: string): ToolDisplayConfig {
   if (isSkillToolName(toolName)) {
     return { ...SKILL_CONFIG, displayName: getSkillDisplayName(toolName) };
+  }
+  if (toolName.startsWith("mcp__")) {
+    const parts = toolName.split("__");
+    const serverName = parts[1] ?? "external";
+    const toolShortName = parts.slice(2).join("__");
+    return {
+      ...MCP_CONFIG,
+      displayName: `${serverName}:${toolShortName}`,
+    };
   }
   return TOOL_CONFIGS[toolName] || DEFAULT_CONFIG;
 }

@@ -18,6 +18,7 @@ interface HeaderMenuProps {
   onOpenWebSearchSettings?: () => void;
   onOpenVisionModelSettings?: () => void;
   onOpenTodoistSettings?: () => void;
+  onOpenMcpSettings?: () => void;
   onStartPythonServer?: () => void;
   onStopPythonServer?: () => void;
   pythonServerStatus?: "running" | "stopped" | "starting";
@@ -40,6 +41,7 @@ export default function HeaderMenu({
   onOpenWebSearchSettings,
   onOpenVisionModelSettings,
   onOpenTodoistSettings,
+  onOpenMcpSettings,
   onStartPythonServer,
   onStopPythonServer,
   pythonServerStatus,
@@ -229,6 +231,18 @@ export default function HeaderMenu({
           },
           createElement("i", { className: "ti ti-checkbox" }),
           "Todoist"
+        ),
+        // MCP Server Settings
+        onOpenMcpSettings && createElement(
+          "div",
+          {
+            style: menuItemStyle,
+            onClick: () => handleItemClick(onOpenMcpSettings),
+            onMouseEnter: (e: any) => (e.currentTarget.style.background = "var(--orca-color-bg-2)"),
+            onMouseLeave: (e: any) => (e.currentTarget.style.background = "transparent"),
+          },
+          createElement("i", { className: "ti ti-plug-connected" }),
+          "MCP 服务器"
         ),
         // Python Server
         onStartPythonServer && createElement(

@@ -6,8 +6,11 @@
  */
 
 import type { OpenAITool } from "./openai-client";
-import { executeMcpTool, isMcpTool } from "./orca-mcp-executor";
-import { ORCA_MCP_TOOLS } from "./orca-mcp-tools";
+import {
+  getAllDiscoveredTools,
+  isExternalMcpTool,
+  callRemoteTool,
+} from "./mcp-server-manager";
 import type {
   QueryCondition,
   QueryCombineMode
@@ -271,14 +274,13 @@ export const TOOLS: OpenAITool[] = [
         properties: {
           toolName: {
             type: "string",
-            description: "工具名称，如 query_blocks、get_today_journal。",
+            description: "工具名称，如 webSearch、wikipedia 或以 mcp__ 开头的外部工具。",
           },
         },
         required: ["toolName"],
       },
     },
   },
-  ...ORCA_MCP_TOOLS,
 ];
 
 /**
@@ -457,7 +459,10 @@ export function getTools(
   const wikipediaOn = isWikipediaEnabled();
   const currencyOn = isCurrencyEnabled();
 
-  const tools: OpenAITool[] = [...ORCA_MCP_TOOLS];
+  const tools: OpenAITool[] = [];
+
+  // 外部 MCP 服务器工具（标准 MCP 协议）
+  tools.push(...getAllDiscoveredTools());
 
   if (webSearchOn) {
     tools.push(WEB_SEARCH_TOOL);
@@ -534,20 +539,12 @@ export const FLASHCARD_TOOL: OpenAITool = {
 /**
  * 搜索类工具名称列表 - 当用户拖入块时禁用这些工具
  * 因为用户已经明确指定了要讨论的块，不需要再搜索笔记
- * 注意：日记工具保留，用户可能同时问日记相关问题
- */
-const SEARCH_TOOL_NAMES = new Set([
-  "query_blocks",
-  "get_page",
-  "getSavedAiConversations",
-]);
-
 /**
  * 获取限制后的工具列表（当用户拖入块时使用）
  * 禁用搜索类工具，只保留读取和写入工具
  */
 export function getToolsForDraggedContext(): OpenAITool[] {
-  return ORCA_MCP_TOOLS.filter(tool => !SEARCH_TOOL_NAMES.has(tool.function.name));
+  return getAllDiscoveredTools();
 }
 
 /**
@@ -1000,14 +997,7 @@ function formatCountOnlyResult(
 
 function getToolDefinitionByName(toolName: string): OpenAITool | undefined {
   const normalized = toolName.trim();
-  const allTools: OpenAITool[] = [
-    ...TOOLS,
-    WEB_SEARCH_TOOL,
-    IMAGE_SEARCH_TOOL,
-    WIKIPEDIA_TOOL,
-    CURRENCY_TOOL,
-    ...getScriptAnalysisTools(),
-  ];
+  const allTools = getTools();
   return allTools.find((tool) => tool.function.name === normalized);
 }
 
@@ -1056,9 +1046,9 @@ function buildImageSearchConfig(webConfig: any, maxResults: number): ImageSearch
 
 export async function executeTool(toolName: string, args: any): Promise<string> {
   try {
-    // ─── Orca Note 原生 MCP 工具 ───────────────────────────────────────
-    if (isMcpTool(toolName)) {
-      return await executeMcpTool(toolName, args);
+    // ─── 外部 MCP 服务器工具（标准 MCP 协议） ──────────────────────────
+    if (isExternalMcpTool(toolName)) {
+      return await callRemoteTool(toolName, args);
     }
 
     // ─── 联网类工具 ───────────────────────────────────────────────────

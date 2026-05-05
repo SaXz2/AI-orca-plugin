@@ -36,53 +36,14 @@ export interface ToolCategory {
 }
 
 /**
- * 工具分类定义
+ * 工具分类定义（内建工具已移除，通过 MCP 外部工具提供）
  */
-export const TOOL_CATEGORIES: ToolCategory[] = [
-  {
-    name: "search",
-    label: "搜索",
-    tools: ["query_blocks"],
-  },
-  {
-    name: "read",
-    label: "读取",
-    tools: ["get_blocks_text", "get_page"],
-  },
-  {
-    name: "journal",
-    label: "日记",
-    tools: ["get_today_journal"],
-  },
-  {
-    name: "meta",
-    label: "元数据",
-    tools: ["get_tags_and_pages"],
-  },
-  {
-    name: "write",
-    label: "写入",
-    tools: ["insert_markdown", "insert_tags", "create_page", "create_tags", "move_blocks", "delete_blocks", "remove_tags"],
-  },
-];
+export const TOOL_CATEGORIES: ToolCategory[] = [];
 
 /**
- * 工具显示名称映射
+ * 工具显示名称映射（内建工具已移除，通过 MCP 外部工具提供）
  */
-export const TOOL_DISPLAY_NAMES: Record<string, string> = {
-  query_blocks: "高级查询",
-  get_blocks_text: "读取块内容",
-  get_page: "查找所属页面",
-  get_today_journal: "今日日志",
-  get_tags_and_pages: "标签与页面列表",
-  insert_markdown: "插入内容",
-  insert_tags: "添加标签",
-  create_page: "创建页面",
-  create_tags: "创建标签定义",
-  move_blocks: "移动块",
-  delete_blocks: "删除块",
-  remove_tags: "移除标签",
-};
+export const TOOL_DISPLAY_NAMES: Record<string, string> = {};
 
 /**
  * 默认工具状态
