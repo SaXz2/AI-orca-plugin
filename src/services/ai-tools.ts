@@ -32,6 +32,11 @@ import {
   getExchangeRates,
   formatExchangeRates,
 } from "./utility-tools";
+import {
+  TODOIST_TOOLS,
+  executeTodoistTool,
+  isTodoistTool,
+} from "./todoist-tools";
 
 // 辅助函数：从URL提取域名
 function extractDomain(url: string): string {
@@ -452,7 +457,8 @@ HKD(港币)、KRW(韩元)、TWD(台币)、AUD(澳元)、CAD(加元)等`,
  */
 export function getTools(
   webSearchEnabled?: boolean,
-  scriptAnalysisEnabled?: boolean
+  scriptAnalysisEnabled?: boolean,
+  todoistEnabled?: boolean
 ): OpenAITool[] {
   const webSearchOn = webSearchEnabled ?? isWebSearchEnabled();
   const imageSearchOn = isImageSearchEnabled();
@@ -473,6 +479,11 @@ export function getTools(
 
   if (scriptAnalysisEnabled ?? isScriptAnalysisEnabled()) {
     tools.push(...getScriptAnalysisTools());
+  }
+
+  // Todoist AI 模式（/todoist-ai 命令启用）
+  if (todoistEnabled) {
+    tools.push(...TODOIST_TOOLS);
   }
 
   return tools;
@@ -1049,6 +1060,11 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
     // ─── 外部 MCP 服务器工具（标准 MCP 协议） ──────────────────────────
     if (isExternalMcpTool(toolName)) {
       return await callRemoteTool(toolName, args);
+    }
+
+    // ─── Todoist 工具 ─────────────────────────────────────────────────
+    if (isTodoistTool(toolName)) {
+      return await executeTodoistTool(toolName, args);
     }
 
     // ─── 联网类工具 ───────────────────────────────────────────────────

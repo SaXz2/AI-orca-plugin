@@ -63,7 +63,7 @@ import {
 import { exportSessionAsFile, saveSessionToJournal, saveMessagesToJournal } from "../services/export-service";
 import { sessionStore, updateSessionStore, clearSessionStore } from "../store/session-store";
 import { FLASHCARD_TOOL, executeTool, getToolsForDraggedContext, getTools, extractSearchResultsFromToolResults, getSkillToolsAsync, getSkillInstructionsAsync, getSkillToolName, resolveSkillIdFromToolName } from "../services/ai-tools";
-import { TODOIST_TOOLS, executeTodoistTool, isTodoistTool } from "../services/todoist-tools";
+
 import { startPythonServer, stopPythonServer, getPythonServerStatus, browserAIChat, browserAIStatus as checkBrowserAIStatus } from "../services/python-runtime";
 import { getToolStatus, isToolDisabled, shouldAskForTool, isAgenticRAGEnabled, getAgenticRAGConfig } from "../store/tool-store";
 import { listSkills, getSkill, type Skill } from "../services/skills-manager";
@@ -1757,13 +1757,8 @@ graph TD
 
       let baseTools = hasHighPriorityContext
         ? getToolsForDraggedContext()
-        : getTools();
-      
-      // 如果启用了 Todoist AI 模式，注入 Todoist 工具
-      if (enableTodoistTools) {
-        baseTools = [...baseTools, ...TODOIST_TOOLS];
-      }
-      
+        : getTools(false, false, enableTodoistTools);
+
       const filteredTools = baseTools.filter(tool => !isToolDisabled(tool.function.name));
       
       // 检查模型是否支持原生 function calling
@@ -2294,13 +2289,8 @@ ${userInput}`;
                      setTimeout(() => reject(new Error(`Tool execution timed out after ${TOOL_TIMEOUT_MS / 1000}s`)), TOOL_TIMEOUT_MS);
                    });
                    
-                   // 检查是否是 Todoist 工具
-                   const toolExecutor = isTodoistTool(toolName) 
-                     ? executeTodoistTool(toolName, args)
-                     : executeTool(toolName, args);
-                   
                    result = await Promise.race([
-                     toolExecutor,
+                     executeTool(toolName, args),
                      timeoutPromise
                    ]);
                  } catch (err: any) {
