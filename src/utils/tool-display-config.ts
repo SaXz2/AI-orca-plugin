@@ -6,6 +6,7 @@
  */
 
 import { skillToolNameToSkillIdCache } from "../services/ai-tools";
+import { TOOL_DISPLAY_NAMES } from "../store/tool-store";
 
 // 检查是否是 Skill 工具
 function isSkillToolName(toolName: string): boolean {
@@ -101,6 +102,11 @@ export function getToolDisplayConfig(toolName: string): ToolDisplayConfig {
     return { ...SKILL_CONFIG, displayName: getSkillDisplayName(toolName) };
   }
   if (toolName.startsWith("mcp__")) {
+    // 优先使用注册的显示名称
+    const registeredName = TOOL_DISPLAY_NAMES[toolName];
+    if (registeredName) {
+      return { ...MCP_CONFIG, displayName: registeredName };
+    }
     const parts = toolName.split("__");
     const serverName = parts[1] ?? "external";
     const toolShortName = parts.slice(2).join("__");

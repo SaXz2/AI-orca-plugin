@@ -302,17 +302,50 @@ export default function ChatHistoryMenu({
   }, [onNewSession]);
 
   // 分组逻辑：
-  // - 默认视图：置顶 + 最近（收藏的混在最近里，不单独显示）
-  // - 收藏视图：只显示收藏的对话
-  const pinnedSessions = showFavoritesOnly 
-    ? sessions.filter((s) => s.pinned && s.favorited)
-    : sessions.filter((s) => s.pinned);
-  
-  const normalSessions = showFavoritesOnly
+  // - 置顶始终在最前
+  // - 收藏独立分组（⭐ 收藏）
+  // - 非收藏按时间段分组：今天 / 昨天 / 本周 / 更早
+  const now = Date.now();
+  const todayStart = new Date(new Date().getFullYear(), new Date().getMonth(), new Date().getDate()).getTime();
+  const yesterdayStart = todayStart - 86400000;
+  const weekStart = todayStart - 6 * 86400000;
+
+  const pinnedSessions = sessions.filter((s) => s.pinned);
+
+  // 非置顶收藏
+  const favoritedSessions = showFavoritesOnly
+    ? [] // 收藏视图下不单独显示，合并到下面分组
+    : sessions.filter((s) => s.favorited && !s.pinned);
+
+  // 非置顶非收藏，按时间分组
+  const nonFavoritedSessions = showFavoritesOnly
     ? sessions.filter((s) => s.favorited && !s.pinned)
-    : sessions.filter((s) => !s.pinned);
-  
-  const totalFiltered = pinnedSessions.length + normalSessions.length;
+    : sessions.filter((s) => !s.pinned && !s.favorited);
+
+  const groupByTime = (list: SavedSession[]) => {
+    const today: SavedSession[] = [];
+    const yesterday: SavedSession[] = [];
+    const thisWeek: SavedSession[] = [];
+    const older: SavedSession[] = [];
+    for (const s of list) {
+      const t = s.updatedAt || s.createdAt;
+      if (t >= todayStart) today.push(s);
+      else if (t >= yesterdayStart) yesterday.push(s);
+      else if (t >= weekStart) thisWeek.push(s);
+      else older.push(s);
+    }
+    return { today, yesterday, thisWeek, older };
+  };
+
+  const timeGroups = groupByTime(nonFavoritedSessions);
+  const allTimeGroups = [
+    { label: "今天", sessions: timeGroups.today },
+    { label: "昨天", sessions: timeGroups.yesterday },
+    { label: "本周", sessions: timeGroups.thisWeek },
+    { label: "更早", sessions: timeGroups.older },
+  ].filter((g) => g.sessions.length > 0);
+
+  const totalFiltered = pinnedSessions.length + favoritedSessions.length + nonFavoritedSessions.length;
 
   // 渲染单个会话项
   function renderSessionItem(session: SavedSession, isPinned: boolean) {
@@ -539,6 +572,7 @@ export default function ChatHistoryMenu({
             : createElement(
                 Fragment,
                 null,
+                // ── 置顶 ────────────────────────────────────────────────
                 pinnedSessions.length > 0 &&
                   createElement(
                     "div",
@@ -557,28 +591,50 @@ export default function ChatHistoryMenu({
                     ),
                     ...pinnedSessions.map((session) => renderSessionItem(session, true))
                   ),
-                normalSessions.length > 0 &&
+
+                // ── 收藏（默认视图显示）─────────────────────────────────
+                !showFavoritesOnly && favoritedSessions.length > 0 &&
                   createElement(
                     "div",
-                    null,
-                    pinnedSessions.length > 0 &&
-                      createElement(
-                        "div",
-                        {
-                          style: {
-                            fontSize: 11,
-                            color: "var(--orca-color-text-3)",
-                            padding: "4px 8px",
-                            fontWeight: 500,
-                          },
+                    { style: { marginBottom: 8 } },
+                    createElement(
+                      "div",
+                      {
+                        style: {
+                          fontSize: 11,
+                          color: "#fbbf24",
+                          padding: "4px 8px",
+                          fontWeight: 500,
                         },
-                        showFavoritesOnly ? "⭐ 收藏" : "最近"
-                      ),
-                    ...normalSessions.map((session) => renderSessionItem(session, false))
+                      },
+                      "⭐ 收藏"
+                    ),
+                    ...favoritedSessions.map((session) => renderSessionItem(session, false))
+                  ),
+
+                // ── 时间分组（非收藏）───────────────────────────────────
+                allTimeGroups.map((group) =>
+                  createElement(
+                    "div",
+                    { key: group.label, style: { marginBottom: 8 } },
+                    createElement(
+                      "div",
+                      {
+                        style: {
+                          fontSize: 11,
+                          color: "var(--orca-color-text-3)",
+                          padding: "4px 8px",
+                          fontWeight: 500,
+                        },
+                      },
+                      group.label
+                    ),
+                    ...group.sessions.map((session) => renderSessionItem(session, false))
                   )
+                ),
               )
         ),
-        sessions.length > 0 &&
+        nonFavoritedSessions.length > 0 &&
           createElement(
             "div",
             { style: footerStyle },
@@ -598,7 +654,7 @@ export default function ChatHistoryMenu({
                   e.currentTarget.style.borderColor = "var(--orca-color-border)";
                 },
               },
-              "清空所有历史"
+              `清空非收藏对话 (${nonFavoritedSessions.length})`
             )
           )
       )

@@ -16,6 +16,7 @@ import {
   describeImages,
   getVisionModelConfig,
 } from "./vision-model-service";
+import { snipOldToolResults } from "./context-manager";
 
 export interface MessageBuildParams {
   messages: Message[];
@@ -540,9 +541,15 @@ export async function buildConversationMessages(params: ConversationBuildParams)
     }
   }
 
+  // 裁剪旧工具结果，节省 token（保留最近 3 轮完整内容）
+  const snippedHistory = snipOldToolResults(filteredHistory, {
+    preserveRecentTurns: 3,
+    minLengthToSnip: 300,
+  });
+
   const standard: OpenAIChatMessage[] = [
     ...(systemContent ? [{ role: "system" as const, content: systemContent }] : []),
-    ...filteredHistory,
+    ...snippedHistory,
   ];
 
   // Build fallback format (sync, no images)

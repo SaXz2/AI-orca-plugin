@@ -45,6 +45,8 @@ import {
   DEFAULT_SYSTEM_PROMPT,
   type AiChatSettings,
 } from "../settings/ai-chat-settings";
+import { buildDynamicSystemPrompt } from "../services/dynamic-prompt";
+import { getDiscoveredTools } from "../store/mcp-store";
 import {
   loadSessions,
   loadFullSession,
@@ -65,7 +67,7 @@ import { sessionStore, updateSessionStore, clearSessionStore } from "../store/se
 import { FLASHCARD_TOOL, executeTool, getToolsForDraggedContext, getTools, extractSearchResultsFromToolResults, getSkillToolsAsync, getSkillInstructionsAsync, getSkillToolName, resolveSkillIdFromToolName } from "../services/ai-tools";
 
 import { startPythonServer, stopPythonServer, getPythonServerStatus, browserAIChat, browserAIStatus as checkBrowserAIStatus } from "../services/python-runtime";
-import { getToolStatus, isToolDisabled, shouldAskForTool, isAgenticRAGEnabled, getAgenticRAGConfig } from "../store/tool-store";
+import { getToolStatus, isToolDisabled, shouldAskForTool, isAgenticRAGEnabled, getAgenticRAGConfig, isWebSearchEnabled } from "../store/tool-store";
 import { listSkills, getSkill, type Skill } from "../services/skills-manager";
 import { nowId, safeText } from "../utils/text-utils";
 import { buildConversationMessages } from "../services/message-builder";
@@ -1062,7 +1064,12 @@ export default function AiChatPanel({ panelId }: PanelProps) {
 	    // 工具调用最大轮数：可在设置中配置；若缺失则默认 5（向后兼容）
 	    const MAX_TOOL_ROUNDS = settings.maxToolRounds || 5;
 	    // 系统提示词模板变量：支持 {maxToolRounds}，按当前 MAX_TOOL_ROUNDS 注入
-	    let systemPrompt = DEFAULT_SYSTEM_PROMPT.split("{maxToolRounds}").join(String(MAX_TOOL_ROUNDS));
+	    let systemPrompt = buildDynamicSystemPrompt({
+      hasMcpTools: getDiscoveredTools().length > 0,
+      hasTodoistTools: enableTodoistTools,
+      hasWebSearch: isWebSearchEnabled(),
+      hasDraggedContext: contextStore.selected.length > 0,
+    });
 
 	    // 检测用户指令并追加格式要求
 	    let processedContent = content;
@@ -2132,15 +2139,8 @@ graph TD
         if (newToolCalls.length < currentToolCalls.length) {
         }
 
-        // Execute tools
-        const toolResultMessages: Message[] = [];
-        for (const toolCall of newToolCalls) {
-          const toolName = toolCall.function.name;
-          let args: any = {};
-          let parseError: string | null = null;
-
-          // Helper function to attempt JSON repair for common AI model errors
-          const tryRepairJson = (jsonStr: string): string | null => {
+        // ── JSON 修复辅助函数 ──────────────────────────────────────────────
+        const tryRepairJson = (jsonStr: string): string | null => {
             let repaired = jsonStr.trim();
             
             // Fix 0a: Handle concatenated JSON objects (e.g., {"a":1}{"b":2} -> {"a":1})
@@ -2205,10 +2205,16 @@ graph TD
             }
           };
 
+        // ── 单工具执行辅助函数 ──────────────────────────────────────────
+        const TOOL_TIMEOUT_MS = 60000;
+        const executeSingleToolCall = async (toolCall: ToolCallInfo): Promise<Message> => {
+          const toolName = toolCall.function.name;
+          let args: any = {};
+          let parseError: string | null = null;
+
           try {
             args = JSON.parse(toolCall.function.arguments);
           } catch (error: any) {
-            // Try to repair the JSON before giving up
             const repaired = tryRepairJson(toolCall.function.arguments);
             if (repaired) {
               console.warn('[Tool Call] Repaired malformed JSON:', toolCall.function.arguments, '->', repaired);
@@ -2222,111 +2228,142 @@ graph TD
             }
           }
 
-          // Log tool call with parsed arguments for debugging
-          // If JSON parsing failed, return error to model
           let result: string;
           if (parseError) {
-             result = `Error: ${parseError}\n\nRaw arguments received:\n${toolCall.function.arguments}\n\nPlease provide valid JSON arguments.`;
+            result = `Error: ${parseError}\n\nRaw arguments received:\n${toolCall.function.arguments}\n\nPlease provide valid JSON arguments.`;
           } else {
-             const TOOL_TIMEOUT_MS = 60000; // 60s timeout for tool execution
-             const isSkillCall = toolName.startsWith("skill_");
+            const isSkillCall = toolName.startsWith("skill_");
 
-             if (isSkillCall) {
-               // Skill 工具执行 - Level 2: 按需加载详细指令
-               const resolvedSkillId = await resolveSkillIdFromToolName(toolName);
-               if (!resolvedSkillId) {
-                 result = `Error: Skill not found for tool: ${toolName}`;
-               } else {
-                 // 🔴 重要：Skill 调用需要用户确认
-                 try {
-                   const skill = await getSkill(resolvedSkillId.id, resolvedSkillId.isGlobal);
-                   if (!skill) {
-                     result = `Error: Skill not found: ${resolvedSkillId.id}`;
-                   } else {
-                     // 使用确认对话框询问用户
-                     const { createToolConfirmPromise } = await import("../components/ToolConfirmDialog");
-                     const userApproved = await createToolConfirmPromise(
-                       `skill: ${skill.metadata.name}`,
-                       { skillId: resolvedSkillId.id, input: args.input || "" }
-                     );
-                     
-                     if (!userApproved) {
-                       result = `用户拒绝执行 Skill。请尝试其他方式或直接回答用户的问题。`;
-                     } else {
-                       // 用户确认后，加载详细指令
-                       const instructions = await getSkillInstructionsAsync(resolvedSkillId);
-                       if (!instructions) {
-                         result = `Error: Skill not found: ${resolvedSkillId.id}`;
-                       } else {
-                         const userInput = args.input || "";
-                         result = `${instructions}
+            if (isSkillCall) {
+              const resolvedSkillId = await resolveSkillIdFromToolName(toolName);
+              if (!resolvedSkillId) {
+                result = `Error: Skill not found for tool: ${toolName}`;
+              } else {
+                try {
+                  const skill = await getSkill(resolvedSkillId.id, resolvedSkillId.isGlobal);
+                  if (!skill) {
+                    result = `Error: Skill not found: ${resolvedSkillId.id}`;
+                  } else {
+                    const { createToolConfirmPromise } = await import("../components/ToolConfirmDialog");
+                    const userApproved = await createToolConfirmPromise(
+                      `skill: ${skill.metadata.name}`,
+                      { skillId: resolvedSkillId.id, input: args.input || "" }
+                    );
+                    if (!userApproved) {
+                      result = `用户拒绝执行 Skill。请尝试其他方式或直接回答用户的问题。`;
+                    } else {
+                      const instructions = await getSkillInstructionsAsync(resolvedSkillId);
+                      if (!instructions) {
+                        result = `Error: Skill not found: ${resolvedSkillId.id}`;
+                      } else {
+                        const userInput = args.input || "";
+                        result = `${instructions}
 
 ## 用户输入
 ${userInput}`;
-                       }
-                     }
-                   }
-                 } catch (err: any) {
-                   result = `Error: Failed to execute skill ${resolvedSkillId.id}: ${err?.message || "Unknown error"}`;
-                 }
-               }
-             } else {
-               // 检查工具是否需要询问用户
-               const needsConfirm = shouldAskForTool(toolName);
-               let userApproved = true;
-               
-               if (needsConfirm) {
-                 // 使用确认对话框询问用户
-                 const { createToolConfirmPromise } = await import("../components/ToolConfirmDialog");
-                 userApproved = await createToolConfirmPromise(toolName, args);
-               }
-               
-               if (!userApproved) {
-                 result = `用户拒绝执行此工具。请尝试其他方式或直接回答用户的问题。`;
-               } else {
-                 try {
-                   const timeoutPromise = new Promise<string>((_, reject) => {
-                     setTimeout(() => reject(new Error(`Tool execution timed out after ${TOOL_TIMEOUT_MS / 1000}s`)), TOOL_TIMEOUT_MS);
-                   });
-                   
-                   result = await Promise.race([
-                     executeTool(toolName, args),
-                     timeoutPromise
-                   ]);
-                 } catch (err: any) {
-                   result = `Error: ${err.message || "Tool execution failed"}`;
-                 }
-               }
-             }
+                      }
+                    }
+                  }
+                } catch (err: any) {
+                  result = `Error: Failed to execute skill ${resolvedSkillId.id}: ${err?.message || "Unknown error"}`;
+                }
+              }
+            } else {
+              const needsConfirm = shouldAskForTool(toolName);
+              let userApproved = true;
+
+              if (needsConfirm) {
+                const { createToolConfirmPromise } = await import("../components/ToolConfirmDialog");
+                userApproved = await createToolConfirmPromise(toolName, args);
+              }
+
+              if (!userApproved) {
+                result = `用户拒绝执行此工具。请尝试其他方式或直接回答用户的问题。`;
+              } else {
+                try {
+                  const timeoutPromise = new Promise<string>((_, reject) => {
+                    setTimeout(() => reject(new Error(`Tool execution timed out after ${TOOL_TIMEOUT_MS / 1000}s`)), TOOL_TIMEOUT_MS);
+                  });
+                  result = await Promise.race([
+                    executeTool(toolName, args),
+                    timeoutPromise
+                  ]);
+                } catch (err: any) {
+                  result = `Error: ${err.message || "Tool execution failed"}`;
+                }
+              }
+            }
           }
 
-          toolResultMessages.push({
+          // 强制截断过长的工具结果，防止原始数据污染对话
+          const maxChars = Math.max(settings.maxToolResultChars || 8000, 500);
+          let finalContent = result;
+          if (finalContent.length > maxChars) {
+            finalContent = finalContent.slice(0, maxChars) +
+              `\n\n...[已截断，原长度 ${finalContent.length} 字符]`;
+          }
+
+          return {
             id: nowId(),
             role: "tool",
-            content: result,
+            content: finalContent,
             tool_call_id: toolCall.id,
             name: toolName,
             createdAt: Date.now(),
-          });
-          
-          // 检查是否是直接渲染的工具结果（如日记导出），跳过 AI 后续处理
-          if (result.includes("```journal-export")) {
+          };
+        };
+
+        // ── 分组：需确认 vs 无需确认 ────────────────────────────────────
+        const confirmTools: ToolCallInfo[] = [];
+        const parallelTools: ToolCallInfo[] = [];
+        for (const tc of newToolCalls) {
+          if (tc.function.name.startsWith("skill_") || shouldAskForTool(tc.function.name)) {
+            confirmTools.push(tc);
+          } else {
+            parallelTools.push(tc);
+          }
+        }
+
+        // ── 并行执行无需确认的工具 ──────────────────────────────────────
+        const toolResultMessages: Message[] = [];
+        if (parallelTools.length > 0) {
+          const parallelResults = await Promise.all(
+            parallelTools.map(tc => executeSingleToolCall(tc))
+          );
+          toolResultMessages.push(...parallelResults);
+        }
+
+        // 检查并行结果中是否有直接渲染的（如日记导出）
+        const hasDirectRender = toolResultMessages.some(m => m.content.includes("```journal-export"));
+        if (hasDirectRender) {
+          allToolResultMessages.push(...toolResultMessages);
+          conversation.push(...toolResultMessages);
+          setMessages((prev) => [...prev, ...toolResultMessages]);
+          queueMicrotask(scrollToBottom);
+          currentToolCalls = [];
+          break;
+        }
+
+        // ── 顺序执行需确认的工具 ────────────────────────────────────────
+        for (const tc of confirmTools) {
+          const msg = await executeSingleToolCall(tc);
+          toolResultMessages.push(msg);
+          if (msg.content.includes("```journal-export")) {
             allToolResultMessages.push(...toolResultMessages);
             conversation.push(...toolResultMessages);
             setMessages((prev) => [...prev, ...toolResultMessages]);
             queueMicrotask(scrollToBottom);
-            // 直接结束工具循环，不再调用 AI
             currentToolCalls = [];
             break;
           }
         }
-        
-        // 如果已经处理了直接渲染的结果，跳过后续 AI 调用
-        captureSearchResults(toolResultMessages);
-        if (currentToolCalls.length === 0 && toolResultMessages.some(m => m.content.includes("```journal-export"))) {
+
+        // 如果直接渲染触发了，跳出
+        if (currentToolCalls.length === 0) {
           break;
         }
 
+        captureSearchResults(toolResultMessages);
         allToolResultMessages.push(...toolResultMessages);
         conversation.push(...toolResultMessages);
 

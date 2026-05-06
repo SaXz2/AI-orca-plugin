@@ -23,6 +23,10 @@ import {
   setDiscoveredToolsForServer,
   removeDiscoveredToolsForServer,
 } from "../store/mcp-store";
+import {
+  registerMcpTools,
+  unregisterMcpServerTools,
+} from "../store/tool-store";
 
 // ─── 工具名命名空间 ──────────────────────────────────────────────────────────
 
@@ -192,6 +196,20 @@ export async function connectToServer(serverId: string): Promise<void> {
 
     setDiscoveredToolsForServer(serverId, converted);
 
+    // 自动注册到工具管理
+    registerMcpTools(
+      serverId,
+      converted.map((t) => {
+        // 从 openaiName 解析出原始工具名: mcp__serverId__toolName → toolName
+        const parts = t.function.name.split("__");
+        const toolName = parts.slice(2).join("__") || t.function.name;
+        return {
+          openaiName: t.function.name,
+          displayName: toolName,
+        };
+      })
+    );
+
     setServerStatus(serverId, {
       config: server,
       connected: true,
@@ -228,6 +246,7 @@ export async function disconnectFromServer(serverId: string): Promise<void> {
     if (entry.serverId === serverId) toolRegistry.delete(name);
   }
   removeDiscoveredToolsForServer(serverId);
+  unregisterMcpServerTools(serverId);
 
   setServerStatus(serverId, { connected: false, toolCount: 0 });
 }
@@ -246,6 +265,7 @@ function startHealthCheck(): void {
         console.warn(`[MCP] 服务器 "${serverId}" 心跳失败，标记为断开`);
         activeConnections.delete(serverId);
         removeDiscoveredToolsForServer(serverId);
+        unregisterMcpServerTools(serverId);
         setServerStatus(serverId, { connected: false, toolCount: 0, error: "心跳超时" });
       });
     }

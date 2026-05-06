@@ -863,6 +863,22 @@ function parseInlineMarkdown(text: string, depth = 0, insideLink = false): Markd
     // Block ID reference: "blockid:123" format (only outside of links)
     // This is the preferred format for AI to return block references
     if (!insideLink) {
+      // ((数字)) 双括号格式 - 标准块引用格式
+      const doubleBracketMatch = text.slice(i).match(/^\(\((\d+)\)\)/);
+      if (doubleBracketMatch) {
+        const blockId = parseInt(doubleBracketMatch[1], 10);
+        if (blockId > 0) {
+          flushBuffer();
+          nodes.push({
+            type: "link",
+            url: `orca-block:${blockId}`,
+            children: [{ type: "text", content: `(( ${blockId} ))` }],
+          });
+          i += doubleBracketMatch[0].length;
+          continue;
+        }
+      }
+
       // Handle orca-block:123 format (direct block reference)
       const orcaBlockMatch = text.slice(i).match(/^orca-block:(\d+)/i);
       if (orcaBlockMatch) {

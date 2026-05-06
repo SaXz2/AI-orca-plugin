@@ -676,3 +676,76 @@ export function extractTopics(messages: OpenAIChatMessage[]): string[] {
   // Return top topics (most frequent would be better with counting)
   return Array.from(topics).slice(0, 10);
 }
+
+// ============================================================================
+// HISTORY_SNIP: 智能裁剪旧工具结果（参考 CoreCoder）
+// 工具结果超过 N 轮后裁剪为摘要，节省 token
+// ============================================================================
+
+interface SnipOptions {
+  /** 保留最近 N 个"用户-助手"轮次的工具结果完整内容（默认 3） */
+  preserveRecentTurns?: number;
+  /** 工具结果超过此字符数才裁剪（默认 300） */
+  minLengthToSnip?: number;
+}
+
+/**
+ * 裁剪旧工具大结果，保留最近几轮的完整内容。
+ * 不删除消息，只把旧工具结果替换为短标记，保留消息结构。
+ */
+export function snipOldToolResults(
+  messages: OpenAIChatMessage[],
+  options: SnipOptions = {}
+): OpenAIChatMessage[] {
+  const { preserveRecentTurns = 3, minLengthToSnip = 300 } = options;
+
+  // 找到所有"用户消息"的索引作为轮次边界
+  const turnBoundaries: number[] = [];
+  for (let i = 0; i < messages.length; i++) {
+    if (messages[i].role === "user") {
+      turnBoundaries.push(i);
+    }
+  }
+
+  if (turnBoundaries.length <= preserveRecentTurns) {
+    return messages; // 轮次不足，无需裁剪
+  }
+
+  // 最近 N 轮起始位置
+  const recentStart = turnBoundaries[turnBoundaries.length - preserveRecentTurns];
+
+  const result = messages.map((msg, idx) => {
+    // 只处理旧轮次的 tool 消息
+    if (msg.role !== "tool" || idx >= recentStart) return msg;
+
+    const content = typeof msg.content === "string" ? msg.content : "";
+    if (content.length <= minLengthToSnip) return msg;
+
+    // 提取关键信息作为摘要
+    let snippet = "";
+    try {
+      const parsed = JSON.parse(content);
+      if (parsed.success !== undefined) {
+        snippet = `[已裁剪] success=${parsed.success}`;
+      } else if (parsed.error) {
+        snippet = `[已裁剪] error: ${parsed.error.slice(0, 60)}`;
+      } else {
+        snippet = `[已裁剪] ${content.slice(0, 80)}...`;
+      }
+    } catch {
+      snippet = `[已裁剪] ${content.slice(0, 80)}...`;
+    }
+
+    return { ...msg, content: snippet };
+  });
+
+  const snippedCount = result.filter(
+    (m, i) => m.role === "tool" && i < recentStart && m.content !== messages[i].content
+  ).length;
+
+  if (snippedCount > 0) {
+    console.log(`[HISTORY_SNIP] 裁剪了 ${snippedCount} 个旧工具结果 (保留最近 ${preserveRecentTurns} 轮)`);
+  }
+
+  return result;
+}

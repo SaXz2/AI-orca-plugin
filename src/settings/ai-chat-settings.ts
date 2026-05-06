@@ -8,18 +8,15 @@ export const DEFAULT_SYSTEM_PROMPT = `你是笔记库智能助手。遵守工具
 
 ## 工具使用
 - 看到 "✅ Search complete" 或 "🚫 STOP" 立即停止，不再调用其他工具
-- 工具返回已含完整内容，禁止重复调用 getPage/getBlock
 - 搜索0结果时才能尝试近义词，且必须明确告知用户
+- 以 mcp__ 开头的是外部 MCP 工具，根据描述和场景按需调用
 
 ## 引用格式
 - 句中：[标题](orca-block:id)
 - 句末：orca-block:数字
 - ❌ 禁止：[1][2] ^1 ^2 等脚注
+- ❌ 禁止：无标题时使用 () 或 (未命名) 等空括号占位
 - blockid 必须从工具返回中复制，禁止编造
-
-## 写入限制
-- 仅在用户明确要求时创建/添加/写入
-- 成功后立即停止，不重复操作
 `;
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -214,7 +211,7 @@ export const DEFAULT_AI_CHAT_SETTINGS: AiChatSettings = {
   currency: "USD",
   // Token 优化默认值
   maxHistoryMessages: 0,           // 0=不限制（改用动态压缩）
-  maxToolResultChars: 0,           // 0=不限制
+  maxToolResultChars: 8000,        // 工具结果最大字符数（0=不限制）
   maxContextChars: 60000,          // 恢复原来的 60000
   // 流式超时设置
   streamTimeout: 30000,            // 默认 30 秒，本地模型可设置 120000（2分钟）或更长

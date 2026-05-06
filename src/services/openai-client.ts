@@ -126,7 +126,7 @@ async function readErrorMessage(res: Response): Promise<string> {
 }
 
 type StreamChunk = {
-  type: "content" | "tool_calls" | "reasoning" | "usage";
+  type: "content" | "tool_calls" | "reasoning" | "usage" | "finish_reason";
   content?: string;
   reasoning?: string;
   tool_calls?: Array<{
@@ -143,6 +143,8 @@ type StreamChunk = {
     completion_tokens: number;
     total_tokens: number;
   };
+  /** 模型停止原因: "stop" | "length" | "tool_calls" | "content_filter" | "end_turn" | "max_tokens" */
+  finishReason?: string;
 };
 
 function parseDataUrl(url: string): { mediaType: string; base64: string } | null {
@@ -299,6 +301,12 @@ function safeDeltaFromEvent(obj: any): StreamChunk {
 
   const delta = obj?.choices?.[0]?.delta;
   const choice = obj?.choices?.[0];
+
+  // 检测 finish_reason（"stop" | "length" | "tool_calls" | "content_filter"）
+  const finishReason = choice?.finish_reason;
+  if (finishReason && typeof finishReason === "string") {
+    return { type: "finish_reason", finishReason };
+  }
 
   // Check for tool calls in delta
   if (delta?.tool_calls) {
@@ -830,7 +838,8 @@ export async function* openAIChatCompletionsStream(
   const body = JSON.stringify(requestBody);
   let res: Response | null = null;
   let lastError: Error | null = null;
-  
+  let isHttpError = false;
+
   // 带重试的请求循环
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     // 如果是重试，先等待
@@ -877,7 +886,7 @@ export async function* openAIChatCompletionsStream(
         
         // 读取错误信息
         const msg = await readErrorMessage(res);
-        lastError = new Error(msg);
+        lastError = new Error(msg); isHttpError = true;
         
         console.error(`${logPrefix} ❌ Error response:`, {
           status: res.status,
@@ -899,28 +908,29 @@ export async function* openAIChatCompletionsStream(
         
       } catch (fetchErr: any) {
         cleanup(); // 确保清理
-        
+
         // 检查是否是超时或取消
         if (fetchErr.name === 'AbortError') {
           if (args.signal?.aborted) {
-            // 用户主动取消，不重试
             throw new Error('Request cancelled by user');
           }
-          // 超时错误
           lastError = new Error(`Request timeout after ${timeout}ms`);
           console.warn(`${logPrefix} ⏱️ 请求超时`);
+        } else if (isHttpError) {
+          // HTTP 层错误（4xx 等不可重试错误），直接向上抛，不重试
+          throw fetchErr;
         } else {
           lastError = fetchErr;
           console.error(`${logPrefix} Fetch error:`, fetchErr);
         }
-        
-        // 网络错误可以重试
+
+        // 网络/超时错误可以重试
         if (attempt < maxRetries) {
           console.log(`${logPrefix} 网络错误，将进行重试...`);
           res = null;
-          break; // 跳出 URL 循环，进入重试
+          break;
         }
-        
+
         throw lastError;
       }
     }
@@ -1054,6 +1064,9 @@ export async function* openAIChatCompletionsStream(
         }
 
         if (obj?.type === "message_stop") {
+          if (obj?.["stop_reason"]) {
+            yield { type: "finish_reason", finishReason: obj["stop_reason"] };
+          }
           return;
         }
 

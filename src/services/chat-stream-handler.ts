@@ -257,12 +257,16 @@ export interface StreamOptions {
   compressionThreshold?: number;
   /** Number of recent messages to always preserve during compression (default: 6) */
   preserveRecentMessages?: number;
+  /** 最大输出恢复重试次数，当 finish_reason 为 "length" 时自动续写 (default: 3) */
+  maxOutputRetries?: number;
 }
 
 export interface StreamResult {
   content: string;
   toolCalls: ToolCallInfo[];
   reasoning?: string;
+  /** 模型停止原因: "stop" | "length" | "tool_calls" | "content_filter" | "end_turn" | "max_tokens" */
+  finishReason?: string;
 }
 
 export interface ToolCallInfo {
@@ -380,6 +384,7 @@ export async function* streamChatCompletion(
   let content = "";
   let reasoning = "";
   let toolCalls: ToolCallInfo[] = [];
+  let finishReason: string | undefined;
 
   for await (const chunk of openAIChatCompletionsStream({
     apiUrl: options.apiUrl,
@@ -403,6 +408,8 @@ export async function* streamChatCompletion(
     } else if (chunk.type === "tool_calls" && chunk.tool_calls) {
       toolCalls = mergeToolCalls(toolCalls, chunk.tool_calls);
       yield { type: "tool_calls", toolCalls };
+    } else if (chunk.type === "finish_reason" && chunk.finishReason) {
+      finishReason = chunk.finishReason;
     }
   }
 
@@ -426,7 +433,7 @@ export async function* streamChatCompletion(
     }
   }
 
-  yield { type: "done", result: { content, toolCalls, reasoning: reasoning || undefined } };
+  yield { type: "done", result: { content, toolCalls, reasoning: reasoning || undefined, finishReason } };
 }
 
 /**
@@ -452,6 +459,7 @@ export async function* streamChatWithRetry(
   let content = "";
   let reasoning = "";
   let toolCalls: ToolCallInfo[] = [];
+  let finishReason: string | undefined;
   let usedFallback = false;
 
   // Apply context compression if enabled and messages exceed threshold
@@ -534,6 +542,8 @@ export async function* streamChatWithRetry(
         } else if (chunk.type === "tool_calls" && chunk.tool_calls) {
           toolCalls = mergeToolCalls(toolCalls, chunk.tool_calls);
           yield { type: "tool_calls", toolCalls };
+        } else if (chunk.type === "finish_reason" && chunk.finishReason) {
+          finishReason = chunk.finishReason;
         }
       }
     } finally {
@@ -554,11 +564,19 @@ export async function* streamChatWithRetry(
 
     usedFallback = true;
     content = "";
-    reasoning = ""; // 重置 reasoning
+    reasoning = "";
     toolCalls = [];
+    finishReason = undefined;
     onRetry?.();
 
-    yield* doStream(compressedFallbackMessages);
+    try {
+      yield* doStream(compressedFallbackMessages);
+    } catch (fallbackErr: any) {
+      const isFallbackAbort = String(fallbackErr?.name) === "AbortError";
+      if (isFallbackAbort) throw fallbackErr;
+      console.error("[streamChatWithRetry] 标准和备用格式均失败:", fallbackErr?.message);
+      content = `请求失败: ${fallbackErr?.message || "未知错误"}`;
+    }
   }
 
   // Only retry with fallback if response is truly empty (no content AND no tool calls)
@@ -606,5 +624,113 @@ export async function* streamChatWithRetry(
     }
   }
 
-  yield { type: "done", result: { content, toolCalls, reasoning: reasoning || undefined } };
+  // ── 最大输出恢复：finish_reason 为 "length"/"max_tokens" 时自动续写 ──
+  const maxOutputRetries = options.maxOutputRetries ?? 3;
+  let outputRetryCount = 0;
+
+  while (
+    (finishReason === "length" || finishReason === "max_tokens") &&
+    outputRetryCount < maxOutputRetries &&
+    toolCalls.length === 0 &&
+    content.trim().length > 0
+  ) {
+    outputRetryCount++;
+    console.log(`[streamChatWithRetry] 输出达到上限，自动续写 (${outputRetryCount}/${maxOutputRetries})...`);
+
+    // 构建续写消息：追加部分 assistant 回复 + "请继续"
+    const partialAssistant: OpenAIChatMessage = {
+      role: "assistant",
+      content,
+    };
+    const continueMsg: OpenAIChatMessage = {
+      role: "user",
+      content: "请继续",
+    };
+
+    const continueStandard = await maybeCompressMessages([
+      ...compressedStandardMessages,
+      partialAssistant,
+      continueMsg,
+    ]);
+    const continueFallback = await maybeCompressMessages([
+      ...compressedFallbackMessages,
+      partialAssistant,
+      continueMsg,
+    ]);
+
+    // 续写流（使用独立局部变量，不污染外层累加器）
+    let contContent = "";
+    let contReasoning = "";
+    let contFinishReason: string | undefined;
+    let contToolCalls: ToolCallInfo[] = [];
+    let contError: string | null = null;
+
+    try {
+      const contTimeoutController = new AbortController();
+      let contTimeoutId: ReturnType<typeof setTimeout> | null = null;
+
+      const contResetTimeout = () => {
+        if (contTimeoutId) clearTimeout(contTimeoutId);
+        contTimeoutId = setTimeout(() => contTimeoutController.abort(), timeoutMs);
+      };
+      contResetTimeout();
+
+      const onContAbort = () => contTimeoutController.abort();
+      options.signal?.addEventListener("abort", onContAbort);
+
+      try {
+        for await (const chunk of openAIChatCompletionsStream({
+          apiUrl: options.apiUrl,
+          apiKey: options.apiKey,
+          model: options.model,
+          messages: continueStandard,
+          temperature: options.temperature,
+          maxTokens: options.maxTokens,
+          signal: contTimeoutController.signal,
+          tools: undefined, // 续写不带工具，让模型专注完成文本
+          protocol: options.protocol,
+          anthropicApiPath: options.anthropicApiPath,
+          maxContextTokens: options.maxContextTokens,
+        })) {
+          contResetTimeout();
+          if (chunk.type === "content" && chunk.content) {
+            contContent += chunk.content;
+            // 实时输出续写内容
+            yield { type: "content", content: chunk.content };
+          } else if (chunk.type === "reasoning" && chunk.reasoning) {
+            contReasoning += chunk.reasoning;
+            yield { type: "reasoning", reasoning: chunk.reasoning };
+          } else if (chunk.type === "finish_reason" && chunk.finishReason) {
+            contFinishReason = chunk.finishReason;
+          } else if (chunk.type === "tool_calls" && chunk.tool_calls) {
+            contToolCalls = mergeToolCalls(contToolCalls, chunk.tool_calls);
+          }
+        }
+      } finally {
+        if (contTimeoutId) clearTimeout(contTimeoutId);
+        options.signal?.removeEventListener("abort", onContAbort);
+      }
+    } catch (err: any) {
+      if (String(err?.name) === "AbortError") throw err;
+      contError = err?.message || "续写失败";
+      console.warn(`[streamChatWithRetry] 续写失败:`, contError);
+      break;
+    }
+
+    // 累加续写内容
+    if (contContent) {
+      content += contContent;
+    }
+    if (contReasoning) {
+      reasoning = reasoning || contReasoning;
+    }
+    if (contToolCalls.length > 0) {
+      toolCalls = contToolCalls;
+    }
+    finishReason = contFinishReason;
+
+    if (contError) break;
+  }
+
+  yield { type: "done", result: { content, toolCalls, reasoning: reasoning || undefined, finishReason } };
 }

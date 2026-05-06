@@ -36,14 +36,74 @@ export interface ToolCategory {
 }
 
 /**
- * 工具分类定义（内建工具已移除，通过 MCP 外部工具提供）
+ * 工具分类定义（通过 MCP 外部工具动态注册）
  */
 export const TOOL_CATEGORIES: ToolCategory[] = [];
 
 /**
- * 工具显示名称映射（内建工具已移除，通过 MCP 外部工具提供）
+ * 工具显示名称映射（内建工具已移除，MCP 工具自动注册）
  */
 export const TOOL_DISPLAY_NAMES: Record<string, string> = {};
+
+// ─── MCP 工具自动注册 ────────────────────────────────────────────────────────
+
+const MCP_CATEGORY_NAME = "mcp-tools";
+const MCP_CATEGORY_LABEL = "MCP 外部工具";
+
+function ensureMcpCategory(): ToolCategory {
+  let cat = TOOL_CATEGORIES.find((c) => c.name === MCP_CATEGORY_NAME);
+  if (!cat) {
+    cat = { name: MCP_CATEGORY_NAME, label: MCP_CATEGORY_LABEL, tools: [] };
+    TOOL_CATEGORIES.push(cat);
+  }
+  return cat;
+}
+
+/** 注册一组 MCP 工具到工具管理 */
+export function registerMcpTools(
+  serverId: string,
+  tools: Array<{ openaiName: string; displayName: string }>
+): void {
+  // 先注销该服务器的旧工具
+  unregisterMcpServerTools(serverId);
+
+  if (tools.length === 0) return;
+
+  const cat = ensureMcpCategory();
+  for (const tool of tools) {
+    TOOL_DISPLAY_NAMES[tool.openaiName] = tool.displayName;
+    cat.tools.push(tool.openaiName);
+  }
+}
+
+/** 注销某个服务器的所有 MCP 工具 */
+export function unregisterMcpServerTools(serverId: string): void {
+  const prefix = `mcp__`;
+  // 清理 DISPLAY_NAMES
+  for (const name of Object.keys(TOOL_DISPLAY_NAMES)) {
+    if (name.startsWith(prefix)) {
+      const rest = name.slice(prefix.length);
+      const sep = rest.indexOf("__");
+      if (sep !== -1 && rest.slice(0, sep) === serverId) {
+        delete TOOL_DISPLAY_NAMES[name];
+      }
+    }
+  }
+  // 清理 CATEGORIES
+  const cat = TOOL_CATEGORIES.find((c) => c.name === MCP_CATEGORY_NAME);
+  if (cat) {
+    cat.tools = cat.tools.filter((t) => {
+      if (!t.startsWith(prefix)) return true;
+      const rest = t.slice(prefix.length);
+      const sep = rest.indexOf("__");
+      return sep === -1 || rest.slice(0, sep) !== serverId;
+    });
+    if (cat.tools.length === 0) {
+      const idx = TOOL_CATEGORIES.indexOf(cat);
+      if (idx !== -1) TOOL_CATEGORIES.splice(idx, 1);
+    }
+  }
+}
 
 /**
  * 默认工具状态

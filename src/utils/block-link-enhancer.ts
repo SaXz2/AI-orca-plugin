@@ -19,6 +19,7 @@ export function detectBlockReferences(text: string): BlockReference[] {
     /blockid:(\d+)/gi,
     /(?:block|Block|块|笔记)\s*#?(\d+)/g,
     /\[([^\]]+)\]\(orca-block:(\d+)\)/g,
+    /\(\((\d+)\)\)/g,  // ((数字)) 双括号格式
   ];
   
   const references: BlockReference[] = [];
@@ -110,5 +111,5 @@ export function formatBlockResult(block: {
  */
 export function addLinkPreservationNote(resultCount: number): string {
   if (resultCount === 0) return '';
-  return '📌 重要：引用块时必须使用 blockid:数字 格式（如 blockid:433），只有 blockid: 格式才能渲染为可点击链接。\n⚠️ 以上结果已包含完整内容，请勿再调用 getPage 获取详情。\n\n';
+  return '📌 重要：引用块时必须使用 ((数字)) 格式（如 ((433)) ），只有双括号格式才能渲染为可点击链接。\n⚠️ 以上结果已包含完整内容，请勿再调用 getPage 获取详情。\n\n';
 }
