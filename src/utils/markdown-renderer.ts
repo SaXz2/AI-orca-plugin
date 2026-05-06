@@ -872,7 +872,7 @@ function parseInlineMarkdown(text: string, depth = 0, insideLink = false): Markd
           nodes.push({
             type: "link",
             url: `orca-block:${blockId}`,
-            children: [{ type: "text", content: `(( ${blockId} ))` }],
+            children: [{ type: "text", content: `${blockId}` }],
           });
           i += doubleBracketMatch[0].length;
           continue;
