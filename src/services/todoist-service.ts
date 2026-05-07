@@ -128,17 +128,32 @@ async function todoistFetch<T>(
   options: RequestInit = {}
 ): Promise<T> {
   const url = `${TODOIST_API_BASE}${endpoint}`;
-  
-  const response = await fetch(url, {
-    ...options,
-    headers: {
-      "Authorization": `Bearer ${token}`,
-      "Content-Type": "application/json",
-      ...options.headers,
-    },
-  });
+
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      ...options,
+      headers: {
+        "Authorization": `Bearer ${token}`,
+        "Content-Type": "application/json",
+        ...options.headers,
+      },
+    });
+  } catch (fetchErr: any) {
+    const msg = fetchErr?.message || String(fetchErr);
+    if (msg.includes("Failed to fetch") || msg.includes("NetworkError")) {
+      throw new Error("无法连接到 Todoist API，请检查网络连接");
+    }
+    throw new Error(`网络请求失败：${msg}`);
+  }
 
   if (!response.ok) {
+    if (response.status === 401) {
+      throw new Error("Todoist Token 无效（401 Unauthorized）。请检查 API Token 是否正确");
+    }
+    if (response.status === 403) {
+      throw new Error("Todoist Token 无权限（403 Forbidden）。请检查 Token 权限范围");
+    }
     let errorMsg = `Todoist API error: ${response.status}`;
     try {
       const errorData = await response.json() as TodoistError;
@@ -460,12 +475,41 @@ export function getPriorityColor(priority: number): string {
 /**
  * 验证 Token 是否有效
  */
-export async function validateToken(token: string): Promise<boolean> {
+export async function validateToken(token: string): Promise<{ valid: boolean; error?: string }> {
   try {
     // 尝试获取任务列表来验证 token
-    await todoistFetch<TodoistTask[]>(token, "/tasks?filter=today");
-    return true;
-  } catch {
-    return false;
+    // 使用简单的 tasks 端点（不用 filter 参数，避免 filter 语法问题）
+    const response = await fetch(`${TODOIST_API_BASE}/tasks`, {
+      headers: {
+        "Authorization": `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+    });
+
+    if (response.ok) {
+      return { valid: true };
+    }
+
+    // HTTP 错误：区分认证失败和其他错误
+    if (response.status === 401 || response.status === 403) {
+      return { valid: false, error: "Token 无效或无权限（401/403）。请检查 Token 是否正确" };
+    }
+
+    let errorMsg = `HTTP ${response.status}`;
+    try {
+      const errorData = await response.json() as TodoistError;
+      errorMsg = errorData.error || errorMsg;
+    } catch {}
+    return { valid: false, error: `API 返回错误：${errorMsg}` };
+  } catch (err: any) {
+    // 网络错误 / CORS / DNS 解析失败 等
+    const msg = err?.message || String(err);
+    if (msg.includes("Failed to fetch") || msg.includes("NetworkError")) {
+      return { valid: false, error: "网络连接失败，无法访问 Todoist API。请检查网络连接" };
+    }
+    if (msg.includes("timeout") || msg.includes("abort")) {
+      return { valid: false, error: "请求超时，请检查网络连接后重试" };
+    }
+    return { valid: false, error: `连接失败：${msg}` };
   }
 }

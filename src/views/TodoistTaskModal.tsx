@@ -623,8 +623,8 @@ function TokenSetup({ onTokenSaved }: { onTokenSaved: () => void }) {
     setIsValidating(true);
     setError("");
     try {
-      const isValid = await validateToken(token.trim());
-      if (!isValid) { setError("Token 无效，请检查后重试"); setIsValidating(false); return; }
+      const result = await validateToken(token.trim());
+      if (!result.valid) { setError(result.error || "Token 无效，请检查后重试"); setIsValidating(false); return; }
       const pluginName = getAiChatPluginName();
       await setTodoistToken(pluginName, token.trim());
       onTokenSaved();

@@ -45,7 +45,7 @@ import {
   DEFAULT_SYSTEM_PROMPT,
   type AiChatSettings,
 } from "../settings/ai-chat-settings";
-import { buildDynamicSystemPrompt } from "../services/dynamic-prompt";
+import { buildDynamicSystemPrompt, getCurrentRepoId } from "../services/dynamic-prompt";
 import { getDiscoveredTools } from "../store/mcp-store";
 import {
   loadSessions,
@@ -1063,12 +1063,33 @@ export default function AiChatPanel({ panelId }: PanelProps) {
 	    const settings = getAiChatSettings(pluginName);
 	    // 工具调用最大轮数：可在设置中配置；若缺失则默认 5（向后兼容）
 	    const MAX_TOOL_ROUNDS = settings.maxToolRounds || 5;
+
+	    // 加载已启用的技能，注入系统提示词让 AI 自动识别并调用
+	    const enabledSkills: Array<{ name: string; description: string; instruction: string }> = [];
+	    try {
+	      const allSkillRefs = await listSkills();
+	      for (const ref of allSkillRefs) {
+	        const skill = await getSkill(ref.id, ref.isGlobal);
+	        if (skill && skill.enabled) {
+	          enabledSkills.push({
+	            name: skill.metadata.name || skill.id,
+	            description: skill.metadata.description || "",
+	            instruction: skill.instruction,
+	          });
+	        }
+	      }
+	    } catch (err) {
+	      console.warn("[handleSend] Failed to load skills:", err);
+	    }
+
 	    // 系统提示词模板变量：支持 {maxToolRounds}，按当前 MAX_TOOL_ROUNDS 注入
 	    let systemPrompt = buildDynamicSystemPrompt({
       hasMcpTools: getDiscoveredTools().length > 0,
       hasTodoistTools: enableTodoistTools,
       hasWebSearch: isWebSearchEnabled(),
       hasDraggedContext: contextStore.selected.length > 0,
+      skills: enabledSkills,
+      repoId: getCurrentRepoId(),
     });
 
 	    // 检测用户指令并追加格式要求

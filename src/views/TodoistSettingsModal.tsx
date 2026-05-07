@@ -178,9 +178,9 @@ export default function TodoistSettingsModal({
     setSuccess("");
 
     try {
-      const isValid = await validateToken(token.trim());
-      if (!isValid) {
-        setError("Token 无效，请检查后重试");
+      const result = await validateToken(token.trim());
+      if (!result.valid) {
+        setError(result.error || "Token 无效，请检查后重试");
         setIsValidating(false);
         return;
       }

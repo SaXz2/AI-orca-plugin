@@ -10,6 +10,7 @@ import type { OpenAITool } from "./openai-client";
 const BASE_PROMPT = `你是笔记库智能助手。遵守工具返回的所有指令。
 
 ## 核心原则
+- **先读后说**：拿到 blockid 后必须先调用工具读取内容，再基于实际内容总结。严禁凭名称猜测主题含义，严禁不读原文就下定论
 - **精确执行**：严格使用用户原词，不擅自替换、扩展或联想
 - **真实可靠**：只引用工具实际返回的内容，绝对禁止编造
 - **简洁直接**：结论先行，短句优先，不废话`;
@@ -43,11 +44,19 @@ const DRAGGED_CONTEXT_SECTION = `## 上下文优先
 - 用户已提供具体内容块，优先基于这些块回答
 - 不需要再搜索笔记库`;
 
+export interface SkillPromptInfo {
+  name: string;
+  description: string;
+  instruction: string;
+}
+
 export interface PromptOptions {
   hasMcpTools?: boolean;
   hasTodoistTools?: boolean;
   hasWebSearch?: boolean;
   hasDraggedContext?: boolean;
+  skills?: SkillPromptInfo[];
+  repoId?: string;
 }
 
 export function buildDynamicSystemPrompt(options: PromptOptions = {}): string {
@@ -62,6 +71,16 @@ export function buildDynamicSystemPrompt(options: PromptOptions = {}): string {
 
   // 引用格式
   sections.push(CITATION_SECTION);
+
+  // 可用技能（注入到系统提示词，AI 自动识别并按需遵循）
+  if (options.skills && options.skills.length > 0) {
+    sections.push(buildSkillsSection(options.skills));
+  }
+
+  // Technical Notes（动态值，如 repoId）
+  if (options.repoId) {
+    sections.push(buildTechnicalNotes(options.repoId));
+  }
 
   // 联网搜索相关
   if (options.hasWebSearch) {
@@ -79,6 +98,48 @@ export function buildDynamicSystemPrompt(options: PromptOptions = {}): string {
   }
 
   return sections.join("\n\n");
+}
+
+function buildSkillsSection(skills: SkillPromptInfo[]): string {
+  const header = `## 可用技能 (Skills)
+当用户请求匹配以下技能时，先告知用户将使用该技能，然后按照技能的核心要求执行：
+
+`;
+  const parts = [header];
+
+  for (const skill of skills) {
+    // 只取指令的前 5 行核心要点，避免 token 浪费
+    const instructionLines = skill.instruction.split("\n");
+    const keyPoints: string[] = [];
+    for (const line of instructionLines) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#") || trimmed.startsWith("---")) continue;
+      keyPoints.push(trimmed);
+      if (keyPoints.length >= 5) break;
+    }
+
+    parts.push(`- **${skill.name}**：${skill.description}
+  核心要求：${keyPoints.join("；")}`);
+  }
+
+  return parts.join("\n");
+}
+
+function buildTechnicalNotes(repoId: string): string {
+  return `## Technical Notes
+- 调用需要 \`repoId\` 参数的工具时，使用 \`"${repoId}"\` 作为其值`;
+}
+
+/**
+ * 获取当前仓库标识符，用于注入到系统提示词中。
+ * 不同仓库返回不同值，确保 MCP 工具调用时使用正确的 repoId。
+ */
+export function getCurrentRepoId(): string {
+  try {
+    return (typeof orca !== "undefined" && orca.state?.repo) || "unknown";
+  } catch {
+    return "unknown";
+  }
 }
 
 /**
