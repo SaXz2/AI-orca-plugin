@@ -318,15 +318,20 @@ function safeDeltaFromEvent(obj: any): StreamChunk {
 
   // Check for reasoning content (DeepSeek/Claude/OpenAI thinking)
   // 尝试多种可能的字段名
-  let reasoning =
-    delta?.reasoning_content ||
-    delta?.thinking ||
-    delta?.reasoning ||
-    choice?.reasoning_content ||
-    choice?.thinking;
-  
+  // 注意：DeepSeek 的 reasoning_content 可能为空字符串 ""，不能用 || 过滤
+  let reasoning: string | undefined;
+  if (delta) {
+    if ("reasoning_content" in delta) reasoning = delta.reasoning_content;
+    else if ("thinking" in delta) reasoning = delta.thinking;
+    else if ("reasoning" in delta) reasoning = delta.reasoning;
+  }
+  if (reasoning === undefined && choice) {
+    if ("reasoning_content" in choice) reasoning = choice.reasoning_content;
+    else if ("thinking" in choice) reasoning = choice.thinking;
+  }
+
   // DeepSeek Reasoner 有时会返回重复字符，尝试去重
-  if (typeof reasoning === "string" && reasoning) {
+  if (typeof reasoning === "string") {
     // 检测并修复连续重复的字符模式（如 "我我喜喜欢欢" -> "我喜欢"）
     // 使用更宽松的检测：如果超过 50% 的字符是连续重复的，就进行去重
     const originalLength = reasoning.length;
@@ -361,8 +366,9 @@ function safeDeltaFromEvent(obj: any): StreamChunk {
       };
     }
     // Check reasoning in non-streaming message
-    const msgReasoning = msg.reasoning_content || msg.thinking;
-    if (typeof msgReasoning === "string" && msgReasoning) {
+    // 注意：DeepSeek 的 reasoning_content 可能为空字符串 ""
+    const msgReasoning = ("reasoning_content" in msg) ? msg.reasoning_content : msg.thinking;
+    if (typeof msgReasoning === "string") {
       return {
         type: "reasoning",
         reasoning: msgReasoning,
@@ -960,7 +966,7 @@ export async function* openAIChatCompletionsStream(
     }
 
     const chunk: StreamChunk = safeDeltaFromEvent(json);
-    if (chunk.content || chunk.tool_calls || chunk.reasoning) yield chunk;
+    if (chunk.content || chunk.tool_calls || chunk.reasoning != null) yield chunk;
     return;
   }
 
@@ -1071,7 +1077,7 @@ export async function* openAIChatCompletionsStream(
         }
 
         const chunk = safeAnthropicDeltaFromEvent(obj);
-        if (chunk.content || chunk.tool_calls || chunk.reasoning) yield chunk;
+        if (chunk.content || chunk.tool_calls || chunk.reasoning != null) yield chunk;
         continue;
       }
 
@@ -1088,7 +1094,7 @@ export async function* openAIChatCompletionsStream(
       }
       
       const chunk = safeDeltaFromEvent(obj);
-      if (chunk.content || chunk.tool_calls || chunk.reasoning) yield chunk;
+      if (chunk.content || chunk.tool_calls || chunk.reasoning != null) yield chunk;
     }
   }
 }

@@ -27,7 +27,7 @@ import ToolPanel from "../components/ToolPanel";
 import { loadToolSettings, toolStore, toggleWebSearch, toggleAgenticRAG, toggleScriptAnalysis } from "../store/tool-store";
 import { getAllCommandsInfo } from "../services/commands-loader";
 import { listSkills } from "../services/skills-manager";
-import type { SkillRef } from "../services/skills-manager";
+import type { SkillRef } from "../types/skills";
 import { recommendSkills, type SkillRecommendation, getSkillSummary } from "../services/skill-recommender";
 
 const React = window.React as unknown as {
@@ -341,9 +341,9 @@ export default function ChatInput({
     const query = text.slice(1).toLowerCase(); // 移除开头的 #
     if (query.includes(" ")) return []; // 如果有空格，不显示菜单
     
-    // 使用模糊匹配过滤 Skills
-    return availableSkills.filter(skill => 
-      fuzzyMatch(query, skill.id)
+    // 使用模糊匹配过滤 Skills (按名称匹配)
+    return availableSkills.filter(skill =>
+      fuzzyMatch(query, skill.name)
     );
   }, [text, availableSkills]);
 
@@ -1087,9 +1087,10 @@ export default function ChatInput({
             key: skill.id,
             "data-skill-index": index,
             onClick: () => {
-              setText(`#${skill.id} `);
+              const triggerName = skill.name || skill.id;
+              setText(`#${triggerName} `);
               if (textareaRef.current) {
-                textareaRef.current.value = `#${skill.id} `;
+                textareaRef.current.value = `#${triggerName} `;
                 textareaRef.current.focus();
               }
               setSkillMenuOpen(false);
@@ -1107,17 +1108,17 @@ export default function ChatInput({
               className: "ti ti-wand", 
               style: { fontSize: "14px", color: "var(--orca-color-success, #10b981)", width: "18px", textAlign: "center" } 
             }),
-            createElement("span", { style: { fontWeight: 600, color: "var(--orca-color-success, #10b981)" } }, `#${skill.id}`),
-            skill.isGlobal && createElement("span", { 
-              style: { 
-                fontSize: "10px", 
+            createElement("span", { style: { fontWeight: 600, color: "var(--orca-color-success, #10b981)" } }, `#${skill.name || skill.id}`),
+            skill.scope !== "local" && createElement("span", {
+              style: {
+                fontSize: "10px",
                 color: "var(--orca-color-text-4)",
                 padding: "2px 6px",
                 background: "var(--orca-color-bg-3)",
                 borderRadius: "4px",
                 marginLeft: "auto"
-              } 
-            }, "\u5168\u5c40")
+              }
+            }, skill.scope === "global" ? "\u5168\u5c40" : "\u5c40\u90e8")
           )
         )
       ),
@@ -1165,23 +1166,16 @@ export default function ChatInput({
                 border: "1px solid rgba(16, 185, 129, 0.3)",
                 borderRadius: "6px",
                 cursor: "pointer",
-                background: "var(--orca-color-bg-1)",
                 color: "var(--orca-color-success, #10b981)",
                 display: "flex",
                 alignItems: "center",
                 gap: "4px",
-                transition: "all 0.15s ease",
               },
-              onMouseEnter: (e: any) => {
-                e.target.style.background = "rgba(16, 185, 129, 0.1)";
-              },
-              onMouseLeave: (e: any) => {
-                e.target.style.background = "var(--orca-color-bg-1)";
-              },
+              className: "skill-rec-btn",
               title: `${getSkillSummary(rec.skill)}\n${rec.matchReason}`,
             },
             createElement("i", { className: "ti ti-wand", style: { fontSize: "12px" } }),
-            rec.skill.metadata.name || rec.skill.id
+            rec.skill.name || rec.skill.id
           )
         ),
         createElement(

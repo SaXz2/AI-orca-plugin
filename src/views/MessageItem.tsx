@@ -913,16 +913,16 @@ function CollapsibleToolCalls({
     const result = toolResults?.get(tc.id);
     if (!result) {
       return isStreaming 
-        ? { color: "#f59e0b", status: "running" } 
-        : { color: "#6b7280", status: "pending" };
+        ? { color: "var(--orca-color-warning)", status: "running" }
+        : { color: "var(--orca-color-text-3)", status: "pending" };
     }
     // 更精确的错误判断：只有明确的错误格式才标记为失败
     const isError = result.content?.startsWith("Error:") ||
                    result.content?.startsWith("Wikipedia 查询失败:") ||
                    result.content?.startsWith("❌");
     return isError 
-      ? { color: "#ef4444", status: "error" } 
-      : { color: "#22c55e", status: "success" };
+      ? { color: "var(--orca-color-danger, #dc3545)", status: "error" }
+      : { color: "var(--orca-color-success, #22c55e)", status: "success" };
   };
 
   // 进度条组件 - 显示每个工具的状态
@@ -969,11 +969,11 @@ function CollapsibleToolCalls({
         gap: "8px",
         padding: "8px 12px",
         borderRadius: "8px",
-        background: errorCount > 0 
-          ? "rgba(239, 68, 68, 0.06)" 
+        background: errorCount > 0
+          ? "color-mix(in srgb, var(--orca-color-danger, #dc3545) 6%, transparent)"
           : "var(--orca-color-bg-2)",
-        border: errorCount > 0 
-          ? "1px solid rgba(239, 68, 68, 0.15)" 
+        border: errorCount > 0
+          ? "1px solid color-mix(in srgb, var(--orca-color-danger, #dc3545) 15%, transparent)"
           : "1px solid var(--orca-color-border)",
         cursor: "pointer",
         fontSize: "13px",
@@ -986,7 +986,7 @@ function CollapsibleToolCalls({
       className: errorCount > 0 ? "ti ti-alert-circle" : "ti ti-tools",
       style: { 
         fontSize: "15px", 
-        color: errorCount > 0 ? "#ef4444" : "var(--orca-color-primary)",
+        color: errorCount > 0 ? "var(--orca-color-danger, #dc3545)" : "var(--orca-color-primary)",
       },
     }),
     // 状态文字
@@ -1016,11 +1016,11 @@ function CollapsibleToolCalls({
         padding: "8px 12px",
         marginBottom: "10px",
         borderRadius: "8px",
-        background: errorCount > 0 
-          ? "rgba(239, 68, 68, 0.06)" 
+        background: errorCount > 0
+          ? "color-mix(in srgb, var(--orca-color-danger, #dc3545) 6%, transparent)"
           : "var(--orca-color-bg-2)",
-        border: errorCount > 0 
-          ? "1px solid rgba(239, 68, 68, 0.15)" 
+        border: errorCount > 0
+          ? "1px solid color-mix(in srgb, var(--orca-color-danger, #dc3545) 15%, transparent)"
           : "1px solid var(--orca-color-border)",
         cursor: "pointer",
         fontSize: "13px",
@@ -1037,7 +1037,7 @@ function CollapsibleToolCalls({
           : "ti ti-tools",
       style: {
         fontSize: "15px",
-        color: errorCount > 0 ? "#ef4444" : "var(--orca-color-primary)",
+        color: errorCount > 0 ? "var(--orca-color-danger, #dc3545)" : "var(--orca-color-primary)",
         animation: isStreaming && !allCompleted ? "spin 1s linear infinite" : undefined,
       },
     }),
@@ -1932,7 +1932,7 @@ export default function MessageItem({
               marginTop: "10px",
               padding: "8px 12px",
               background: "rgba(99, 102, 241, 0.08)",
-              border: "1px solid rgba(99, 102, 241, 0.2)",
+              border: "1px solid color-mix(in srgb, var(--orca-color-primary) 20%, transparent)",
               borderRadius: "8px",
               fontSize: "12px",
             },
@@ -1940,7 +1940,7 @@ export default function MessageItem({
           // 分支图标
           createElement("i", {
             className: "ti ti-git-branch",
-            style: { fontSize: "14px", color: "#6366f1" },
+            style: { fontSize: "14px", color: "var(--orca-color-primary)" },
           }),
           // 分支标签
           createElement(
@@ -1964,13 +1964,13 @@ export default function MessageItem({
                   padding: "4px 10px",
                   borderRadius: "4px",
                   border: currentBranchId === branch.id 
-                    ? "1px solid #6366f1" 
+                    ? "1px solid var(--orca-color-primary)"
                     : "1px solid var(--orca-color-border)",
-                  background: currentBranchId === branch.id 
-                    ? "rgba(99, 102, 241, 0.15)" 
+                  background: currentBranchId === branch.id
+                    ? "color-mix(in srgb, var(--orca-color-primary) 15%, transparent)"
                     : "var(--orca-color-bg-2)",
-                  color: currentBranchId === branch.id 
-                    ? "#6366f1" 
+                  color: currentBranchId === branch.id
+                    ? "var(--orca-color-primary)"
                     : "var(--orca-color-text-2)",
                   cursor: "pointer",
                   fontSize: "11px",

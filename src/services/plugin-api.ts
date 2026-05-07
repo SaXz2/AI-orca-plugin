@@ -351,7 +351,7 @@ export const AiChatPluginAPI = {
         result: {
           success: true,
           content: currentContent,
-          reasoning: currentReasoning || undefined,
+          reasoning: currentReasoning != null ? currentReasoning : undefined,
           toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
           toolResults: toolResults.length > 0 ? toolResults : undefined,
           conversation,

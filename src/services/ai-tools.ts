@@ -22,6 +22,7 @@ import {
 } from "./script-analysis-tool";
 import { searchWeb, searchWithFallback, formatSearchResults } from "./web-search-service";
 import { searchImages, formatImageResults, type ImageSearchConfig } from "./image-search-service";
+import { fetchWebContent } from "./web-fetcher";
 import { getAiChatSettings } from "../settings/ai-chat-settings";
 import { getAiChatPluginName } from "../ui/ai-chat-ui";
 import {
@@ -372,6 +373,42 @@ export const IMAGE_SEARCH_TOOL: OpenAITool = {
 };
 
 /**
+ * 网页抓取工具 - 获取任意 URL 的完整网页内容
+ * 无需 API Key，直接抓取网页并转换为 Markdown
+ */
+export const WEB_FETCH_TOOL: OpenAITool = {
+  type: "function",
+  function: {
+    name: "webFetch",
+    description: `抓取指定 URL 的网页内容并转换为可读的 Markdown 格式。
+
+【何时使用】
+- 搜索结果中的链接需要查看完整内容时
+- 用户要求阅读/查看某个网页
+- 需要从网页获取详细信息
+- 用户分享了链接需要了解内容
+
+【参数】
+- url: 要抓取的网页 URL（必需，完整的 https/http 链接）
+
+【注意】
+- 仅支持 http/https 链接
+- 自动提取页面主要内容，过滤广告和导航
+- 返回 Markdown 格式的文本`,
+    parameters: {
+      type: "object",
+      properties: {
+        url: {
+          type: "string",
+          description: "要抓取的网页完整 URL",
+        },
+      },
+      required: ["url"],
+    },
+  },
+};
+
+/**
  * Wikipedia 搜索工具
  */
 export const WIKIPEDIA_TOOL: OpenAITool = {
@@ -472,6 +509,7 @@ export function getTools(
 
   if (webSearchOn) {
     tools.push(WEB_SEARCH_TOOL);
+    tools.push(WEB_FETCH_TOOL);
     if (imageSearchOn) tools.push(IMAGE_SEARCH_TOOL);
   }
   if (wikipediaOn) tools.push(WIKIPEDIA_TOOL);
@@ -1088,6 +1126,24 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
       return formatImageResults(results);
     }
 
+    if (toolName === "webFetch") {
+      const url = args?.url;
+      if (!url) return "Error: Missing url parameter";
+      try {
+        const fetched = await fetchWebContent(url);
+        let output = `# ${fetched.title}\n\n`;
+        output += `来源: ${fetched.url}\n\n`;
+        // 限制内容长度到 8000 字符
+        const content = fetched.content.length > 8000
+          ? fetched.content.slice(0, 8000) + "\n\n...(内容已截断，访问原文查看完整内容)"
+          : fetched.content;
+        output += content;
+        return output;
+      } catch (err: any) {
+        return `Error: 无法抓取网页 ${url}: ${err.message}`;
+      }
+    }
+
     if (toolName === "wikipedia") {
       const query = args?.query;
       if (!query) return "Error: Missing query parameter";
@@ -1128,21 +1184,148 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Skill 兼容性导出（供 AiChatPanel.tsx 的 skill_ 前缀工具调用使用）
+// Skill function calling 支持
+// 将已启用的技能注册为 OpenAI function calling 工具，使 AI 能主动调用技能
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** 技能工具缓存：toolName → { instruction, ref } */
+const skillToolCache = new Map<string, { instruction: string; ref: { id: string; scope: string } }>();
+
+/** 清除技能工具缓存 */
+export function clearSkillToolCache(): void {
+  skillToolCache.clear();
+}
+
+/**
+ * 获取所有已启用技能的 OpenAI 工具定义
+ * 每个技能注册为 skill_{id} 的工具
+ */
 export async function getSkillToolsAsync(): Promise<OpenAITool[]> {
-  return [];
+  try {
+    const { listSkills, getSkill } = await import("./skills-manager");
+    const refs = await listSkills();
+    const tools: OpenAITool[] = [];
+
+    for (const ref of refs) {
+      try {
+        const skill = await getSkill(ref.id, ref.scope === "global");
+        if (!skill || !skill.enabled) continue;
+
+        const toolName = getSkillToolName(skill.id);
+        const desc = skill.description
+          ? `${skill.description.slice(0, 300)}`
+          : `执行技能: ${skill.name}`;
+
+        // 缓存技能信息供 resolveSkillIdFromToolName 和 getSkillInstructionsAsync 使用
+        skillToolCache.set(toolName, {
+          instruction: skill.instruction,
+          ref: { id: skill.id, scope: skill.scope },
+        });
+
+        // 生成工具的参数 schema（可选 input 参数）
+        const hasInputParam = skill.instruction.includes("{input}") ||
+          skill.instruction.includes("用户输入") ||
+          skill.instruction.includes("user input");
+
+        tools.push({
+          type: "function" as const,
+          function: {
+            name: toolName,
+            description: `[技能: ${skill.name}] 使用此工具执行已启用的技能。${desc}。调用后系统将加载完整的技能指令，请严格遵循指令执行。`,
+            parameters: {
+              type: "object",
+              properties: {
+                input: {
+                  type: "string",
+                  description: "传递给技能的输入文本（用户原始问题或需求）",
+                },
+              },
+              required: hasInputParam ? ["input"] : [],
+            },
+          },
+        });
+      } catch (err) {
+        console.warn(`[SkillTools] Failed to create tool for skill ${ref.id}:`, err);
+      }
+    }
+
+    console.log(`[SkillTools] Registered ${tools.length} skill tools`);
+    return tools;
+  } catch (err) {
+    console.error("[SkillTools] Failed to get skill tools:", err);
+    return [];
+  }
 }
 
-export async function getSkillInstructionsAsync(_skillRef: { id: string; isGlobal: boolean }): Promise<string | null> {
-  return null;
+/**
+ * 获取技能的完整指令文本
+ */
+export async function getSkillInstructionsAsync(
+  skillRef: { id: string; isGlobal?: boolean; scope?: string }
+): Promise<string | null> {
+  try {
+    const toolName = getSkillToolName(skillRef.id);
+
+    // 检查缓存
+    const cached = skillToolCache.get(toolName);
+    if (cached) return cached.instruction;
+
+    // 加载技能
+    const { getSkill } = await import("./skills-manager");
+    const isGlobal = skillRef.isGlobal ?? (skillRef.scope === "global");
+    const skill = await getSkill(skillRef.id, isGlobal);
+    if (!skill) return null;
+
+    // 更新缓存
+    skillToolCache.set(toolName, {
+      instruction: skill.instruction,
+      ref: { id: skill.id, scope: skill.scope },
+    });
+
+    return skill.instruction;
+  } catch (err) {
+    console.error(`[SkillTools] Failed to get instructions for ${skillRef.id}:`, err);
+    return null;
+  }
 }
 
-export function getSkillToolName(_skillId: string): string {
-  return `skill_${_skillId}`;
+/**
+ * 获取技能的工具名称
+ */
+export function getSkillToolName(skillId: string): string {
+  return `skill_${skillId}`;
 }
 
-export async function resolveSkillIdFromToolName(_toolName: string): Promise<{ id: string; isGlobal: boolean } | null> {
+/**
+ * 从工具名称反解 SkillRef
+ */
+export async function resolveSkillIdFromToolName(
+  toolName: string
+): Promise<{ id: string; isGlobal: boolean } | null> {
+  if (!toolName.startsWith("skill_")) return null;
+
+  const skillId = toolName.slice(6);
+
+  // 优先从缓存获取
+  const cached = skillToolCache.get(toolName);
+  if (cached) {
+    return { id: cached.ref.id, isGlobal: cached.ref.scope === "global" };
+  }
+
+  // 回退到查找技能
+  try {
+    const { getSkill } = await import("./skills-manager");
+    const skill = await getSkill(skillId);
+    if (skill) {
+      skillToolCache.set(toolName, {
+        instruction: skill.instruction,
+        ref: { id: skill.id, scope: skill.scope },
+      });
+      return { id: skillId, isGlobal: skill.scope === "global" };
+    }
+  } catch (err) {
+    console.warn(`[SkillTools] Failed to resolve ${toolName}:`, err);
+  }
+
   return null;
 }

@@ -5,7 +5,8 @@
  * 使用关键词匹配、标签匹配和语义相似度来推荐
  */
 
-import { listSkills, getSkill, type Skill, type SkillRef } from "./skills-manager";
+import { listSkills, getSkill } from "./skills-manager";
+import type { Skill, SkillRef } from "../types/skills";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -113,7 +114,7 @@ async function buildSkillIndex(): Promise<SkillIndex[]> {
   const index: SkillIndex[] = [];
   
   for (const ref of skillRefs) {
-    const skill = await getSkill(ref.id, ref.isGlobal);
+    const skill = await getSkill(ref.id, ref.scope === "global");
     if (!skill || !skill.enabled) continue;
     
     // 提取关键词
@@ -123,30 +124,30 @@ async function buildSkillIndex(): Promise<SkillIndex[]> {
     keywords.push(...extractKeywords(skill.id));
     
     // 从名称提取
-    if (skill.metadata.name) {
-      keywords.push(...extractKeywords(skill.metadata.name));
+    if (skill.name) {
+      keywords.push(...extractKeywords(skill.name));
     }
-    
+
     // 从描述提取
-    if (skill.metadata.description) {
-      keywords.push(...extractKeywords(skill.metadata.description));
+    if (skill.description) {
+      keywords.push(...extractKeywords(skill.description));
     }
-    
+
     // 从标签提取
-    if (skill.metadata.tags) {
-      keywords.push(...skill.metadata.tags.map(t => t.toLowerCase()));
+    if (skill.tags) {
+      keywords.push(...skill.tags.map(t => t.toLowerCase()));
     }
-    
+
     // 从指令的前500字符提取
     if (skill.instruction) {
       keywords.push(...extractKeywords(skill.instruction.slice(0, 500)));
     }
-    
+
     index.push({
       skill,
       keywords: [...new Set(keywords)],
-      normalizedName: (skill.metadata.name || skill.id).toLowerCase(),
-      normalizedDescription: (skill.metadata.description || "").toLowerCase(),
+      normalizedName: (skill.name || skill.id).toLowerCase(),
+      normalizedDescription: (skill.description || "").toLowerCase(),
     });
   }
   
@@ -283,11 +284,11 @@ export async function recommendSkills(
       }
     }
     
-    // 名称直接匹配加分
+    // 名称直接匹配加分（提高权重使命名触发更可靠）
     let nameBoost = 0;
     const inputLower = input.toLowerCase();
     if (inputLower.includes(indexed.normalizedName) || indexed.normalizedName.includes(inputLower)) {
-      nameBoost = 0.4;
+      nameBoost = 0.55;
     }
     
     const finalScore = Math.min(baseScore + intentBoost + nameBoost, 1);
@@ -317,8 +318,6 @@ export async function recommendSkills(
 
 /**
  * 快速检测是否有相关 Skill（用于 UI 显示提示）
- * @param input 用户输入
- * @returns 是否有相关 Skill
  */
 export async function hasRelevantSkills(input: string): Promise<boolean> {
   const recommendations = await recommendSkills(input, 1, 0.2);
@@ -326,13 +325,39 @@ export async function hasRelevantSkills(input: string): Promise<boolean> {
 }
 
 /**
+ * 自动触发检测：高置信度返回匹配技能，否则返回 null
+ * 当用户输入明确匹配某个技能时，自动激活该技能
+ * @param input 用户输入
+ * @param threshold 置信度阈值（默认 0.5）
+ */
+export async function getAutoTriggerSkill(
+  input: string,
+  threshold: number = 0.5
+): Promise<Skill | null> {
+  if (!input || input.trim().length < 4) return null;
+
+  const recommendations = await recommendSkills(input, 1, 0.1);
+  if (recommendations.length === 0) return null;
+
+  const top = recommendations[0];
+  if (top.score >= threshold) {
+    console.log(
+      `[SkillRecommender] Auto-trigger: ${top.skill.name} (score: ${top.score.toFixed(2)}, reason: ${top.matchReason})`
+    );
+    return top.skill;
+  }
+
+  return null;
+}
+
+/**
  * 获取 Skill 的简短描述（用于 UI 显示）
  */
 export function getSkillSummary(skill: Skill): string {
-  if (skill.metadata.description) {
-    return skill.metadata.description.length > 50
-      ? skill.metadata.description.slice(0, 47) + "..."
-      : skill.metadata.description;
+  if (skill.description) {
+    return skill.description.length > 50
+      ? skill.description.slice(0, 47) + "..."
+      : skill.description;
   }
-  return skill.metadata.name || skill.id;
+  return skill.name || skill.id;
 }

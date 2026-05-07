@@ -201,10 +201,185 @@ async function searchDuckDuckGo(
   maxResults: number,
   config: DuckDuckGoConfig
 ): Promise<SearchResponse> {
+  const startTime = Date.now();
+
+  // 先尝试 Lite 版本（稳定，结构简单）
+  try {
+    const results = await searchDuckDuckGoLite(query, maxResults);
+    if (results.length > 0) {
+      return {
+        query,
+        provider: "DuckDuckGo",
+        results,
+        responseTime: Date.now() - startTime,
+      };
+    }
+  } catch (err) {
+    // Lite 失败，继续尝试 HTML 版本
+  }
+
+  // 回退到 HTML 版本
+  try {
+    const results = await searchDuckDuckGoHtml(query, maxResults, config);
+    return {
+      query,
+      provider: "DuckDuckGo",
+      results,
+      responseTime: Date.now() - startTime,
+    };
+  } catch (err) {
+    throw new Error(`DuckDuckGo 搜索失败: ${err instanceof Error ? err.message : err}`);
+  }
+}
+
+/**
+ * DuckDuckGo Lite 搜索 - 最稳定的免费方案
+ * lite.duckduckgo.com 专为低带宽/旧浏览器设计，HTML 结构极简且稳定
+ */
+async function searchDuckDuckGoLite(
+  query: string,
+  maxResults: number
+): Promise<SearchResult[]> {
+  const url = new URL("https://lite.duckduckgo.com/lite/");
+  url.searchParams.set("q", query);
+
+  const response = await fetch(url.toString(), {
+    headers: {
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      "Accept": "text/html,application/xhtml+xml",
+      "Accept-Language": "en-US,en;q=0.5",
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+
+  const html = await response.text();
+  const results: SearchResult[] = [];
+
+  // lite.duckduckgo.com 格式:
+  // <tr class="result">
+  //   <td>
+  //     <a rel="nofollow" href="//duckduckgo.com/l/?uddg=...">Title</a>
+  //     <br>
+  //     <span class="link-text">display url</span>
+  //     <span class="result-snippet">snippet</span>
+  //   </td>
+  // </tr>
+
+  // 匹配每个结果行
+  const rowRegex = /<tr[^>]*class="[^"]*result[^"]*"[^>]*>([\s\S]*?)<\/tr>/gi;
+  let rowMatch;
+  while ((rowMatch = rowRegex.exec(html)) !== null && results.length < maxResults) {
+    const rowHtml = rowMatch[1];
+
+    // 提取链接和标题
+    const linkMatch = rowHtml.match(/<a[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/i);
+    if (!linkMatch) continue;
+
+    let resultUrl = linkMatch[1];
+    const title = decodeHTMLEntities(linkMatch[2].replace(/<[^>]*>/g, "").trim());
+
+    // 提取真实 URL（DuckDuckGo 使用重定向）
+    if (resultUrl.includes("uddg=")) {
+      const m = resultUrl.match(/uddg=([^&]+)/);
+      if (m) resultUrl = decodeURIComponent(m[1]);
+    }
+    // 处理协议相对 URL
+    if (resultUrl.startsWith("//")) resultUrl = "https:" + resultUrl;
+
+    // 提取摘要
+    let snippet = title;
+    const snippetMatch = rowHtml.match(/<span[^>]*class="[^"]*result-snippet[^"]*"[^>]*>([\s\S]*?)<\/span>/i);
+    if (snippetMatch) {
+      snippet = decodeHTMLEntities(snippetMatch[1].replace(/<[^>]*>/g, "").trim());
+    }
+
+    if (title && resultUrl && resultUrl.startsWith("http")) {
+      results.push({ title, url: resultUrl, content: snippet });
+    }
+  }
+
+  // 如果有"下一页"，继续抓取（最多2页）
+  if (results.length < maxResults) {
+    const nextMatch = html.match(/<a[^>]*href="([^"]*)"[^>]*>[\s\S]*?Next[\s\S]*?<\/a>/i);
+    if (nextMatch) {
+      try {
+        let nextUrl = nextMatch[1];
+        if (nextUrl.startsWith("/")) {
+          nextUrl = "https://lite.duckduckgo.com" + nextUrl;
+        }
+        const moreResults = await searchDuckDuckGoLitePage(nextUrl, maxResults - results.length);
+        results.push(...moreResults);
+      } catch {}
+    }
+  }
+
+  return results;
+}
+
+/**
+ * 抓取 Lite 版本的指定页面（内部辅助）
+ */
+async function searchDuckDuckGoLitePage(
+  url: string,
+  maxResults: number
+): Promise<SearchResult[]> {
+  const response = await fetch(url, {
+    headers: {
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+      "Accept": "text/html,application/xhtml+xml",
+    },
+  });
+
+  if (!response.ok) return [];
+
+  const html = await response.text();
+  const results: SearchResult[] = [];
+
+  const rowRegex = /<tr[^>]*class="[^"]*result[^"]*"[^>]*>([\s\S]*?)<\/tr>/gi;
+  let rowMatch;
+  while ((rowMatch = rowRegex.exec(html)) !== null && results.length < maxResults) {
+    const rowHtml = rowMatch[1];
+    const linkMatch = rowHtml.match(/<a[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/i);
+    if (!linkMatch) continue;
+
+    let resultUrl = linkMatch[1];
+    const title = decodeHTMLEntities(linkMatch[2].replace(/<[^>]*>/g, "").trim());
+
+    if (resultUrl.includes("uddg=")) {
+      const m = resultUrl.match(/uddg=([^&]+)/);
+      if (m) resultUrl = decodeURIComponent(m[1]);
+    }
+    if (resultUrl.startsWith("//")) resultUrl = "https:" + resultUrl;
+
+    let snippet = title;
+    const snippetMatch = rowHtml.match(/<span[^>]*class="[^"]*result-snippet[^"]*"[^>]*>([\s\S]*?)<\/span>/i);
+    if (snippetMatch) {
+      snippet = decodeHTMLEntities(snippetMatch[1].replace(/<[^>]*>/g, "").trim());
+    }
+
+    if (title && resultUrl && resultUrl.startsWith("http")) {
+      results.push({ title, url: resultUrl, content: snippet });
+    }
+  }
+
+  return results;
+}
+
+/**
+ * DuckDuckGo HTML 搜索 - 回退方案
+ * 使用 html.duckduckgo.com（如果 Lite 版本不可用）
+ */
+async function searchDuckDuckGoHtml(
+  query: string,
+  maxResults: number,
+  config: DuckDuckGoConfig
+): Promise<SearchResult[]> {
   const { region = "wt-wt" } = config;
   const startTime = Date.now();
 
-  // 使用 DuckDuckGo HTML lite 版本，更容易解析
   const url = new URL("https://html.duckduckgo.com/html/");
   url.searchParams.set("q", query);
   url.searchParams.set("kl", region);
@@ -226,67 +401,89 @@ async function searchDuckDuckGo(
   const html = await response.text();
   const results: SearchResult[] = [];
 
-  // 解析 HTML 结果
-  // DuckDuckGo HTML 版本的结果格式: <a class="result__a" href="...">title</a>
-  // 和 <a class="result__snippet">snippet</a>
-  const resultRegex =
-    /<a[^>]*class="result__a"[^>]*href="([^"]*)"[^>]*>([^<]*)<\/a>[\s\S]*?<a[^>]*class="result__snippet"[^>]*>([^<]*)<\/a>/gi;
-
-  let match;
-  while ((match = resultRegex.exec(html)) !== null && results.length < maxResults) {
-    let url = match[1];
-    const title = decodeHTMLEntities(match[2].trim());
-    const snippet = decodeHTMLEntities(match[3].trim());
-
-    // DuckDuckGo 的链接是重定向链接，需要提取真实 URL
-    // 格式: //duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com...
-    if (url.includes("uddg=")) {
-      const uddgMatch = url.match(/uddg=([^&]+)/);
-      if (uddgMatch) {
-        url = decodeURIComponent(uddgMatch[1]);
-      }
+  // 提取真实 URL 的辅助函数
+  const extractRealUrl = (raw: string): string => {
+    if (raw.includes("uddg=")) {
+      const m = raw.match(/uddg=([^&]+)/);
+      if (m) return decodeURIComponent(m[1]);
     }
-
-    if (title && url && url.startsWith("http")) {
-      results.push({
-        title,
-        url,
-        content: snippet || title,
-      });
-    }
-  }
-
-  // 如果正则没匹配到，尝试备用解析
-  if (results.length === 0) {
-    // 尝试匹配更宽松的模式
-    const linkRegex = /<a[^>]*class="[^"]*result__a[^"]*"[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/gi;
-    while ((match = linkRegex.exec(html)) !== null && results.length < maxResults) {
-      let url = match[1];
-      const title = decodeHTMLEntities(match[2].replace(/<[^>]*>/g, "").trim());
-
-      if (url.includes("uddg=")) {
-        const uddgMatch = url.match(/uddg=([^&]+)/);
-        if (uddgMatch) {
-          url = decodeURIComponent(uddgMatch[1]);
-        }
-      }
-
-      if (title && url && url.startsWith("http")) {
-        results.push({
-          title,
-          url,
-          content: title,
-        });
-      }
-    }
-  }
-
-  return {
-    query,
-    provider: "DuckDuckGo",
-    results,
-    responseTime: Date.now() - startTime,
+    if (!raw.startsWith("http")) return "";
+    return raw;
   };
+
+  // 多级解析策略，从严格到宽松
+  // 策略1: 标准 result__a + result__snippet 配对
+  const snippetRegex = /<a[^>]*class="[^"]*result__a[^"]*"[^>]*href="([^"]*)"[^>]*>([^<]*)<\/a>/gi;
+  const snippets: { url: string; title: string }[] = [];
+  let m;
+  while ((m = snippetRegex.exec(html)) !== null) {
+    const url = extractRealUrl(m[1]);
+    const title = decodeHTMLEntities(m[2].trim());
+    if (title && url) snippets.push({ url, title });
+  }
+
+  // 提取所有 snippet 文本
+  const bodyRegex = /<a[^>]*class="[^"]*result__snippet[^"]*"[^>]*>([\s\S]*?)<\/a>/gi;
+  const bodies: string[] = [];
+  while ((m = bodyRegex.exec(html)) !== null) {
+    bodies.push(decodeHTMLEntities(m[1].trim()));
+  }
+
+  // 配对链接和摘要
+  for (let i = 0; i < snippets.length && results.length < maxResults; i++) {
+    results.push({
+      title: snippets[i].title,
+      url: snippets[i].url,
+      content: bodies[i] || snippets[i].title,
+    });
+  }
+
+  // 策略2: 只匹配链接（使用类名）
+  if (results.length === 0) {
+    const altRegex = /<a[^>]*class="[^"]*result__url[^"]*"[^>]*[^>]*>([\s\S]*?)<\/a>/gi;
+    while ((m = altRegex.exec(html)) !== null && results.length < maxResults) {
+      const url = extractRealUrl(decodeHTMLEntities(m[1].replace(/<[^>]*>/g, "").trim()));
+      if (url && url.startsWith("http")) {
+        results.push({ title: extractDomain(url), url, content: "" });
+      }
+    }
+  }
+
+  // 策略3: 通用链接解析（最后的回退）
+  if (results.length === 0) {
+    const genericRegex = /<a[^>]*href="([^"]*)"[^>]*class="[^"]*result[^"]*"[^>]*>([\s\S]*?)<\/a>/gi;
+    while ((m = genericRegex.exec(html)) !== null && results.length < maxResults) {
+      const url = extractRealUrl(m[1]);
+      const title = decodeHTMLEntities(m[2].replace(/<[^>]*>/g, "").trim());
+      if (title && url && url.startsWith("http")) {
+        results.push({ title, url, content: title });
+      }
+    }
+  }
+
+  // 策略4: 扫描所有外部链接
+  if (results.length === 0) {
+    const allLinkRegex = /<a[^>]*href="(\/\/duckduckgo\.com\/l\/\?uddg=[^"]*)"[^>]*>([^<]*)<\/a>/gi;
+    while ((m = allLinkRegex.exec(html)) !== null && results.length < maxResults) {
+      const url = extractRealUrl(m[1]);
+      const title = decodeHTMLEntities(m[2].trim());
+      if (title && url && url.startsWith("http") && !title.includes("class=")) {
+        results.push({ title, url, content: title });
+      }
+    }
+  }
+
+  return results;
+}
+
+// 提取域名
+function extractDomain(url: string): string {
+  try {
+    const u = new URL(url);
+    return u.hostname.replace(/^www\./, "");
+  } catch {
+    return url;
+  }
 }
 
 // HTML 实体解码
@@ -852,33 +1049,43 @@ export async function searchWithFallback(
 ): Promise<SearchResponse> {
   // 过滤出已启用的实例
   const enabledInstances = instances.filter(i => i.enabled);
-  
-  if (enabledInstances.length === 0) {
-    throw new Error("没有启用的搜索引擎。请在设置中添加并启用至少一个搜索引擎。");
-  }
-  
+
   const errors: string[] = [];
-  
+
+  // 先尝试用户配置的实例
   for (const instance of enabledInstances) {
     const instanceName = instance.name || `${instance.provider}-${instance.id.slice(-4)}`;
-    
+
     try {
       const config = buildSearchConfig(instance, maxResults);
       const response = await searchWeb(query, config);
-      
-      // 成功，返回结果
-      return {
-        ...response,
-        provider: instanceName, // 使用实例名称
-      };
+      return { ...response, provider: instanceName };
     } catch (error: any) {
-      const errorMsg = error.message || String(error);
-      errors.push(`${instanceName}: ${errorMsg}`);
-      // 继续尝试下一个
+      errors.push(`${instanceName}: ${error.message || error}`);
     }
   }
-  
-  // 所有实例都失败了
+
+  // 内置回退：DuckDuckGo Lite（无需配置，始终可用）
+  if (!enabledInstances.some(i => i.provider === "duckduckgo")) {
+    try {
+      const results = await searchDuckDuckGoLite(query, maxResults);
+      if (results.length > 0) {
+        return {
+          query,
+          provider: "DuckDuckGo (内置)",
+          results,
+          responseTime: 0,
+        };
+      }
+    } catch (error: any) {
+      errors.push(`DuckDuckGo (内置): ${error.message || error}`);
+    }
+  }
+
+  if (enabledInstances.length === 0) {
+    throw new Error("联网搜索失败。请在设置中配置搜索引擎，或稍后重试。");
+  }
+
   throw new Error(`所有搜索引擎都失败了:\n${errors.join("\n")}`);
 }
 

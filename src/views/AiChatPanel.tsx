@@ -66,7 +66,9 @@ import { exportSessionAsFile, saveSessionToJournal, saveMessagesToJournal } from
 import { sessionStore, updateSessionStore, clearSessionStore } from "../store/session-store";
 import { FLASHCARD_TOOL, executeTool, getToolsForDraggedContext, getTools, extractSearchResultsFromToolResults, getSkillToolsAsync, getSkillInstructionsAsync, getSkillToolName, resolveSkillIdFromToolName } from "../services/ai-tools";
 import { getToolStatus, isToolDisabled, shouldAskForTool, isAgenticRAGEnabled, getAgenticRAGConfig, isWebSearchEnabled } from "../store/tool-store";
-import { listSkills, getSkill, type Skill } from "../services/skills-manager";
+import { listSkills, getSkill } from "../services/skills-manager";
+import type { Skill, SkillRef } from "../types/skills";
+import { getAutoTriggerSkill } from "../services/skill-recommender";
 import { nowId, safeText } from "../utils/text-utils";
 import { buildConversationMessages } from "../services/message-builder";
 import { streamChatWithRetry, type ToolCallInfo } from "../services/chat-stream-handler";
@@ -277,12 +279,12 @@ function EditableTitle({ title, onSave }: EditableTitleProps) {
       style: {
         ...headerTitleStyle,
         border: "1px solid var(--orca-color-primary)",
-        borderRadius: 4,
+        borderRadius: "var(--orca-radius-sm)",
         padding: "2px 8px",
         background: "var(--orca-color-bg-1)",
         color: "var(--orca-color-text-1)",
         outline: "none",
-        minWidth: 100,
+        minWidth: 120,
         maxWidth: 200,
       },
     });
@@ -487,7 +489,7 @@ export default function AiChatPanel({ panelId }: PanelProps) {
     return new Promise((resolve) => {
       const messageId = nowId();
       const createdAt = Date.now();
-      const stepSummary = [skill.metadata.description || skill.instruction.slice(0, 200)];
+      const stepSummary = [skill.description || skill.instruction.slice(0, 200)];
       skillConfirmResolversRef.current.set(messageId, resolve);
       setMessages((prev) => [
         ...prev,
@@ -499,7 +501,7 @@ export default function AiChatPanel({ panelId }: PanelProps) {
           localOnly: true,
           skillConfirm: {
             skillId: skill.id,
-            skillName: skill.metadata.name,
+            skillName: skill.name,
             steps: stepSummary,
             status: "pending",
           },
@@ -1003,17 +1005,34 @@ export default function AiChatPanel({ panelId }: PanelProps) {
 	    try {
 	      const allSkillRefs = await listSkills();
 	      for (const ref of allSkillRefs) {
-	        const skill = await getSkill(ref.id, ref.isGlobal);
+	        const skill = await getSkill(ref.id, ref.scope === "global");
 	        if (skill && skill.enabled) {
 	          enabledSkills.push({
-	            name: skill.metadata.name || skill.id,
-	            description: skill.metadata.description || "",
+	            name: skill.name || skill.id,
+	            description: skill.description || "",
 	            instruction: skill.instruction,
 	          });
 	        }
 	      }
 	    } catch (err) {
 	      console.warn("[handleSend] Failed to load skills:", err);
+	    }
+
+	    // 自动触发检测：高置信度匹配时自动激活技能
+	    let autoActivatedSkill: { name: string; instruction: string } | undefined;
+	    if (!content.startsWith("#") && !content.startsWith("/")) {
+	      try {
+	        const matched = await getAutoTriggerSkill(content, 0.5);
+	        if (matched) {
+	          autoActivatedSkill = {
+	            name: matched.name,
+	            instruction: matched.instruction,
+	          };
+	          console.log(`[handleSend] Auto-activated skill: ${matched.name}`);
+	        }
+	      } catch (err) {
+	        console.warn("[handleSend] Auto-trigger check failed:", err);
+	      }
 	    }
 
 	    // 系统提示词模板变量：支持 {maxToolRounds}，按当前 MAX_TOOL_ROUNDS 注入
@@ -1023,6 +1042,7 @@ export default function AiChatPanel({ panelId }: PanelProps) {
       hasWebSearch: isWebSearchEnabled(),
       hasDraggedContext: contextStore.selected.length > 0,
       skills: enabledSkills,
+      autoActivatedSkill,
       repoId: getCurrentRepoId(),
     });
 
@@ -1040,26 +1060,13 @@ export default function AiChatPanel({ panelId }: PanelProps) {
 	        const { listSkills, getSkill } = await import("../services/skills-manager");
 	        const allSkills = await listSkills();
 	        
-	        // 查找匹配的 Skill（名称或 ID）
-	        const skillRef = allSkills.find(s => {
-	          // 这里 skillRef 只有 id 和 isGlobal，需要加载完整 Skill 来获取 name
-	          return s.id === skillName;
-	        });
-	        
-	        // 如果没找到精确匹配，尝试通过 name 匹配
-	        let foundSkill = null;
-	        if (skillRef) {
-	          foundSkill = await getSkill(skillRef.id, skillRef.isGlobal);
-	        } else {
-	          // 遍历所有 Skill 查找 name 匹配
-	          for (const ref of allSkills) {
-	            const skill = await getSkill(ref.id, ref.isGlobal);
-	            if (skill && skill.metadata.name === skillName) {
-	              foundSkill = skill;
-	              break;
-	            }
-	          }
-	        }
+		// 查找匹配的 Skill（优先按名称匹配，其次按 ID）
+		const skillRef = allSkills.find(s => s.name === skillName) || allSkills.find(s => s.id === skillName);
+
+		let foundSkill = null;
+		if (skillRef) {
+		  foundSkill = await getSkill(skillRef.id, skillRef.scope === "global");
+		}
 	        
 	        if (foundSkill) {
 	          // 使用现有的 requestSkillConfirm 机制显示确认对话框
@@ -1546,7 +1553,21 @@ graph TD
     } else {
         setMessages((prev) => [...prev, userMsg]);
     }
-    
+
+    // 自动激活技能时显示系统通知
+    if (autoActivatedSkill) {
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: nowId(),
+          role: "assistant" as const,
+          content: `📋 已激活技能: **${autoActivatedSkill.name}**`,
+          createdAt: Date.now(),
+          localOnly: true,
+        },
+      ]);
+    }
+
     // 用户发送消息时，重置为自动滚动状态并滚动到底部
     isNearBottomRef.current = true;
     queueMicrotask(scrollToBottom);
@@ -1720,6 +1741,17 @@ graph TD
       let baseTools = hasHighPriorityContext
         ? getToolsForDraggedContext()
         : getTools(false, false, enableTodoistTools);
+
+      // 合并技能工具：将已启用的技能注册为 function calling 工具
+      try {
+        const skillTools = await getSkillToolsAsync();
+        if (skillTools.length > 0) {
+          baseTools = [...baseTools, ...skillTools];
+          console.log(`[AiChatPanel] 已注册 ${skillTools.length} 个技能工具`);
+        }
+      } catch (err) {
+        console.warn("[AiChatPanel] 加载技能工具失败:", err);
+      }
 
       const filteredTools = baseTools.filter(tool => !isToolDisabled(tool.function.name));
       
@@ -1995,6 +2027,7 @@ graph TD
 	        content: currentContent,
 	        createdAt: assistantCreatedAt,
 	        tool_calls: toolCalls.length > 0 ? toolCalls : undefined,
+	        ...(reasoningMessageId ? { reasoning: currentReasoning } : {}),
           searchResults: getSearchResultsForMessage(),
 	      });
 
@@ -2126,13 +2159,13 @@ graph TD
                 result = `Error: Skill not found for tool: ${toolName}`;
               } else {
                 try {
-                  const skill = await getSkill(resolvedSkillId.id, resolvedSkillId.isGlobal);
+                  const skill = await getSkill(resolvedSkillId.id, (resolvedSkillId as any).isGlobal);
                   if (!skill) {
                     result = `Error: Skill not found: ${resolvedSkillId.id}`;
                   } else {
                     const { createToolConfirmPromise } = await import("../components/ToolConfirmDialog");
                     const userApproved = await createToolConfirmPromise(
-                      `skill: ${skill.metadata.name}`,
+                      `skill: ${skill.name}`,
                       { skillId: resolvedSkillId.id, input: args.input || "" }
                     );
                     if (!userApproved) {
@@ -2408,6 +2441,7 @@ ${userInput}`;
           content: nextContent,
           createdAt: nextAssistantCreatedAt,
           tool_calls: nextToolCalls.length > 0 ? nextToolCalls : undefined,
+          ...(nextReasoningMessageId ? { reasoning: nextReasoning } : {}),
           searchResults: getSearchResultsForMessage(),
         });
 

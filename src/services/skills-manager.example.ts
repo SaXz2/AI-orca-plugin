@@ -61,11 +61,11 @@ async function exampleGetSkill() {
   const skill = await getSkill("日记整理", false);
   if (skill) {
     console.log("Skill ID:", skill.id);
-    console.log("Metadata:", skill.metadata);
+    console.log("Name:", skill.name);
     console.log("Instruction:", skill.instruction);
-    console.log("Files:", skill.files);
+    console.log("Files:", skill.files?.length ?? 0);
     console.log("Enabled:", skill.enabled);
-    console.log("IsGlobal:", skill.isGlobal);
+    console.log("Scope:", skill.scope);
   }
 }
 
@@ -124,10 +124,10 @@ async function exampleListSkills() {
   for (const ref of skillRefs) {
     const skill = await getSkill(ref.id, ref.isGlobal);
     if (skill) {
-      console.log(`\n${skill.metadata.name} (${skill.isGlobal ? '全局' : '局部'}):`);
-      console.log(`  Description: ${skill.metadata.description}`);
+      console.log(`\n${skill.name} (${skill.scope === "global" ? '全局' : skill.scope === "internal" ? '内置' : '局部'}):`);
+      console.log(`  Description: ${skill.description}`);
       console.log(`  Enabled: ${skill.enabled}`);
-      console.log(`  Files: ${skill.files.length}`);
+      console.log(`  Files: ${skill.files?.length ?? 0}`);
     }
   }
 }

@@ -104,7 +104,7 @@ export default function HeaderMenu({
           marginTop: 4,
           background: "var(--orca-color-bg-1)",
           border: "1px solid var(--orca-color-border)",
-          borderRadius: 8,
+          borderRadius: "var(--orca-radius-md)",
           boxShadow: "0 4px 16px rgba(0,0,0,0.15)",
           zIndex: 101,
           overflow: "hidden",
@@ -126,7 +126,7 @@ export default function HeaderMenu({
             width: 180,
             background: "var(--orca-color-bg-1)",
             border: "1px solid var(--orca-color-border)",
-            borderRadius: 8,
+            borderRadius: "var(--orca-radius-md)",
             boxShadow: "0 4px 16px rgba(0,0,0,0.15)",
             zIndex: 100,
             overflow: "hidden",
@@ -142,8 +142,7 @@ export default function HeaderMenu({
               setIsOpen(false);
               setShowDisplaySettings(true);
             },
-            onMouseEnter: (e: any) => (e.currentTarget.style.background = "var(--orca-color-bg-2)"),
-            onMouseLeave: (e: any) => (e.currentTarget.style.background = "transparent"),
+            className: "header-menu-item",
           },
           createElement("i", { className: "ti ti-adjustments" }),
           "显示设置"
@@ -154,8 +153,7 @@ export default function HeaderMenu({
           {
             style: menuItemStyle,
             onClick: () => handleItemClick(onOpenSettings),
-            onMouseEnter: (e: any) => (e.currentTarget.style.background = "var(--orca-color-bg-2)"),
-            onMouseLeave: (e: any) => (e.currentTarget.style.background = "transparent"),
+            className: "header-menu-item",
           },
           createElement("i", { className: "ti ti-settings" }),
           "Settings"
@@ -166,8 +164,7 @@ export default function HeaderMenu({
           {
             style: menuItemStyle,
             onClick: () => handleItemClick(onOpenMemoryManager),
-            onMouseEnter: (e: any) => (e.currentTarget.style.background = "var(--orca-color-bg-2)"),
-            onMouseLeave: (e: any) => (e.currentTarget.style.background = "transparent"),
+            className: "header-menu-item",
           },
           createElement("i", { className: "ti ti-brain" }),
           "记忆管理"
@@ -178,8 +175,7 @@ export default function HeaderMenu({
           {
             style: menuItemStyle,
             onClick: () => handleItemClick(onOpenStreamSettings),
-            onMouseEnter: (e: any) => (e.currentTarget.style.background = "var(--orca-color-bg-2)"),
-            onMouseLeave: (e: any) => (e.currentTarget.style.background = "transparent"),
+            className: "header-menu-item",
           },
           createElement("i", { className: "ti ti-clock" }),
           "流式设置"
@@ -190,8 +186,7 @@ export default function HeaderMenu({
           {
             style: menuItemStyle,
             onClick: () => handleItemClick(onOpenWebSearchSettings),
-            onMouseEnter: (e: any) => (e.currentTarget.style.background = "var(--orca-color-bg-2)"),
-            onMouseLeave: (e: any) => (e.currentTarget.style.background = "transparent"),
+            className: "header-menu-item",
           },
           createElement("i", { className: "ti ti-world" }),
           "联网搜索"
@@ -202,8 +197,7 @@ export default function HeaderMenu({
           {
             style: menuItemStyle,
             onClick: () => handleItemClick(onOpenVisionModelSettings),
-            onMouseEnter: (e: any) => (e.currentTarget.style.background = "var(--orca-color-bg-2)"),
-            onMouseLeave: (e: any) => (e.currentTarget.style.background = "transparent"),
+            className: "header-menu-item",
           },
           createElement("i", { className: "ti ti-eye" }),
           "视觉模型"
@@ -214,8 +208,7 @@ export default function HeaderMenu({
           {
             style: menuItemStyle,
             onClick: () => handleItemClick(onOpenTodoistSettings),
-            onMouseEnter: (e: any) => (e.currentTarget.style.background = "var(--orca-color-bg-2)"),
-            onMouseLeave: (e: any) => (e.currentTarget.style.background = "transparent"),
+            className: "header-menu-item",
           },
           createElement("i", { className: "ti ti-checkbox" }),
           "Todoist"
@@ -226,8 +219,7 @@ export default function HeaderMenu({
           {
             style: menuItemStyle,
             onClick: () => handleItemClick(onOpenMcpSettings),
-            onMouseEnter: (e: any) => (e.currentTarget.style.background = "var(--orca-color-bg-2)"),
-            onMouseLeave: (e: any) => (e.currentTarget.style.background = "transparent"),
+            className: "header-menu-item",
           },
           createElement("i", { className: "ti ti-plug-connected" }),
           "MCP 服务器"
@@ -246,8 +238,7 @@ export default function HeaderMenu({
           {
             style: menuItemStyle,
             onClick: () => handleItemClick(onExportMarkdown),
-            onMouseEnter: (e: any) => (e.currentTarget.style.background = "var(--orca-color-bg-2)"),
-            onMouseLeave: (e: any) => (e.currentTarget.style.background = "transparent"),
+            className: "header-menu-item",
           },
           createElement("i", { className: "ti ti-file-export" }),
           "导出 Markdown"
@@ -258,8 +249,7 @@ export default function HeaderMenu({
           {
             style: menuItemStyle,
             onClick: () => handleItemClick(onSaveToJournal),
-            onMouseEnter: (e: any) => (e.currentTarget.style.background = "var(--orca-color-bg-2)"),
-            onMouseLeave: (e: any) => (e.currentTarget.style.background = "transparent"),
+            className: "header-menu-item",
           },
           createElement("i", { className: "ti ti-notebook" }),
           "保存到日记"
@@ -273,8 +263,7 @@ export default function HeaderMenu({
               color: selectionMode ? "var(--orca-color-primary)" : undefined,
             },
             onClick: () => handleItemClick(onToggleSelectionMode),
-            onMouseEnter: (e: any) => (e.currentTarget.style.background = "var(--orca-color-bg-2)"),
-            onMouseLeave: (e: any) => (e.currentTarget.style.background = "transparent"),
+            className: "header-menu-item",
           },
           createElement("i", { className: selectionMode ? "ti ti-checkbox" : "ti ti-select" }),
           selectionMode ? "退出选择模式" : "选择消息保存"
@@ -287,13 +276,8 @@ export default function HeaderMenu({
               ...menuItemStyle,
               color: selectedCount && selectedCount > 0 ? "var(--orca-color-primary)" : "var(--orca-color-text-3)",
             },
+            className: "header-menu-item",
             onClick: selectedCount && selectedCount > 0 ? () => handleItemClick(onSaveSelected) : undefined,
-            onMouseEnter: (e: any) => {
-              if (selectedCount && selectedCount > 0) {
-                e.currentTarget.style.background = "var(--orca-color-bg-2)";
-              }
-            },
-            onMouseLeave: (e: any) => (e.currentTarget.style.background = "transparent"),
           },
           createElement("i", { className: "ti ti-device-floppy" }),
           `保存选中 (${selectedCount || 0})`
@@ -312,8 +296,7 @@ export default function HeaderMenu({
           {
             style: { ...menuItemStyle, color: "var(--orca-color-danger, #dc3545)" },
             onClick: () => handleItemClick(onClearChat),
-            onMouseEnter: (e: any) => (e.currentTarget.style.background = "var(--orca-color-bg-2)"),
-            onMouseLeave: (e: any) => (e.currentTarget.style.background = "transparent"),
+            className: "header-menu-item",
           },
           createElement("i", { className: "ti ti-trash" }),
           "Clear Chat"

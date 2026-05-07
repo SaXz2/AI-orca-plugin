@@ -118,28 +118,28 @@ export default function ToolStatusIndicator({
       icon = config.icon;
       statusText = config.loadingText;
       animationClass = `tool-animation-${config.animation}`;
-      statusColor = "#3b82f6"; // blue
+      statusColor = "var(--orca-color-primary)"; // blue
       break;
     case "success":
       icon = config.successIcon;
       statusText = result ? generateResultSummary(toolName, result) : config.successText;
-      statusColor = "#22c55e"; // green
+      statusColor = "var(--orca-color-success, #22c55e)"; // green
       break;
     case "failed":
       icon = "❌";
       // 显示更长的错误摘要，优先显示关键信息
       statusText = error ? (error.length > 120 ? error.slice(0, 120) + "..." : error) : "执行失败";
-      statusColor = "#ef4444"; // red
+      statusColor = "var(--orca-color-danger, #dc3545)"; // red
       break;
     case "cancelled":
       icon = "⏸️";
       statusText = "已取消";
-      statusColor = "#6b7280"; // gray
+      statusColor = "var(--orca-color-text-3)"; // gray
       break;
     default:
       icon = "🔧";
       statusText = "未知状态";
-      statusColor = "#6b7280";
+      statusColor = "var(--orca-color-text-3)";
   }
 
   // Determine if we should show expand button
@@ -161,15 +161,15 @@ export default function ToolStatusIndicator({
           gap: "12px",
           padding: "12px 14px",
           borderRadius: "10px",
-          background: status === "loading" 
-            ? "rgba(59, 130, 246, 0.06)" 
-            : status === "failed" 
-              ? "rgba(239, 68, 68, 0.06)" 
+          background: status === "loading"
+            ? "color-mix(in srgb, var(--orca-color-primary) 6%, transparent)"
+            : status === "failed"
+              ? "color-mix(in srgb, var(--orca-color-danger, #dc3545) 6%, transparent)"
               : "var(--orca-color-bg-2)",
-          border: `1px solid ${status === "loading" 
-            ? "rgba(59, 130, 246, 0.15)" 
-            : status === "failed" 
-              ? "rgba(239, 68, 68, 0.15)" 
+          border: `1px solid ${status === "loading"
+            ? "color-mix(in srgb, var(--orca-color-primary) 15%, transparent)"
+            : status === "failed"
+              ? "color-mix(in srgb, var(--orca-color-danger, #dc3545) 15%, transparent)"
               : "var(--orca-color-border)"}`,
           transition: "all 0.2s ease",
         },
@@ -182,7 +182,7 @@ export default function ToolStatusIndicator({
             width: "32px",
             height: "32px",
             borderRadius: "8px",
-            background: `${statusColor}15`,
+            background: `color-mix(in srgb, ${statusColor} 15%, transparent)`,
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
@@ -243,7 +243,7 @@ export default function ToolStatusIndicator({
                 fontSize: "10px",
                 padding: "2px 6px",
                 borderRadius: "4px",
-                background: `${statusColor}20`,
+                background: `color-mix(in srgb, ${statusColor} 20%, transparent)`,
                 color: statusColor,
                 fontWeight: 500,
                 marginLeft: "auto",
@@ -271,7 +271,7 @@ export default function ToolStatusIndicator({
           {
             style: {
               fontSize: "12px",
-              color: status === "failed" ? "#ef4444" : "var(--orca-color-text-2)",
+              color: status === "failed" ? "var(--orca-color-danger, #dc3545)" : "var(--orca-color-text-2)",
               lineHeight: 1.4,
               overflow: "hidden",
               textOverflow: "ellipsis",
@@ -334,9 +334,9 @@ export default function ToolStatusIndicator({
                 style: {
                   padding: "4px 10px",
                   borderRadius: "6px",
-                  border: "1px solid rgba(239, 68, 68, 0.3)",
-                  background: "rgba(239, 68, 68, 0.1)",
-                  color: "#ef4444",
+                  border: "1px solid color-mix(in srgb, var(--orca-color-danger, #dc3545) 30%, transparent)",
+                  background: "color-mix(in srgb, var(--orca-color-danger, #dc3545) 10%, transparent)",
+                  color: "var(--orca-color-danger, #dc3545)",
                   cursor: "pointer",
                   fontSize: "12px",
                   fontWeight: 500,
@@ -447,10 +447,10 @@ export default function ToolStatusIndicator({
             marginTop: "8px",
             padding: "10px 12px",
             borderRadius: "8px",
-            background: "rgba(239, 68, 68, 0.06)",
-            border: "1px solid rgba(239, 68, 68, 0.15)",
+            background: "color-mix(in srgb, var(--orca-color-danger, #dc3545) 6%, transparent)",
+            border: "1px solid color-mix(in srgb, var(--orca-color-danger, #dc3545) 15%, transparent)",
             fontSize: "12px",
-            color: "#ef4444",
+            color: "var(--orca-color-danger, #dc3545)",
             lineHeight: 1.5,
             whiteSpace: "pre-wrap",
             wordBreak: "break-word",

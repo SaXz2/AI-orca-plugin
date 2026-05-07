@@ -402,7 +402,7 @@ export async function* streamChatCompletion(
     if (chunk.type === "content" && chunk.content) {
       content += chunk.content;
       yield { type: "content", content: chunk.content };
-    } else if (chunk.type === "reasoning" && chunk.reasoning) {
+    } else if (chunk.type === "reasoning" && chunk.reasoning != null) {
       reasoning += chunk.reasoning;
       yield { type: "reasoning", reasoning: chunk.reasoning };
     } else if (chunk.type === "tool_calls" && chunk.tool_calls) {
@@ -433,7 +433,7 @@ export async function* streamChatCompletion(
     }
   }
 
-  yield { type: "done", result: { content, toolCalls, reasoning: reasoning || undefined, finishReason } };
+  yield { type: "done", result: { content, toolCalls, reasoning: reasoning != null ? reasoning : undefined, finishReason } };
 }
 
 /**
@@ -536,7 +536,7 @@ export async function* streamChatWithRetry(
         if (chunk.type === "content" && chunk.content) {
           content += chunk.content;
           yield { type: "content", content: chunk.content };
-        } else if (chunk.type === "reasoning" && chunk.reasoning) {
+        } else if (chunk.type === "reasoning" && chunk.reasoning != null) {
           reasoning += chunk.reasoning;
           yield { type: "reasoning", reasoning: chunk.reasoning };
         } else if (chunk.type === "tool_calls" && chunk.tool_calls) {
@@ -697,7 +697,7 @@ export async function* streamChatWithRetry(
             contContent += chunk.content;
             // 实时输出续写内容
             yield { type: "content", content: chunk.content };
-          } else if (chunk.type === "reasoning" && chunk.reasoning) {
+          } else if (chunk.type === "reasoning" && chunk.reasoning != null) {
             contReasoning += chunk.reasoning;
             yield { type: "reasoning", reasoning: chunk.reasoning };
           } else if (chunk.type === "finish_reason" && chunk.finishReason) {
@@ -732,5 +732,5 @@ export async function* streamChatWithRetry(
     if (contError) break;
   }
 
-  yield { type: "done", result: { content, toolCalls, reasoning: reasoning || undefined, finishReason } };
+  yield { type: "done", result: { content, toolCalls, reasoning: reasoning != null ? reasoning : undefined, finishReason } };
 }

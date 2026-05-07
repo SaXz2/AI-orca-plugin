@@ -38,7 +38,7 @@ const panelStyle: React.CSSProperties = {
   background: "var(--orca-color-bg-1)",
   backdropFilter: "blur(10px)",
   border: "1px solid var(--orca-color-border)",
-  borderRadius: 12,
+  borderRadius: "var(--orca-radius-lg)",
   boxShadow: "0 4px 20px rgba(0, 0, 0, 0.15)",
   zIndex: 1000,
   overflow: "hidden",
@@ -90,7 +90,7 @@ const emptyStyle: React.CSSProperties = {
   fontSize: 13,
 };
 
-const sessionItemStyle = (isActive: boolean, isPinned: boolean): React.CSSProperties => ({
+const sessionItemStyle = (isActive: boolean, isPinned: boolean, isHovered: boolean): React.CSSProperties => ({
   padding: "6px 8px",
   marginBottom: 2,
   borderRadius: 6,
@@ -101,12 +101,14 @@ const sessionItemStyle = (isActive: boolean, isPinned: boolean): React.CSSProper
   alignItems: "center",
   gap: 6,
   transition: "all 0.15s ease",
+  transform: isHovered ? "translateY(-1px)" : "translateY(0)",
+  boxShadow: isHovered ? "0 2px 8px rgba(0,0,0,0.06)" : "none",
 });
 
 const sessionIconStyle = (isPinned: boolean): React.CSSProperties => ({
   width: 22,
   height: 22,
-  borderRadius: 4,
+  borderRadius: "var(--orca-radius-sm)",
   background: isPinned ? "var(--orca-color-bg-3)" : "var(--orca-color-bg-3)",
   border: isPinned ? "1px solid var(--orca-color-border)" : "none",
   color: isPinned ? "var(--orca-color-text-1)" : "var(--orca-color-text-2)",
@@ -176,7 +178,7 @@ const renameInputStyle: React.CSSProperties = {
   padding: "4px 8px",
   fontSize: 13,
   border: "1px solid var(--orca-color-primary, #007bff)",
-  borderRadius: 4,
+  borderRadius: "var(--orca-radius-sm)",
   background: "var(--orca-color-bg-1)",
   color: "var(--orca-color-text-1)",
   outline: "none",
@@ -357,7 +359,7 @@ export default function ChatHistoryMenu({
       "div",
       {
         key: session.id,
-        style: sessionItemStyle(isActive, isPinned),
+        style: sessionItemStyle(isActive, isPinned, isHovered),
         onClick: () => handleSelect(session.id),
         onMouseEnter: () => setHoveredId(session.id),
         onMouseLeave: () => setHoveredId(null),
@@ -460,16 +462,16 @@ export default function ChatHistoryMenu({
                   onClick: (e: any) => handleToggleFavorite(e, session.id),
                   onMouseOver: (e: any) => {
                     e.currentTarget.style.opacity = "1";
-                    e.currentTarget.style.color = session.favorited ? "#fbbf24" : "var(--orca-color-primary)";
+                    e.currentTarget.style.color = session.favorited ? "var(--orca-color-warning)" : "var(--orca-color-primary)";
                   },
                   onMouseOut: (e: any) => {
                     e.currentTarget.style.opacity = session.favorited ? "0.6" : "0.6";
-                    e.currentTarget.style.color = session.favorited ? "#fbbf24" : "var(--orca-color-text-3)";
+                    e.currentTarget.style.color = session.favorited ? "var(--orca-color-warning)" : "var(--orca-color-text-3)";
                   },
                 },
                 createElement("i", {
                   className: session.favorited ? "ti ti-star-filled" : "ti ti-star",
-                  style: { fontSize: 12, color: session.favorited ? "#fbbf24" : undefined },
+                  style: { fontSize: 12, color: session.favorited ? "var(--orca-color-warning)" : undefined },
                 })
               )
             ),
@@ -537,7 +539,7 @@ export default function ChatHistoryMenu({
                   onClick: () => setShowFavoritesOnly(!showFavoritesOnly),
                   style: {
                     ...newButtonStyle,
-                    background: showFavoritesOnly ? "#fbbf24" : "var(--orca-color-bg-3)",
+                    background: showFavoritesOnly ? "var(--orca-color-warning)" : "var(--orca-color-bg-3)",
                     color: showFavoritesOnly ? "#000" : "var(--orca-color-text-2)",
                     fontWeight: showFavoritesOnly ? 600 : 400,
                   },
@@ -604,7 +606,7 @@ export default function ChatHistoryMenu({
                       {
                         style: {
                           fontSize: 11,
-                          color: "#fbbf24",
+                          color: "var(--orca-color-warning)",
                           padding: "4px 8px",
                           fontWeight: 500,
                         },
@@ -647,7 +649,7 @@ export default function ChatHistoryMenu({
                 style: clearButtonStyle,
                 onMouseOver: (e: any) => {
                   e.currentTarget.style.background = "var(--orca-color-danger, #dc3545)";
-                  e.currentTarget.style.color = "#fff";
+                  e.currentTarget.style.color = "var(--orca-color-text-inverse)";
                   e.currentTarget.style.borderColor = "var(--orca-color-danger, #dc3545)";
                 },
                 onMouseOut: (e: any) => {

@@ -50,12 +50,20 @@ export interface SkillPromptInfo {
   instruction: string;
 }
 
+/** 自动激活的技能信息 */
+export interface AutoActivatedSkill {
+  name: string;
+  instruction: string;
+}
+
 export interface PromptOptions {
   hasMcpTools?: boolean;
   hasTodoistTools?: boolean;
   hasWebSearch?: boolean;
   hasDraggedContext?: boolean;
   skills?: SkillPromptInfo[];
+  /** 自动激活的技能（高置信度匹配时自动注入指令） */
+  autoActivatedSkill?: AutoActivatedSkill;
   repoId?: string;
 }
 
@@ -71,6 +79,11 @@ export function buildDynamicSystemPrompt(options: PromptOptions = {}): string {
 
   // 引用格式
   sections.push(CITATION_SECTION);
+
+  // 自动激活的技能（高置信度匹配，强制注入完整指令）
+  if (options.autoActivatedSkill) {
+    sections.push(buildAutoActivatedSkillSection(options.autoActivatedSkill));
+  }
 
   // 可用技能（注入到系统提示词，AI 自动识别并按需遵循）
   if (options.skills && options.skills.length > 0) {
@@ -100,9 +113,24 @@ export function buildDynamicSystemPrompt(options: PromptOptions = {}): string {
   return sections.join("\n\n");
 }
 
+function buildAutoActivatedSkillSection(skill: AutoActivatedSkill): string {
+  return `## 🔔 已自动激活技能: ${skill.name}
+
+系统已根据你的请求自动匹配并激活了此技能。你必须严格遵循以下指令来完成任务：
+
+${skill.instruction}`;
+}
+
 function buildSkillsSection(skills: SkillPromptInfo[]): string {
   const header = `## 可用技能 (Skills)
-当用户请求匹配以下技能时，先告知用户将使用该技能，然后按照技能的核心要求执行：
+以下是已启用的专业技能。当用户请求与某个技能描述高度匹配时，你**必须**在函数列表中查找并调用对应的 \`skill_*\` 工具。
+
+【关键规则】
+- 识别到匹配技能后，立即调用对应的 skill 工具
+- 调用工具后，严格按返回的完整指令执行任务
+- 技能工具名称格式为 \`skill_<技能ID>\`，可在可用函数列表中查找
+
+可用技能列表：
 
 `;
   const parts = [header];

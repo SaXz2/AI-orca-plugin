@@ -157,7 +157,8 @@ function messageToApi(m: Message): OpenAIChatMessage {
   }
   // DeepSeek Reasoner 要求 assistant 消息包含 reasoning_content 字段
   // 参考: https://api-docs.deepseek.com/guides/thinking_mode#tool-calls
-  if (m.role === "assistant" && m.reasoning) {
+  // DeepSeek 的 reasoning_content 可能为空字符串 ""，必须原样回传
+  if (m.role === "assistant" && m.reasoning != null) {
     (msg as any).reasoning_content = m.reasoning;
   }
   return msg;

@@ -3,7 +3,7 @@ import { registerAiChatUI, unregisterAiChatUI } from "./ui/ai-chat-ui";
 import { registerAiChatRenderer, unregisterAiChatRenderer } from "./ui/ai-chat-renderer";
 import { loadMemoryStore } from "./store/memory-store";
 import { AiChatPluginAPI } from "./services/plugin-api";
-import { ensureBuiltInSkills } from "./services/skills-manager";
+
 import { initCommands } from "./services/commands-loader";
 import { loadVisionModelConfig } from "./services/vision-model-service";
 import { initMcpServers } from "./services/mcp-server-manager";
@@ -94,8 +94,7 @@ export async function load(_name: string) {
   // 加载视觉模型配置
   await loadVisionModelConfig(pluginName);
 
-  // 初始化内置 Skills（必须在 registerAiChatUI 之后）
-  await ensureBuiltInSkills();
+  // 内置 Skills 已从代码常量加载，无需文件初始化
 
   // 初始化 Commands 目录（确保默认命令模板存在）
   await initCommands();
