@@ -51,7 +51,6 @@
 
 | 库 | 用途 |
 |---|---|
-| `pyodide` | 浏览器端 Python 运行时 |
 | `d3-force` | 力导向图可视化（知识图谱） |
 | `xlsx` | Excel 文件解析 |
 | `mammoth` | Word 文档解析 |
@@ -104,7 +103,6 @@ AI-orca-plugin/
 │   │   ├── memory-extraction.ts  # 记忆提取
 │   │   ├── skills-manager.ts     # 技能管理
 │   │   ├── file-service.ts       # 文件处理
-│   │   ├── python-runtime.ts     # Python 运行时
 │   │   └── ...                   # 40+ 服务文件
 │   │
 │   ├── store/                    # 状态管理（Valtio）
@@ -462,13 +460,6 @@ OpenAI API 客户端，支持：
 - 视频抽帧
 - 缩略图生成
 - 音频识别（如果支持）
-
-#### python-runtime.ts
-Python 运行时：
-- Pyodide 集成
-- 本地 Python 服务器
-- 代码执行沙箱
-- 文件系统访问
 
 ### 辅助服务
 

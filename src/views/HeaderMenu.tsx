@@ -19,12 +19,6 @@ interface HeaderMenuProps {
   onOpenVisionModelSettings?: () => void;
   onOpenTodoistSettings?: () => void;
   onOpenMcpSettings?: () => void;
-  onStartPythonServer?: () => void;
-  onStopPythonServer?: () => void;
-  pythonServerStatus?: "running" | "stopped" | "starting";
-  browserAIMode?: boolean;
-  onToggleBrowserAI?: () => void;
-  browserAIStatus?: "connected" | "disconnected" | "checking";
   onExportMarkdown?: () => void;
   onSaveToJournal?: () => void;
   onToggleSelectionMode?: () => void;
@@ -42,12 +36,6 @@ export default function HeaderMenu({
   onOpenVisionModelSettings,
   onOpenTodoistSettings,
   onOpenMcpSettings,
-  onStartPythonServer,
-  onStopPythonServer,
-  pythonServerStatus,
-  browserAIMode,
-  onToggleBrowserAI,
-  browserAIStatus,
   onExportMarkdown,
   onSaveToJournal,
   onToggleSelectionMode,
@@ -243,60 +231,6 @@ export default function HeaderMenu({
           },
           createElement("i", { className: "ti ti-plug-connected" }),
           "MCP 服务器"
-        ),
-        // Python Server
-        onStartPythonServer && createElement(
-          "div",
-          {
-            style: {
-              ...menuItemStyle,
-              color: pythonServerStatus === "running" 
-                ? "var(--orca-color-success, #28a745)" 
-                : pythonServerStatus === "starting"
-                  ? "var(--orca-color-warning, #ffc107)"
-                  : undefined,
-            },
-            onClick: pythonServerStatus === "starting" 
-              ? undefined 
-              : pythonServerStatus === "running"
-                ? () => onStopPythonServer && handleItemClick(onStopPythonServer)
-                : () => handleItemClick(onStartPythonServer),
-            onMouseEnter: (e: any) => (e.currentTarget.style.background = "var(--orca-color-bg-2)"),
-            onMouseLeave: (e: any) => (e.currentTarget.style.background = "transparent"),
-          },
-          createElement("i", { 
-            className: pythonServerStatus === "running" 
-              ? "ti ti-player-stop" 
-              : pythonServerStatus === "starting"
-                ? "ti ti-loader"
-                : "ti ti-brand-python" 
-          }),
-          pythonServerStatus === "running" 
-            ? "停止 Python 服务" 
-            : pythonServerStatus === "starting"
-              ? "正在启动..."
-              : "启动 Python 服务"
-        ),
-        // Browser AI Mode Toggle
-        onToggleBrowserAI && createElement(
-          "div",
-          {
-            style: {
-              ...menuItemStyle,
-              color: browserAIMode 
-                ? "var(--orca-color-primary)" 
-                : undefined,
-            },
-            onClick: () => handleItemClick(onToggleBrowserAI),
-            onMouseEnter: (e: any) => (e.currentTarget.style.background = "var(--orca-color-bg-2)"),
-            onMouseLeave: (e: any) => (e.currentTarget.style.background = "transparent"),
-          },
-          createElement("i", { 
-            className: browserAIMode ? "ti ti-toggle-right" : "ti ti-browser" 
-          }),
-          browserAIMode 
-            ? `浏览器 AI ✓ ${browserAIStatus === "connected" ? "(已连接)" : browserAIStatus === "checking" ? "(检查中)" : "(未连接)"}`
-            : "浏览器 AI 模式"
         ),
         // Divider
         createElement("div", {

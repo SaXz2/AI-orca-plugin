@@ -65,8 +65,6 @@ import {
 import { exportSessionAsFile, saveSessionToJournal, saveMessagesToJournal } from "../services/export-service";
 import { sessionStore, updateSessionStore, clearSessionStore } from "../store/session-store";
 import { FLASHCARD_TOOL, executeTool, getToolsForDraggedContext, getTools, extractSearchResultsFromToolResults, getSkillToolsAsync, getSkillInstructionsAsync, getSkillToolName, resolveSkillIdFromToolName } from "../services/ai-tools";
-
-import { startPythonServer, stopPythonServer, getPythonServerStatus, browserAIChat, browserAIStatus as checkBrowserAIStatus } from "../services/python-runtime";
 import { getToolStatus, isToolDisabled, shouldAskForTool, isAgenticRAGEnabled, getAgenticRAGConfig, isWebSearchEnabled } from "../store/tool-store";
 import { listSkills, getSkill, type Skill } from "../services/skills-manager";
 import { nowId, safeText } from "../utils/text-utils";
@@ -394,15 +392,6 @@ export default function AiChatPanel({ panelId }: PanelProps) {
 
   // MCP server settings modal state
   const [showMcpSettings, setShowMcpSettings] = useState(false);
-
-  // Python server state
-  const [pythonServerStatus, setPythonServerStatus] = useState<"running" | "stopped" | "starting">("stopped");
-
-  // Browser AI mode state (use ChatGPT via browser instead of API)
-  const [browserAIMode, setBrowserAIMode] = useState(false);
-  const [browserAIStatus, setBrowserAIStatus] = useState<"connected" | "disconnected" | "checking">("disconnected");
-  // 跟踪浏览器 AI 会话是否已发送首次消息（包含记忆和上下文），后续消息不再重复注入
-  const browserAIFirstMessageSentRef = useRef(false);
 
   // Message selection mode state (for batch save)
   const [selectionMode, setSelectionMode] = useState(false);
@@ -842,74 +831,6 @@ export default function AiChatPanel({ panelId }: PanelProps) {
   useEffect(() => () => { cancelAutoScroll(); }, [cancelAutoScroll]);
 
   // Check Python server status on mount
-  useEffect(() => {
-    getPythonServerStatus().then((status) => {
-      setPythonServerStatus(status.running ? "running" : "stopped");
-    });
-  }, []);
-
-  // Handle Python server start
-  const handleStartPythonServer = useCallback(async () => {
-    if (pythonServerStatus === "starting") return;
-    
-    if (pythonServerStatus === "running") {
-      orca.notify("info", "Python 服务器已在运行");
-      return;
-    }
-    
-    setPythonServerStatus("starting");
-    const result = await startPythonServer();
-    
-    if (result.success) {
-      setPythonServerStatus("running");
-      orca.notify("success", result.message);
-    } else {
-      setPythonServerStatus("stopped");
-      orca.notify("error", result.message);
-    }
-  }, [pythonServerStatus]);
-
-  // Handle Python server stop
-  const handleStopPythonServer = useCallback(async () => {
-    if (pythonServerStatus !== "running") return;
-    
-    const result = await stopPythonServer();
-    
-    if (result.success) {
-      setPythonServerStatus("stopped");
-      orca.notify("success", result.message);
-    } else {
-      orca.notify("error", result.message);
-    }
-  }, [pythonServerStatus]);
-
-  // Handle Browser AI mode toggle
-  const handleToggleBrowserAI = useCallback(async () => {
-    if (browserAIMode) {
-      // 关闭浏览器 AI 模式
-      setBrowserAIMode(false);
-      setBrowserAIStatus("disconnected");
-      browserAIFirstMessageSentRef.current = false; // 重置首次消息标记
-      orca.notify("info", "已关闭浏览器 AI 模式");
-    } else {
-      // 开启浏览器 AI 模式，先检查连接状态
-      setBrowserAIStatus("checking");
-      browserAIFirstMessageSentRef.current = false; // 重置首次消息标记
-      const status = await checkBrowserAIStatus();
-      
-      if (status.ok && status.connected) {
-        setBrowserAIMode(true);
-        setBrowserAIStatus("connected");
-        orca.notify("success", `已连接到 ${status.tab || "ChatGPT"}`);
-      } else {
-        setBrowserAIStatus("disconnected");
-        orca.notify("warn", status.error || "无法连接浏览器 AI，请确保：\n1. Python 服务器已启动\n2. Edge 以调试模式运行\n3. ChatGPT 页面已打开");
-        // 仍然开启模式，让用户可以尝试
-        setBrowserAIMode(true);
-      }
-    }
-  }, [browserAIMode]);
-
   // ─────────────────────────────────────────────────────────────────────────
   // Scroll to Bottom Button Detection
   // **Feature: chat-ui-enhancement**
@@ -1951,11 +1872,6 @@ graph TD
       }
       // ─────────────────────────────────────────────────────────────────────────
 
-      // 浏览器 AI 模式标记：用于在工具调用完成后发送到浏览器 ChatGPT
-      // 不再在这里直接返回，而是让 API 先执行工具调用
-      // browserAIMode 时：收到 tool_calls 就执行工具，收到 content 就中止并发给浏览器
-      let browserAIAborted = false;
-
       // 获取模型的上下文长度限制
       const modelContextLength = getModelContextLength(settings, model);
 
@@ -1977,9 +1893,6 @@ graph TD
         apiMessagesFallback,
       )) {
         if (chunk.type === "reasoning") {
-          // 浏览器 AI 模式：跳过 reasoning，等待 tool_calls 或 content
-          if (browserAIMode) continue;
-          
           // 第一次收到 reasoning 时，创建独立的 reasoning 消息
           if (!reasoningMessageId) {
             reasoningMessageId = nowId();
@@ -2000,13 +1913,6 @@ graph TD
             updateMessage(reasoningMessageId, { reasoning: currentReasoning });
           }
         } else if (chunk.type === "content") {
-          // 浏览器 AI 模式：收到 content 说明没有工具调用，立即中止并发给浏览器
-          if (browserAIMode && !browserAIAborted) {
-            browserAIAborted = true;
-            aborter.abort(); // 中止 API 流
-            break;
-          }
-          
           // 第一次收到 content 时，创建 assistant 消息（如果还没有 reasoning 消息，或者 reasoning 已完成）
           if (!reasoningMessageId) {
             // 没有 reasoning，直接创建 assistant 消息
@@ -2050,63 +1956,9 @@ graph TD
       }
 
       setStreamingMessageId(null);
-      
-      // 浏览器 AI 模式：如果没有工具调用（被中止或正常结束），直接发给浏览器 ChatGPT
-      if (browserAIMode && toolCalls.length === 0) {
-        // 构建提示词
-        let browserPromptParts: string[] = [];
-        
-        if (!browserAIFirstMessageSentRef.current) {
-          browserPromptParts.push("你是一个智能助手，请回答用户的问题。");
-          if (memoryText) browserPromptParts.push(`\n【用户记忆】\n${memoryText}`);
-          if (contextText) browserPromptParts.push(`\n【相关上下文】\n${contextText}`);
-          browserPromptParts.push(`\n【用户问题】\n${content}`);
-          browserAIFirstMessageSentRef.current = true;
-        } else {
-          browserPromptParts.push(content);
-        }
-        
-        const browserMessage = browserPromptParts.join("\n");
-        
-        // 添加浏览器 AI 回复占位消息
-        const browserAssistantId = nowId();
-        setMessages(prev => [...prev, {
-          id: browserAssistantId,
-          role: "assistant",
-          content: "🌐 正在通过浏览器 ChatGPT 生成回复...",
-          createdAt: Date.now(),
-          model: "ChatGPT (Browser)",
-        }]);
-        setStreamingMessageId(browserAssistantId);
-        
-        try {
-          const browserResult = await browserAIChat(browserMessage, 120);
-          if (browserResult.ok && browserResult.response) {
-            updateMessage(browserAssistantId, { content: browserResult.response });
-          } else {
-            updateMessage(browserAssistantId, { 
-              content: `❌ ${browserResult.error || "浏览器 AI 请求失败"}\n\n${browserResult.partial ? `部分回复：${browserResult.partial}` : ""}`,
-            });
-          }
-        } catch (browserErr: any) {
-          updateMessage(browserAssistantId, { content: `❌ 浏览器 AI 错误: ${browserErr.message}` });
-        }
-        
-        setStreamingMessageId(null);
-        setSending(false);
-        if (abortRef.current === aborter) abortRef.current = null;
-        autoCacheSession(currentSession);
-        return;
-      }
 
       const hasAssistantMessage = Boolean(reasoningMessageId);
       if (toolCalls.length > 0 && hasAssistantMessage && currentContent) {
-        currentContent = "";
-        updateMessage(reasoningMessageId!, { content: "" });
-      }
-
-      // 浏览器 AI 模式：如果有工具调用，清空初始内容（后续会发给浏览器 ChatGPT）
-      if (browserAIMode && toolCalls.length > 0 && hasAssistantMessage) {
         currentContent = "";
         updateMessage(reasoningMessageId!, { content: "" });
       }
@@ -2404,14 +2256,6 @@ ${userInput}`;
         setMessages((prev) => [...prev, ...toolResultMessages]);
         queueMicrotask(scrollToBottom);
 
-        // ─────────────────────────────────────────────────────────────────────
-        // 浏览器 AI 模式：工具执行完成后，直接跳出循环，不再调用 API 生成回复
-        // ─────────────────────────────────────────────────────────────────────
-        if (browserAIMode) {
-          // 直接跳出工具循环，后续会发送到浏览器 ChatGPT
-          break;
-        }
-
         // Build messages for next response including all prior tool results
         const { standard, fallback } = await buildConversationMessages({
           messages: conversation,
@@ -2592,91 +2436,6 @@ ${userInput}`;
         }
       }
       
-      // ─────────────────────────────────────────────────────────────────────────
-      // 浏览器 AI 模式：工具调用完成后，发送到浏览器 ChatGPT
-      // ─────────────────────────────────────────────────────────────────────────
-      if (browserAIMode) {
-        // 删除 API 生成的最终回复消息，用浏览器 AI 替代
-        setMessages(prev => {
-          // 找到最后一个 assistant 消息（API 生成的回复）
-          const lastAssistantIdx = prev.findLastIndex(m => m.role === "assistant");
-          if (lastAssistantIdx >= 0) {
-            // 保留工具结果消息，只删除最后的 assistant 回复
-            const lastMsg = prev[lastAssistantIdx];
-            // 如果是工具结果消息，不删除
-            if (lastMsg.tool_call_id) {
-              return prev;
-            }
-            return prev.slice(0, lastAssistantIdx);
-          }
-          return prev;
-        });
-        
-        // 构建发送给 ChatGPT 的消息
-        let browserPromptParts: string[] = [];
-        
-        if (!browserAIFirstMessageSentRef.current) {
-          // 首次消息：注入系统提示、记忆、上下文
-          browserPromptParts.push("你是一个智能助手，请根据以下信息回答用户的问题。");
-          
-          if (memoryText) {
-            browserPromptParts.push(`\n【用户记忆】\n${memoryText}`);
-          }
-          
-          if (contextText) {
-            browserPromptParts.push(`\n【相关上下文】\n${contextText}`);
-          }
-          
-          browserAIFirstMessageSentRef.current = true;
-        }
-        
-        // 添加工具结果（如果有）
-        if (allToolResultMessages.length > 0) {
-          const toolResultsSummary = allToolResultMessages
-            .map(m => `【${m.name || "工具"}结果】\n${m.content}`)
-            .join("\n\n");
-          browserPromptParts.push(`\n【工具调用结果】\n${toolResultsSummary}`);
-        }
-        
-        // 添加用户问题
-        browserPromptParts.push(`\n【用户问题】\n${content}`);
-        
-        const browserMessage = browserPromptParts.join("\n");
-        
-        // 添加浏览器 AI 回复占位消息
-        const browserAssistantId = nowId();
-        setMessages(prev => [...prev, {
-          id: browserAssistantId,
-          role: "assistant",
-          content: "🌐 正在通过浏览器 ChatGPT 生成回复...",
-          createdAt: Date.now(),
-          model: "ChatGPT (Browser)",
-        }]);
-        setStreamingMessageId(browserAssistantId);
-        
-        try {
-          const browserResult = await browserAIChat(browserMessage, 120);
-          
-          if (browserResult.ok && browserResult.response) {
-            updateMessage(browserAssistantId, { 
-              content: browserResult.response,
-            });
-          } else {
-            const errorMsg = browserResult.error || "浏览器 AI 请求失败";
-            updateMessage(browserAssistantId, { 
-              content: `❌ ${errorMsg}\n\n${browserResult.partial ? `部分回复：${browserResult.partial}` : "请确保：\n1. Edge 以调试模式启动\n2. ChatGPT 页面已打开并登录\n3. Python 服务器正在运行"}`,
-            });
-          }
-        } catch (browserErr: any) {
-          updateMessage(browserAssistantId, { 
-            content: `❌ 浏览器 AI 错误: ${browserErr.message}`,
-          });
-        }
-        
-        setStreamingMessageId(null);
-      }
-      // ─────────────────────────────────────────────────────────────────────────
-      
       // Clear error state on successful completion
       // **Feature: chat-ui-enhancement**
       // **Validates: Requirements 11.3**
@@ -2762,7 +2521,6 @@ ${userInput}`;
     if (abortRef.current) abortRef.current.abort();
     setMessages([]);
     setLastError(null);
-    browserAIFirstMessageSentRef.current = false; // 重置浏览器 AI 首次消息标记
   }
 
   function stop() {
@@ -3575,12 +3333,6 @@ ${userInput}`;
         onOpenVisionModelSettings: () => setShowVisionModelSettings(true),
         onOpenTodoistSettings: () => setShowTodoistSettings(true),
         onOpenMcpSettings: () => setShowMcpSettings(true),
-        onStartPythonServer: handleStartPythonServer,
-        onStopPythonServer: handleStopPythonServer,
-        pythonServerStatus,
-        browserAIMode,
-        onToggleBrowserAI: handleToggleBrowserAI,
-        browserAIStatus,
         onExportMarkdown: () => {
           if (messages.length === 0) {
             orca.notify("warn", "没有可导出的消息");

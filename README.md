@@ -123,7 +123,6 @@ npm run build
 - **React 18** - UI 框架
 - **Vite** - 构建工具
 - **Valtio** - 状态管理
-- **Pyodide** - Python 运行时
 - **d3-force** - 图谱可视化
 
 ## 📦 项目结构
