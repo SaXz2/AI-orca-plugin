@@ -379,6 +379,8 @@ export default function ChatHistoryMenu({
               onBlur: handleFinishRename,
               onKeyDown: handleRenameKeyDown,
               onClick: (e: any) => e.stopPropagation(),
+              maxLength: 100,
+              placeholder: "输入标题",
               style: renameInputStyle,
             })
           : createElement(

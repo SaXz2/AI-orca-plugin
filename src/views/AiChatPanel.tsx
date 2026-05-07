@@ -250,6 +250,9 @@ function EditableTitle({ title, onSave }: EditableTitleProps) {
     const trimmed = editValue.trim();
     if (trimmed && trimmed !== title) {
       onSave(trimmed);
+    } else if (!trimmed) {
+      // 标题为空时恢复原标题
+      setEditValue(title);
     }
     setIsEditing(false);
   }, [editValue, title, onSave]);
@@ -271,6 +274,8 @@ function EditableTitle({ title, onSave }: EditableTitleProps) {
       onChange: (e: any) => setEditValue(e.target.value),
       onBlur: handleSave,
       onKeyDown: handleKeyDown,
+      maxLength: 100,
+      placeholder: "输入标题",
       style: {
         ...headerTitleStyle,
         border: "1px solid var(--orca-color-primary)",
@@ -743,9 +748,17 @@ export default function AiChatPanel({ panelId }: PanelProps) {
 
   const handleClearAllSessions = useCallback(async () => {
     await clearAllSessions();
-    setSessions([]);
-    handleNewSession();
-  }, [handleNewSession]);
+    const data = await loadSessions();
+    setSessions(data.sessions);
+    // 如果当前会话被清理了，切换到剩余会话或创建新会话
+    if (!data.sessions.find(s => s.id === currentSession.id)) {
+      if (data.activeSessionId) {
+        handleSelectSession(data.activeSessionId);
+      } else {
+        handleNewSession();
+      }
+    }
+  }, [handleNewSession, currentSession.id, handleSelectSession]);
 
   // Toggle session pinned status
   const handleTogglePin = useCallback(async (sessionId: string) => {
