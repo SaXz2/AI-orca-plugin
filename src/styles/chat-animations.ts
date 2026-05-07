@@ -1469,21 +1469,22 @@ br + .md-block-dot {
 
 /* ─────────────────────────────────────────────────────────────────────────────
    Panel Background Override
-   去除面板内多余的背景色和边框
+   去除 AI Chat 插件面板内多余的背景色和边框
+   使用 data-panel-title 限定范围，避免影响其他 Orca 面板
    ─────────────────────────────────────────────────────────────────────────── */
 
 /* .orca-hideable 的直接子元素去掉背景色 */
-#main .orca-panel.active > .orca-hideable > div {
+#main .orca-panel.active[data-panel-title="AI Chat"] > .orca-hideable > div {
     background: transparent !important;
 }
 
 /* .orca-hideable 内第一个子元素去掉背景色 */
-#main .orca-panel.active > .orca-hideable > div > div:first-child {
+#main .orca-panel.active[data-panel-title="AI Chat"] > .orca-hideable > div > div:first-child {
     background: transparent !important;
 }
 
 /* .orca-hideable 内第四个子元素去掉边框和背景色 */
-#main .orca-panel.active > .orca-hideable > div > div:nth-child(4) {
+#main .orca-panel.active[data-panel-title="AI Chat"] > .orca-hideable > div > div:nth-child(4) {
     border-top: none !important;
     background: transparent !important;
 }
