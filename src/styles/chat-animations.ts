@@ -40,6 +40,14 @@ export const chatAnimations = `
   --orca-transition-slow: 0.3s ease;
 }
 
+@keyframes orca-fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+@keyframes orca-slide-up {
+    from { opacity: 0; transform: translateY(12px); }
+    to { opacity: 1; transform: translateY(0); }
+}
 @keyframes blink {
     0%, 50% { opacity: 1; }
     51%, 100% { opacity: 0; }

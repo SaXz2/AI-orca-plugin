@@ -162,53 +162,64 @@ export function stripXmlToolCalls(content: string): string {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// DSML 风格工具调用适配层 (DeepSeek/GLM 等模型)
-// 格式: <｜DSML｜function_calls><｜DSML｜invoke name="..."><｜DSML｜parameter name="...">value</｜DSML｜parameter></｜DSML｜invoke></｜DSML｜function_calls>
+// DSML / 纯 invoke 工具调用适配层 (DeepSeek/GLM 等模型)
+// 同时支持两种格式:
+//   带前缀: <｜DSML｜invoke name="..."><｜DSML｜parameter name="...">value</｜DSML｜parameter></｜DSML｜invoke>
+//   纯格式: <invoke name="..."><parameter name="...">value</parameter></invoke>
 // ═══════════════════════════════════════════════════════════════════════════
 
+/** DSML 前缀（可选匹配） */
+const DSML = "(?:｜DSML｜)?";
+
 /**
- * 检查内容是否包含 DSML 格式的工具调用
+ * 检查内容是否包含 DSML 或纯 invoke 格式的工具调用
  */
 export function hasDsmlToolCalls(content: string): boolean {
-  return /<｜DSML｜function_calls>/.test(content) || /<｜DSML｜invoke/.test(content);
+  return /<｜DSML｜function_calls>/.test(content)
+    || /<｜DSML｜invoke/.test(content)
+    || /<invoke[\s>]/.test(content);
 }
 
 /**
- * 解析 DeepSeek DSML 格式的工具调用
- * 输入: '<｜DSML｜function_calls><｜DSML｜invoke name="queryByTagProperty"><｜DSML｜parameter name="repoId">value</｜DSML｜parameter></｜DSML｜invoke></｜DSML｜function_calls>'
- * 输出: [{ id, type, function: { name, arguments } }]
+ * 解析 DSML 或纯 invoke 格式的工具调用
  */
 export function parseDsmlToolCalls(content: string): ToolCallInfo[] {
   const toolCalls: ToolCallInfo[] = [];
-  
-  // 匹配所有 <｜DSML｜invoke>...</｜DSML｜invoke> 块
-  const invokeRegex = /<｜DSML｜invoke\s+name="([^"]+)"[^>]*>([\s\S]*?)<\/｜DSML｜invoke>/g;
+
+  // 匹配所有 invoke 块（可选 DSML 前缀）
+  const invokeRegex = new RegExp(
+    `<${DSML}invoke\\s+name="([^"]+)"[^>]*>([\\s\\S]*?)<\\/${DSML}invoke>`,
+    "g"
+  );
   let match;
   let index = 0;
-  
+
   while ((match = invokeRegex.exec(content)) !== null) {
     const toolName = match[1];
     const invokeContent = match[2];
-    
-    // 解析参数
+
+    // 解析参数（可选 DSML 前缀）
     const args: Record<string, any> = {};
-    const paramRegex = /<｜DSML｜parameter\s+name="([^"]+)"[^>]*>([\s\S]*?)<\/｜DSML｜parameter>/g;
+    const paramRegex = new RegExp(
+      `<${DSML}parameter\\s+name="([^"]+)"[^>]*>([\\s\\S]*?)<\\/${DSML}parameter>`,
+      "g"
+    );
     let paramMatch;
-    
+
     while ((paramMatch = paramRegex.exec(invokeContent)) !== null) {
       const paramName = paramMatch[1];
       let paramValue: any = paramMatch[2].trim();
-      
+
       // 尝试解析 JSON 值
       try {
         paramValue = JSON.parse(paramValue);
       } catch {
         // 保持字符串值
       }
-      
+
       args[paramName] = paramValue;
     }
-    
+
     toolCalls.push({
       id: `dsml_tool_call_${index++}`,
       type: "function",
@@ -218,24 +229,48 @@ export function parseDsmlToolCalls(content: string): ToolCallInfo[] {
       },
     });
   }
-  
+
   return toolCalls;
 }
 
 /**
- * 从内容中移除 DSML 格式的工具调用块，返回纯文本内容
+ * 从内容中移除 DSML 或纯 invoke 工具调用块
  */
 export function stripDsmlToolCalls(content: string): string {
-  // 移除完整的 function_calls 块
+  // 移除 DSML function_calls 块
   let result = content.replace(/<｜DSML｜function_calls>[\s\S]*?<\/｜DSML｜function_calls>/g, "");
-  // 移除单独的 invoke 块（没有被 function_calls 包围的情况）
-  result = result.replace(/<｜DSML｜invoke[\s\S]*?<\/｜DSML｜invoke>/g, "");
-  // 移除单独的 parameter 标签（不完整的情况）
-  result = result.replace(/<｜DSML｜parameter[\s\S]*?<\/｜DSML｜parameter>/g, "");
-  // 移除自闭合的标签
+  // 移除 invoke 块（带或不带 DSML 前缀）
+  result = result.replace(/<(?:｜DSML｜)?invoke[\s\S]*?<\/(?:｜DSML｜)?invoke>/g, "");
+  // 移除 parameter 标签残余
+  result = result.replace(/<(?:｜DSML｜)?parameter[\s\S]*?<\/(?:｜DSML｜)?parameter>/g, "");
+  // 移除自闭合标签
   result = result.replace(/<｜DSML｜[^>]*\/>/g, "");
+  // 移除孤立的 invoke 开标签
+  result = result.replace(/<(?:｜DSML｜)?\/?invoke[^>]*>/gi, "");
+  // 移除孤立的 parameter 标签
+  result = result.replace(/<(?:｜DSML｜)?\/?parameter[^>]*>/gi, "");
   return result.trim();
 }
+
+/** 检查字符串末尾是否为 <invoke（含 DSML 前缀）的部分前缀，用于跨 chunk 缓冲 */
+function getTrailingInvokePrefixLen(s: string): number {
+  const prefixes = ["<invok", "<invo", "<inv", "<in", "<i", "<"];
+  for (const p of prefixes) {
+    if (s.endsWith(p)) return p.length;
+  }
+  // Also check for DSML prefixed form: <｜DSML｜invoke...
+  // The DSML prefix uses fullwidth vertical bar characters
+  if (/<[｜|]?DSML[｜|]?invok$/.test(s)) return 16;
+  if (/<[｜|]?DSML[｜|]?invo$/.test(s)) return 14;
+  if (/<[｜|]?DSML[｜|]?inv$/.test(s)) return 13;
+  if (/<[｜|]?DSML[｜|]?in$/.test(s)) return 12;
+  if (/<[｜|]?DSML[｜|]?i$/.test(s)) return 11;
+  if (/<[｜|]?DSML[｜|]?$/.test(s)) return 10;
+  return 0;
+}
+
+/** 检测内容中是否出现 invoke 标签（含 DSML 前缀） */
+const INVOKE_DETECT_RE = /<(?:｜DSML｜)?invoke[\s>]/;
 
 export interface StreamOptions {
   apiUrl: string;
@@ -385,6 +420,9 @@ export async function* streamChatCompletion(
   let reasoning = "";
   let toolCalls: ToolCallInfo[] = [];
   let finishReason: string | undefined;
+  // 闸门：检测到 invoke XML 后停止向 UI 输出文本，静默累积用于 DSML 解析
+  let invokeDetected = false;
+  let yieldedContentLen = 0;
 
   for await (const chunk of openAIChatCompletionsStream({
     apiUrl: options.apiUrl,
@@ -401,7 +439,23 @@ export async function* streamChatCompletion(
   })) {
     if (chunk.type === "content" && chunk.content) {
       content += chunk.content;
-      yield { type: "content", content: chunk.content };
+      if (!invokeDetected) {
+        const invokeIdx = content.search(INVOKE_DETECT_RE);
+        if (invokeIdx >= 0) {
+          invokeDetected = true;
+          if (invokeIdx > yieldedContentLen) {
+            yield { type: "content", content: content.substring(yieldedContentLen, invokeIdx) };
+            yieldedContentLen = invokeIdx;
+          }
+        } else {
+          const partialLen = getTrailingInvokePrefixLen(content);
+          const safeEnd = content.length - partialLen;
+          if (safeEnd > yieldedContentLen) {
+            yield { type: "content", content: content.substring(yieldedContentLen, safeEnd) };
+            yieldedContentLen = safeEnd;
+          }
+        }
+      }
     } else if (chunk.type === "reasoning" && chunk.reasoning != null) {
       reasoning += chunk.reasoning;
       yield { type: "reasoning", reasoning: chunk.reasoning };
@@ -414,21 +468,30 @@ export async function* streamChatCompletion(
   }
 
   // 检查 content 中是否包含 <tool_call> XML 标签
-  if (toolCalls.length === 0 && hasXmlToolCalls(content)) {
+  // 即使存在原生 tool_calls，也必须剥离 XML/DSML，防止标签泄漏到回复文本
+  if (hasXmlToolCalls(content)) {
     const xmlToolCalls = parseXmlToolCalls(content);
+    content = stripXmlToolCalls(content);
     if (xmlToolCalls.length > 0) {
-      toolCalls = xmlToolCalls;
-      content = stripXmlToolCalls(content);
+      const existingKeys = new Set(toolCalls.map(tc => `${tc.function.name}:${tc.function.arguments}`));
+      for (const xtc of xmlToolCalls) {
+        const key = `${xtc.function.name}:${xtc.function.arguments}`;
+        if (!existingKeys.has(key)) { toolCalls.push(xtc); existingKeys.add(key); }
+      }
       yield { type: "tool_calls", toolCalls };
     }
   }
 
-  // 检查 content 中是否包含 DSML 格式的工具调用
-  if (toolCalls.length === 0 && hasDsmlToolCalls(content)) {
+  // 即使存在原生 tool_calls，也必须剥离 DSML，防止标签泄漏到回复文本
+  if (hasDsmlToolCalls(content)) {
     const dsmlToolCalls = parseDsmlToolCalls(content);
+    content = stripDsmlToolCalls(content);
     if (dsmlToolCalls.length > 0) {
-      toolCalls = dsmlToolCalls;
-      content = stripDsmlToolCalls(content);
+      const existingKeys = new Set(toolCalls.map(tc => `${tc.function.name}:${tc.function.arguments}`));
+      for (const dtc of dsmlToolCalls) {
+        const key = `${dtc.function.name}:${dtc.function.arguments}`;
+        if (!existingKeys.has(key)) { toolCalls.push(dtc); existingKeys.add(key); }
+      }
       yield { type: "tool_calls", toolCalls };
     }
   }
@@ -461,6 +524,8 @@ export async function* streamChatWithRetry(
   let toolCalls: ToolCallInfo[] = [];
   let finishReason: string | undefined;
   let usedFallback = false;
+  let invokeDetected = false;
+  let yieldedContentLen = 0;
 
   // Apply context compression if enabled and messages exceed threshold
   const maybeCompressMessages = async (messages: OpenAIChatMessage[]): Promise<OpenAIChatMessage[]> => {
@@ -535,7 +600,23 @@ export async function* streamChatWithRetry(
 
         if (chunk.type === "content" && chunk.content) {
           content += chunk.content;
-          yield { type: "content", content: chunk.content };
+          if (!invokeDetected) {
+            const invokeIdx = content.search(INVOKE_DETECT_RE);
+            if (invokeIdx >= 0) {
+              invokeDetected = true;
+              if (invokeIdx > yieldedContentLen) {
+                yield { type: "content", content: content.substring(yieldedContentLen, invokeIdx) };
+                yieldedContentLen = invokeIdx;
+              }
+            } else {
+              const partialLen = getTrailingInvokePrefixLen(content);
+              const safeEnd = content.length - partialLen;
+              if (safeEnd > yieldedContentLen) {
+                yield { type: "content", content: content.substring(yieldedContentLen, safeEnd) };
+                yieldedContentLen = safeEnd;
+              }
+            }
+          }
         } else if (chunk.type === "reasoning" && chunk.reasoning != null) {
           reasoning += chunk.reasoning;
           yield { type: "reasoning", reasoning: chunk.reasoning };
@@ -567,6 +648,8 @@ export async function* streamChatWithRetry(
     reasoning = "";
     toolCalls = [];
     finishReason = undefined;
+    invokeDetected = false;
+    yieldedContentLen = 0;
     onRetry?.();
 
     try {
@@ -585,6 +668,8 @@ export async function* streamChatWithRetry(
     usedFallback = true;
     content = "";
     reasoning = ""; // 重置 reasoning
+    invokeDetected = false;
+    yieldedContentLen = 0;
     onRetry?.();
 
     try {
@@ -597,29 +682,32 @@ export async function* streamChatWithRetry(
   // Qwen3/Llama 适配: 检查 content 中是否包含 <tool_call> XML 标签
   // 如果模型不支持原生 tool_calls 格式，会把调用写在 content 里
   // ═══════════════════════════════════════════════════════════════════════════
-  if (toolCalls.length === 0 && hasXmlToolCalls(content)) {
+  // 即使存在原生 tool_calls，也必须剥离 XML/DSML，防止标签泄漏到回复文本
+  if (hasXmlToolCalls(content)) {
     console.log("[streamChatWithRetry] Detected <tool_call> XML in content, parsing...");
     const xmlToolCalls = parseXmlToolCalls(content);
+    content = stripXmlToolCalls(content);
     if (xmlToolCalls.length > 0) {
-      toolCalls = xmlToolCalls;
-      // 从 content 中移除 tool_call 块，保留其他文本
-      content = stripXmlToolCalls(content);
-      // 通知调用方有 tool_calls
+      const existingKeys = new Set(toolCalls.map(tc => `${tc.function.name}:${tc.function.arguments}`));
+      for (const xtc of xmlToolCalls) {
+        const key = `${xtc.function.name}:${xtc.function.arguments}`;
+        if (!existingKeys.has(key)) { toolCalls.push(xtc); existingKeys.add(key); }
+      }
       yield { type: "tool_calls", toolCalls };
     }
   }
 
-  // ═══════════════════════════════════════════════════════════════════════════
-  // DeepSeek DSML 适配: 检查 content 中是否包含 <｜DSML｜ 格式的工具调用
-  // ═══════════════════════════════════════════════════════════════════════════
-  if (toolCalls.length === 0 && hasDsmlToolCalls(content)) {
+  // 即使存在原生 tool_calls，也必须剥离 DSML，防止标签泄漏到回复文本
+  if (hasDsmlToolCalls(content)) {
     console.log("[streamChatWithRetry] Detected DSML format tool calls in content, parsing...");
     const dsmlToolCalls = parseDsmlToolCalls(content);
+    content = stripDsmlToolCalls(content);
     if (dsmlToolCalls.length > 0) {
-      toolCalls = dsmlToolCalls;
-      // 从 content 中移除 DSML 块，保留其他文本
-      content = stripDsmlToolCalls(content);
-      // 通知调用方有 tool_calls
+      const existingKeys = new Set(toolCalls.map(tc => `${tc.function.name}:${tc.function.arguments}`));
+      for (const dtc of dsmlToolCalls) {
+        const key = `${dtc.function.name}:${dtc.function.arguments}`;
+        if (!existingKeys.has(key)) { toolCalls.push(dtc); existingKeys.add(key); }
+      }
       yield { type: "tool_calls", toolCalls };
     }
   }

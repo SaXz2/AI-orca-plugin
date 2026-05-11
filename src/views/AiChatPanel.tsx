@@ -72,6 +72,7 @@ import { nowId, safeText } from "../utils/text-utils";
 import { buildConversationMessages } from "../services/ai/message-builder";
 import { streamChatWithRetry, type ToolCallInfo } from "../services/ai/chat-stream-handler";
 import type { OpenAIChatMessage } from "../services/ai/openai-client";
+import { sanitizeContent } from "../services/ai/openai-client";
 import { executeAgenticRAG, getToolDisplayName } from "../services/ai/agentic-rag-service";
 import { normalizeWebSearchResults, type WebSearchSource } from "../utils/source-attribution";
 import {
@@ -1739,7 +1740,7 @@ graph TD
 
       let baseTools = hasHighPriorityContext
         ? getToolsForDraggedContext()
-        : getTools(false, false, enableTodoistTools);
+        : getTools(false, enableTodoistTools);
 
       // 合并技能工具：将已启用的技能注册为 function calling 工具
       try {
@@ -1847,8 +1848,7 @@ graph TD
           
           // 更新消息为最终答案，保留 reasoning 作为思考过程记录
           setStreamingMessageId(null);
-          
-          // 生成检索过程摘要作为 reasoning
+      // 生成检索过程摘要作为 reasoning
           const retrieveSteps = ragResult.steps.filter(s => s.type === "retrieve");
           const correctSteps = ragResult.steps.filter(s => s.type === "correct");
           const ragSummary = [
@@ -1950,15 +1950,15 @@ graph TD
             const assistantId = nowId();
             const assistantCreatedAt = Date.now();
             setStreamingMessageId(assistantId);
-            setMessages((prev) => [...prev, { 
-              id: assistantId, 
-              role: "assistant", 
-              content: chunk.content, 
+            setMessages((prev) => [...prev, {
+              id: assistantId,
+              role: "assistant",
+              content: sanitizeContent(chunk.content),
               createdAt: assistantCreatedAt,
               model,
               searchResults: getSearchResultsForMessage(),
             }]);
-            currentContent = chunk.content;
+            currentContent = sanitizeContent(chunk.content);
             reasoningMessageId = assistantId; // 复用这个 ID 作为 assistant ID
           } else if (currentContent === "") {
             // reasoning 完成，创建新的 assistant 消息
@@ -1966,33 +1966,40 @@ graph TD
             const assistantId = nowId();
             const assistantCreatedAt = Date.now();
             setStreamingMessageId(assistantId);
-            setMessages((prev) => [...prev, { 
-              id: assistantId, 
-              role: "assistant", 
-              content: chunk.content, 
+            setMessages((prev) => [...prev, {
+              id: assistantId,
+              role: "assistant",
+              content: sanitizeContent(chunk.content),
               createdAt: assistantCreatedAt,
               model,
               searchResults: getSearchResultsForMessage(),
             }]);
-            currentContent = chunk.content;
+            currentContent = sanitizeContent(chunk.content);
             reasoningMessageId = assistantId; // 更新为 assistant ID
           } else {
             // 继续追加 content
-            currentContent += chunk.content;
+            currentContent = sanitizeContent(currentContent + chunk.content);
             updateMessage(reasoningMessageId, { content: currentContent });
           }
         } else if (chunk.type === "tool_calls") {
           toolCalls = chunk.toolCalls;
+        } else if (chunk.type === "done" && chunk.result) {
+          // 使用 DSML 清洗后的最终内容，确保 invoke 标签不进入历史
+          if (chunk.result.content !== undefined) {
+            currentContent = sanitizeContent(chunk.result.content);
+            if (reasoningMessageId) {
+              updateMessage(reasoningMessageId, { content: currentContent });
+            }
+          }
+          if (chunk.result.toolCalls?.length) {
+            toolCalls = chunk.result.toolCalls;
+          }
         }
       }
 
       setStreamingMessageId(null);
 
       const hasAssistantMessage = Boolean(reasoningMessageId);
-      if (toolCalls.length > 0 && hasAssistantMessage && currentContent) {
-        currentContent = "";
-        updateMessage(reasoningMessageId!, { content: "" });
-      }
 
       // 如果只有 reasoning 没有 content，需要创建 assistant 消息
       const assistantId = hasAssistantMessage ? reasoningMessageId! : nowId();
@@ -2023,7 +2030,7 @@ graph TD
 	      conversation.push({
 	        id: assistantId,
 	        role: "assistant",
-	        content: currentContent,
+	        content: sanitizeContent(currentContent),
 	        createdAt: assistantCreatedAt,
 	        tool_calls: toolCalls.length > 0 ? toolCalls : undefined,
 	        ...(reasoningMessageId ? { reasoning: currentReasoning } : {}),
@@ -2114,7 +2121,20 @@ graph TD
             
             // Fix 5: Fix common typos in key names (blockld -> blockId)
             repaired = repaired.replace(/"blockld"/gi, '"blockId"');
-            
+
+            // Fix 6: Remove trailing commas before } or ] (e.g., {"a": 1,} -> {"a": 1})
+            repaired = repaired.replace(/,\s*([}\]])/g, '$1');
+
+            // Fix 7: Replace "key": } with "key": null} (AI outputs bare closing brace as value)
+            repaired = repaired.replace(/":\s*\}/g, '": null}');
+
+            // Fix 8: Replace "key": ] with "key": [] (AI outputs wrong bracket type)
+            repaired = repaired.replace(/":\s*\]/g, '": []');
+
+            // Fix 9: Replace invalid value "key": ] or "key": } when they appear mid-object
+            // e.g., "blockIds": }, -> "blockIds": null,
+            repaired = repaired.replace(/":\s*\},/g, '": null,');
+
             try {
               JSON.parse(repaired);
               return repaired;
@@ -2146,58 +2166,66 @@ graph TD
             }
           }
 
-          let result: string;
+          let result: string | undefined;
           if (parseError) {
             result = `Error: ${parseError}\n\nRaw arguments received:\n${toolCall.function.arguments}\n\nPlease provide valid JSON arguments.`;
           } else {
             const isSkillCall = toolName.startsWith("skill_");
 
             if (isSkillCall) {
-              const resolvedSkillId = await resolveSkillIdFromToolName(toolName);
-              if (!resolvedSkillId) {
-                result = `Error: Skill not found for tool: ${toolName}`;
-              } else {
-                try {
-                  const skill = await getSkill(resolvedSkillId.id, (resolvedSkillId as any).isGlobal);
-                  if (!skill) {
-                    result = `Error: Skill not found: ${resolvedSkillId.id}`;
-                  } else {
-                    const { createToolConfirmPromise } = await import("../components/ToolConfirmDialog");
-                    const userApproved = await createToolConfirmPromise(
-                      `skill: ${skill.name}`,
-                      { skillId: resolvedSkillId.id, input: args.input || "" }
-                    );
-                    if (!userApproved) {
-                      result = `用户拒绝执行 Skill。请尝试其他方式或直接回答用户的问题。`;
+              try {
+                const resolvedSkillId = await resolveSkillIdFromToolName(toolName);
+                if (!resolvedSkillId) {
+                  result = `Error: Skill not found for tool: ${toolName}`;
+                } else {
+                  try {
+                    const skill = await getSkill(resolvedSkillId.id, (resolvedSkillId as any).isGlobal);
+                    if (!skill) {
+                      result = `Error: Skill not found: ${resolvedSkillId.id}`;
                     } else {
-                      const instructions = await getSkillInstructionsAsync(resolvedSkillId);
-                      if (!instructions) {
-                        result = `Error: Skill not found: ${resolvedSkillId.id}`;
+                      const { createToolConfirmPromise } = await import("../components/ToolConfirmDialog");
+                      const userApproved = await createToolConfirmPromise(
+                        `skill: ${skill.name}`,
+                        { skillId: resolvedSkillId.id, input: args.input || "" }
+                      );
+                      if (!userApproved) {
+                        result = `用户拒绝执行 Skill。请尝试其他方式或直接回答用户的问题。`;
                       } else {
-                        const userInput = args.input || "";
-                        result = `${instructions}
+                        const instructions = await getSkillInstructionsAsync(resolvedSkillId);
+                        if (!instructions) {
+                          result = `Error: Skill not found: ${resolvedSkillId.id}`;
+                        } else {
+                          const userInput = args.input || "";
+                          result = `${instructions}
 
 ## 用户输入
 ${userInput}`;
+                        }
                       }
                     }
+                  } catch (err: any) {
+                    result = `Error: Failed to execute skill ${resolvedSkillId.id}: ${err?.message || "Unknown error"}`;
                   }
-                } catch (err: any) {
-                  result = `Error: Failed to execute skill ${resolvedSkillId.id}: ${err?.message || "Unknown error"}`;
                 }
+              } catch (err: any) {
+                result = `Error: Failed to resolve skill for tool ${toolName}: ${err?.message || "Unknown error"}`;
               }
             } else {
               const needsConfirm = shouldAskForTool(toolName);
               let userApproved = true;
 
               if (needsConfirm) {
-                const { createToolConfirmPromise } = await import("../components/ToolConfirmDialog");
-                userApproved = await createToolConfirmPromise(toolName, args);
+                try {
+                  const { createToolConfirmPromise } = await import("../components/ToolConfirmDialog");
+                  userApproved = await createToolConfirmPromise(toolName, args);
+                } catch (confirmErr: any) {
+                  result = `Error: Tool confirmation failed: ${confirmErr?.message || "Unknown error"}`;
+                }
               }
 
-              if (!userApproved) {
+              if (result === undefined && !userApproved) {
                 result = `用户拒绝执行此工具。请尝试其他方式或直接回答用户的问题。`;
-              } else {
+              } else if (result === undefined) {
                 try {
                   const timeoutPromise = new Promise<string>((_, reject) => {
                     setTimeout(() => reject(new Error(`Tool execution timed out after ${TOOL_TIMEOUT_MS / 1000}s`)), TOOL_TIMEOUT_MS);
@@ -2215,7 +2243,7 @@ ${userInput}`;
 
           // 强制截断过长的工具结果，防止原始数据污染对话
           const maxChars = Math.max(settings.maxToolResultChars || 8000, 500);
-          let finalContent = result;
+          let finalContent = result || "Error: Tool execution returned empty result";
           if (finalContent.length > maxChars) {
             finalContent = finalContent.slice(0, maxChars) +
               `\n\n...[已截断，原长度 ${finalContent.length} 字符]`;
@@ -2355,15 +2383,15 @@ ${userInput}`;
                 const nextAssistantId = nowId();
                 const nextAssistantCreatedAt = Date.now();
                 setStreamingMessageId(nextAssistantId);
-                setMessages((prev) => [...prev, { 
-                  id: nextAssistantId, 
-                  role: "assistant", 
-                  content: chunk.content, 
+                setMessages((prev) => [...prev, {
+                  id: nextAssistantId,
+                  role: "assistant",
+                  content: sanitizeContent(chunk.content),
                   createdAt: nextAssistantCreatedAt,
                   model,
                   searchResults: getSearchResultsForMessage(),
                 }]);
-                nextContent = chunk.content;
+                nextContent = sanitizeContent(chunk.content);
                 nextReasoningMessageId = nextAssistantId;
               } else if (nextContent === "") {
                 // reasoning 完成，创建新的 assistant 消息
@@ -2371,23 +2399,33 @@ ${userInput}`;
                 const nextAssistantId = nowId();
                 const nextAssistantCreatedAt = Date.now();
                 setStreamingMessageId(nextAssistantId);
-                setMessages((prev) => [...prev, { 
-                  id: nextAssistantId, 
-                  role: "assistant", 
-                  content: chunk.content, 
+                setMessages((prev) => [...prev, {
+                  id: nextAssistantId,
+                  role: "assistant",
+                  content: sanitizeContent(chunk.content),
                   createdAt: nextAssistantCreatedAt,
                   model,
                   searchResults: getSearchResultsForMessage(),
                 }]);
-                nextContent = chunk.content;
+                nextContent = sanitizeContent(chunk.content);
                 nextReasoningMessageId = nextAssistantId;
               } else {
                 // 继续追加 content
-                nextContent += chunk.content;
+                nextContent = sanitizeContent(nextContent + chunk.content);
                 updateMessage(nextReasoningMessageId, { content: nextContent });
               }
             } else if (chunk.type === "tool_calls" && enableTools) {
               nextToolCalls = chunk.toolCalls;
+            } else if (chunk.type === "done" && chunk.result) {
+              if (chunk.result.content !== undefined) {
+                nextContent = sanitizeContent(chunk.result.content);
+                if (nextReasoningMessageId) {
+                  updateMessage(nextReasoningMessageId, { content: nextContent });
+                }
+              }
+              if (chunk.result.toolCalls?.length) {
+                nextToolCalls = chunk.result.toolCalls;
+              }
             }
           }
         } catch (streamErr: any) {
@@ -2437,7 +2475,7 @@ ${userInput}`;
         conversation.push({
           id: nextAssistantId,
           role: "assistant",
-          content: nextContent,
+          content: sanitizeContent(nextContent),
           createdAt: nextAssistantCreatedAt,
           tool_calls: nextToolCalls.length > 0 ? nextToolCalls : undefined,
           ...(nextReasoningMessageId ? { reasoning: nextReasoning } : {}),

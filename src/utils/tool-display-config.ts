@@ -8,26 +8,16 @@
 import { skillToolNameToSkillIdCache } from "../services/ai/ai-tools";
 import { TOOL_DISPLAY_NAMES } from "../store/tool-store";
 
-// 检查是否是 Skill 工具
 function isSkillToolName(toolName: string): boolean {
   return toolName.startsWith("skill_");
 }
 
-// 获取 Skill 显示名称
 function getSkillDisplayName(toolName: string): string {
   if (!isSkillToolName(toolName)) return toolName;
-
-  // 优先从缓存反查原始 Skill ID（支持中文等）
   const skillId = skillToolNameToSkillIdCache.get(toolName);
   if (skillId) return skillId;
-
-  // 兜底：解析 toolName 结构 skill_<slug>_<hash>
   const parts = toolName.split("_");
-  if (parts.length >= 3) {
-    // parts[0] = skill, parts[1] = slug
-    return parts[1] || "技能";
-  }
-
+  if (parts.length >= 3) return parts[1] || "技能";
   return "技能";
 }
 
@@ -94,25 +84,23 @@ const MCP_CONFIG: ToolDisplayConfig = {
 
 /**
  * Get display configuration for a tool
- * @param toolName - The name of the tool
- * @returns ToolDisplayConfig for the specified tool, or default config if not found
  */
 export function getToolDisplayConfig(toolName: string): ToolDisplayConfig {
   if (isSkillToolName(toolName)) {
     return { ...SKILL_CONFIG, displayName: getSkillDisplayName(toolName) };
   }
   if (toolName.startsWith("mcp__")) {
-    // 优先使用注册的显示名称
     const registeredName = TOOL_DISPLAY_NAMES[toolName];
     if (registeredName) {
       return { ...MCP_CONFIG, displayName: registeredName };
     }
+    // 去掉 mcp__ 前缀，格式：serverName / toolName
     const parts = toolName.split("__");
     const serverName = parts[1] ?? "external";
     const toolShortName = parts.slice(2).join("__");
     return {
       ...MCP_CONFIG,
-      displayName: `${serverName}:${toolShortName}`,
+      displayName: toolShortName || `${serverName}`,
     };
   }
   return TOOL_CONFIGS[toolName] || DEFAULT_CONFIG;

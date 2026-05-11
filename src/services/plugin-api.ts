@@ -189,7 +189,7 @@ export const AiChatPluginAPI = {
     } = options;
 
     // 动态获取工具列表（包含外部 MCP 工具）
-    const tools = options.tools ?? getTools(false, false, todoistEnabled);
+    const tools = options.tools ?? getTools(false, todoistEnabled);
 
     // 获取 API 配置
     const apiConfig = getModelApiConfig(settings, model);

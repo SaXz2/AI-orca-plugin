@@ -16,24 +16,11 @@ import type {
   QueryCondition,
   QueryCombineMode
 } from "../../utils/query-types";
-import { isImageSearchEnabled, isScriptAnalysisEnabled, isWebSearchEnabled, isWikipediaEnabled, isCurrencyEnabled } from "../../store/tool-store";
-import {
-  getScriptAnalysisTools,
-  handleScriptAnalysisTool
-} from "./script-analysis-tool";
+import { isWebSearchEnabled, isImageSearchEnabled, isWikipediaEnabled } from "../../store/tool-store";
 import { searchWeb, searchWithFallback, formatSearchResults } from "../external/web-search-service";
-import { searchImages, formatImageResults, type ImageSearchConfig } from "../external/image-search-service";
 import { fetchWebContent } from "../external/web-fetcher";
 import { getAiChatSettings } from "../../settings/ai-chat-settings";
 import { getAiChatPluginName } from "../../ui/ai-chat-ui";
-import {
-  searchWikipedia,
-  formatWikipediaResult,
-  convertCurrency,
-  formatCurrencyResult,
-  getExchangeRates,
-  formatExchangeRates,
-} from "../external/utility-tools";
 import {
   TODOIST_TOOLS,
   executeTodoistTool,
@@ -270,7 +257,7 @@ export const TOOLS: OpenAITool[] = [
         properties: {
           toolName: {
             type: "string",
-            description: "工具名称，如 webSearch、wikipedia 或以 mcp__ 开头的外部工具。",
+            description: "工具名称，如 webSearch 或以 mcp__ 开头的外部工具。",
           },
         },
         required: ["toolName"],
@@ -319,52 +306,7 @@ export const WEB_SEARCH_TOOL: OpenAITool = {
 };
 
 /**
- * 图像搜索工具 - 仅在用户开启联网搜索时添加
- */
-export const IMAGE_SEARCH_TOOL: OpenAITool = {
-  type: "function",
-  function: {
-    name: "imageSearch",
-    description: `搜索相关图片并在回复中显示。
-
-【何时使用 - 优先使用】
-- 用户询问任何人物、地点、物品、概念的外观或样子
-- 回答中提到具体的人名、地名、产品名、建筑物等
-- 用户问"是什么"、"长什么样"、"外观如何"等问题
-- 介绍、描述任何具体事物时都应该搜索图片
-
-【常见触发场景】
-- "谁是XXX？" → 搜索人物照片
-- "什么是XXX？" → 搜索相关图片  
-- "介绍XXX" → 搜索对象图片
-- "XXX长什么样？" → 直接搜索
-- 任何涉及具体事物的问题
-
-【参数】
-- query: 图片搜索关键词，使用最核心的名词
-- maxResults: 返回图片数量，默认3，最大6
-
-【重要】优先使用此工具！图片能大大提升回答质量，用户更喜欢图文并茂的回答。`,
-    parameters: {
-      type: "object",
-      properties: {
-        query: {
-          type: "string",
-          description: "图片搜索关键词，使用最核心的名词",
-        },
-        maxResults: {
-          type: "number",
-          description: "最大图片数量，默认3，最大6",
-        },
-      },
-      required: ["query"],
-    },
-  },
-};
-
-/**
  * 网页抓取工具 - 获取任意 URL 的完整网页内容
- * 无需 API Key，直接抓取网页并转换为 Markdown
  */
 export const WEB_FETCH_TOOL: OpenAITool = {
   type: "function",
@@ -398,27 +340,24 @@ export const WEB_FETCH_TOOL: OpenAITool = {
   },
 };
 
+
 /**
- * Wikipedia 搜索工具
+ * 图片搜索工具 - 搜索互联网上的图片
  */
-export const WIKIPEDIA_TOOL: OpenAITool = {
+export const IMAGE_SEARCH_TOOL: OpenAITool = {
   type: "function",
   function: {
-    name: "wikipedia",
-    description: `查询 Wikipedia 百科获取权威知识。
+    name: "imageSearch",
+    description: `搜索互联网上的图片。
 
 【何时使用】
-- 用户询问人物、历史事件、科学概念、地理位置等百科知识
-- 需要权威、准确的背景信息
-- 用户问"什么是"、"谁是"、"介绍一下"等问题
+- 用户要求找图片、配图、插图
+- 用户想了解某事物的外观
+- 需要为内容配展示图片
 
 【参数】
-- query: 搜索关键词
-- lang: 语言代码，默认 zh（中文），可选 en（英文）、ja（日文）等
-
-【注意】
-- 优先使用中文 Wikipedia，如果没有结果会自动尝试英文
-- 返回结果包含摘要和链接，可能包含图片`,
+- query: 图片搜索关键词
+- maxResults: 返回结果数，默认5`,
     parameters: {
       type: "object",
       properties: {
@@ -426,9 +365,9 @@ export const WIKIPEDIA_TOOL: OpenAITool = {
           type: "string",
           description: "搜索关键词",
         },
-        lang: {
-          type: "string",
-          description: "语言代码，默认 zh（中文）",
+        maxResults: {
+          type: "number",
+          description: "最大结果数，默认5，最大20",
         },
       },
       required: ["query"],
@@ -437,44 +376,35 @@ export const WIKIPEDIA_TOOL: OpenAITool = {
 };
 
 /**
- * 汇率转换工具
+ * 维基百科搜索工具 - 查询 Wikipedia 知识
  */
-export const CURRENCY_TOOL: OpenAITool = {
+export const WIKIPEDIA_TOOL: OpenAITool = {
   type: "function",
   function: {
-    name: "currency",
-    description: `查询实时汇率或进行货币转换。
+    name: "wikipedia",
+    description: `查询维基百科获取知识性内容。
 
 【何时使用】
-- 用户询问汇率，如"美元兑人民币多少"
-- 用户需要货币转换，如"100美元等于多少人民币"
-- 用户问某种货币的汇率
+- 用户询问概念、人物、事件的定义/背景
+- 需要权威参考资料
+- 笔记库中没有的外部知识
 
 【参数】
-- amount: 金额（可选，默认1）
-- from: 源货币（支持代码如 USD、CNY，或中文如"美元"、"人民币"）
-- to: 目标货币（可选，不填则返回多种货币汇率）
-
-【支持的货币】
-USD(美元)、CNY(人民币)、EUR(欧元)、GBP(英镑)、JPY(日元)、
-HKD(港币)、KRW(韩元)、TWD(台币)、AUD(澳元)、CAD(加元)等`,
+- query: 搜索关键词（建议用英文）
+- language: 语言代码，默认 zh（中文）`,
     parameters: {
       type: "object",
       properties: {
-        amount: {
-          type: "number",
-          description: "金额，默认1",
-        },
-        from: {
+        query: {
           type: "string",
-          description: "源货币代码或名称，如 USD、美元",
+          description: "搜索关键词",
         },
-        to: {
+        language: {
           type: "string",
-          description: "目标货币代码或名称（可选）",
+          description: "语言代码：zh（中文）、en（英文）、ja（日文），默认zh",
         },
       },
-      required: ["from"],
+      required: ["query"],
     },
   },
 };
@@ -484,13 +414,11 @@ HKD(港币)、KRW(韩元)、TWD(台币)、AUD(澳元)、CAD(加元)等`,
  */
 export function getTools(
   webSearchEnabled?: boolean,
-  scriptAnalysisEnabled?: boolean,
   todoistEnabled?: boolean
 ): OpenAITool[] {
   const webSearchOn = webSearchEnabled ?? isWebSearchEnabled();
   const imageSearchOn = isImageSearchEnabled();
   const wikipediaOn = isWikipediaEnabled();
-  const currencyOn = isCurrencyEnabled();
 
   const tools: OpenAITool[] = [];
 
@@ -500,13 +428,14 @@ export function getTools(
   if (webSearchOn) {
     tools.push(WEB_SEARCH_TOOL);
     tools.push(WEB_FETCH_TOOL);
-    if (imageSearchOn) tools.push(IMAGE_SEARCH_TOOL);
   }
-  if (wikipediaOn) tools.push(WIKIPEDIA_TOOL);
-  if (currencyOn) tools.push(CURRENCY_TOOL);
 
-  if (scriptAnalysisEnabled ?? isScriptAnalysisEnabled()) {
-    tools.push(...getScriptAnalysisTools());
+  if (imageSearchOn) {
+    tools.push(IMAGE_SEARCH_TOOL);
+  }
+
+  if (wikipediaOn) {
+    tools.push(WIKIPEDIA_TOOL);
   }
 
   // Todoist AI 模式（/todoist-ai 命令启用）
@@ -1060,29 +989,6 @@ function formatToolInstructions(tool: OpenAITool): string {
 /**
  * 主入口：处理 AI 调用的工具（直接路由到对应的执行器）
  */
-function buildImageSearchConfig(webConfig: any, maxResults: number): ImageSearchConfig {
-  const instances: any[] = webConfig?.instances || [];
-  const google = instances.find((i: any) =>
-    i.provider === "google" && i.enabled && i.googleApiKey && i.googleSearchEngineId
-  );
-  if (google) {
-    return {
-      provider: "google",
-      maxResults,
-      google: { apiKey: google.googleApiKey, searchEngineId: google.googleSearchEngineId, gl: google.googleGl, hl: google.googleHl || "zh-CN", safe: google.googleSafe || "off" },
-    };
-  }
-  const bing = instances.find((i: any) => i.provider === "bing" && i.enabled && i.bingApiKey);
-  if (bing) {
-    return {
-      provider: "bing",
-      maxResults,
-      bing: { apiKey: bing.bingApiKey, mkt: bing.bingMarket || "zh-CN" },
-    };
-  }
-  return { provider: "duckduckgo", maxResults };
-}
-
 export async function executeTool(toolName: string, args: any): Promise<string> {
   try {
     // ─── 外部 MCP 服务器工具（标准 MCP 协议） ──────────────────────────
@@ -1106,16 +1012,6 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
       return formatSearchResults(searchResults);
     }
 
-    if (toolName === "imageSearch") {
-      const query = args?.query;
-      if (!query) return "Error: Missing query parameter";
-      const maxResults = args?.maxResults ?? 3;
-      const settings = getAiChatSettings(getAiChatPluginName());
-      const imageConfig = buildImageSearchConfig(settings.webSearch, Math.min(maxResults, 6));
-      const results = await searchImages(query, imageConfig);
-      return formatImageResults(results);
-    }
-
     if (toolName === "webFetch") {
       const url = args?.url;
       if (!url) return "Error: Missing url parameter";
@@ -1134,24 +1030,81 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
       }
     }
 
+    if (toolName === "imageSearch") {
+      const query = args?.query;
+      if (!query) return "Error: Missing query parameter";
+      const maxResults = args?.maxResults ?? 5;
+      const settings = getAiChatSettings(getAiChatPluginName());
+      const instances = settings.webSearch?.instances || [];
+      // 用"图片"后缀优化搜索
+      const imageQuery = `${query} 图片`;
+      const response = await searchWithFallback(imageQuery, instances, Math.min(maxResults, 20));
+      const results = response.results || [];
+      // 过滤出有图片的结果，没有则返回全部
+      const imageResults = results.filter((r: any) => r.image || r.thumbnail || r.img);
+      const output = imageResults.length > 0 ? imageResults : results.slice(0, maxResults);
+      let text = `图片搜索结果: ${query}\n\n`;
+      for (let i = 0; i < output.length; i++) {
+        const r = output[i];
+        text += `${i + 1}. **${r.title || "无标题"}**\n`;
+        if ((r as any).image || (r as any).thumbnail || (r as any).img) {
+          text += `   ![](${(r as any).image || (r as any).thumbnail || (r as any).img})\n`;
+        }
+        text += `   来源: ${r.url || (r as any).link}\n`;
+        if (r.content) text += `   ${r.content}\n`;
+        text += "\n";
+      }
+      return text || `未找到相关图片: ${query}`;
+    }
+
     if (toolName === "wikipedia") {
       const query = args?.query;
       if (!query) return "Error: Missing query parameter";
-      const lang = args?.lang ?? "zh";
-      const result = await searchWikipedia(query, lang);
-      if (!result) return `Wikipedia 未找到与"${query}"相关的结果`;
-      return formatWikipediaResult(result);
-    }
-
-    if (toolName === "currency") {
-      const { from, to, amount } = args ?? {};
-      if (!from) return "Error: Missing 'from' parameter";
-      if (to) {
-        const result = await convertCurrency(amount ?? 1, from, to);
-        return formatCurrencyResult(result);
+      const lang = args?.language || "zh";
+      try {
+        // 使用 Wikipedia REST API
+        const apiUrl = `https://${lang}.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(query)}`;
+        const resp = await fetch(apiUrl, {
+          headers: { "User-Agent": "OrcaAIPlugin/1.0" },
+          signal: AbortSignal.timeout(10000),
+        });
+        if (!resp.ok) {
+          // 回退到搜索
+          const searchUrl = `https://${lang}.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(query)}&format=json&origin=*`;
+          const searchResp = await fetch(searchUrl, { signal: AbortSignal.timeout(10000) });
+          const searchData = await searchResp.json();
+          const searchResults = searchData?.query?.search;
+          if (!searchResults || searchResults.length === 0) {
+            return `未找到维基百科条目: ${query}`;
+          }
+          let output = `维基百科搜索结果: ${query}\n\n`;
+          for (let i = 0; i < Math.min(searchResults.length, 5); i++) {
+            const r = searchResults[i];
+            output += `${i + 1}. **${r.title}**\n`;
+            output += `   https://${lang}.wikipedia.org/wiki/${encodeURIComponent(r.title)}\n`;
+            if (r.snippet) {
+              output += `   ${r.snippet.replace(/<\/?[^>]+(>|$)/g, "")}\n`;
+            }
+            output += "\n";
+          }
+          return output;
+        }
+        const data = await resp.json();
+        let output = `# ${data.title}\n\n`;
+        if (data.description) output += `*${data.description}*\n\n`;
+        if (data.extract) {
+          const extract = data.extract.length > 3000
+            ? data.extract.slice(0, 3000) + "..."
+            : data.extract;
+          output += extract + "\n\n";
+        }
+        if (data.content_urls?.desktop?.page) {
+          output += `🔗 ${data.content_urls.desktop.page}`;
+        }
+        return output;
+      } catch (err: any) {
+        return `Error: 维基百科查询失败: ${err.message}`;
       }
-      const rates = await getExchangeRates(from);
-      return formatExchangeRates(from, rates);
     }
 
     // ─── 元工具 ───────────────────────────────────────────────────────
@@ -1162,10 +1115,6 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
       if (!tool) return `Tool not found: ${requested}`;
       return formatToolInstructions(tool);
     }
-
-    // ─── 脚本分析工具 ─────────────────────────────────────────────────
-    const scriptResult = await handleScriptAnalysisTool(toolName, args);
-    if (scriptResult !== null) return scriptResult;
 
     return `Unknown tool: ${toolName}`;
   } catch (error: any) {

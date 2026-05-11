@@ -199,6 +199,7 @@ export async function connectToServer(serverId: string): Promise<void> {
     // 自动注册到工具管理
     registerMcpTools(
       serverId,
+      server.name,
       converted.map((t) => {
         // 从 openaiName 解析出原始工具名: mcp__serverId__toolName → toolName
         const parts = t.function.name.split("__");

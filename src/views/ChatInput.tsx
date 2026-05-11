@@ -24,7 +24,7 @@ import { textareaStyle, sendButtonStyle } from "./chat-input";
 import { MultiModelToggleButton } from "../components/MultiModelSelector";
 import { multiModelStore } from "../store/multi-model-store";
 import ToolPanel from "../components/ToolPanel";
-import { loadToolSettings, toolStore, toggleWebSearch, toggleAgenticRAG, toggleScriptAnalysis } from "../store/tool-store";
+import { loadToolSettings, toolStore, toggleWebSearch, toggleAgenticRAG } from "../store/tool-store";
 import { getAllCommandsInfo } from "../services/commands-loader";
 import { listSkills } from "../services/ai/skills-manager";
 import type { SkillRef } from "../types/skills";
@@ -127,7 +127,6 @@ const inputContainerStyle: React.CSSProperties = {
 
 const TOOLBAR_HIDE_BREAKPOINTS = {
   token: 520,
-  script: 480,
   rag: 440,
   web: 400,
   multi: 360,
@@ -286,17 +285,15 @@ export default function ChatInput({
 
   const overflowFlags = useMemo(() => {
     const width = toolbarWidth || 9999;
-    const hideScript = width < TOOLBAR_HIDE_BREAKPOINTS.script;
     const hideRag = width < TOOLBAR_HIDE_BREAKPOINTS.rag;
     const hideWeb = width < TOOLBAR_HIDE_BREAKPOINTS.web;
     const hideMulti = width < TOOLBAR_HIDE_BREAKPOINTS.multi;
     const hideInjection = width < TOOLBAR_HIDE_BREAKPOINTS.injection;
     const hideMode = width < TOOLBAR_HIDE_BREAKPOINTS.mode;
     const hideClear = width < TOOLBAR_HIDE_BREAKPOINTS.clear;
-    const hasOverflow = hideScript || hideRag || hideWeb || hideMulti || hideInjection || hideMode || hideClear;
+    const hasOverflow = hideRag || hideWeb || hideMulti || hideInjection || hideMode || hideClear;
 
     return {
-      hideScript,
       hideRag,
       hideWeb,
       hideMulti,
@@ -308,7 +305,7 @@ export default function ChatInput({
   }, [toolbarWidth]);
 
   const showModeSection = overflowFlags.hideMulti || overflowFlags.hideInjection || overflowFlags.hideMode;
-  const showToolSection = overflowFlags.hideWeb || overflowFlags.hideRag || overflowFlags.hideScript;
+  const showToolSection = overflowFlags.hideWeb || overflowFlags.hideRag;
   const showTokenIndicator = tokenEstimate.inputTokens > 0;
 
   // 检测是否显示斜杠命令菜单 - 使用模糊匹配
@@ -1670,27 +1667,6 @@ export default function ChatInput({
               createElement("i", { className: "ti ti-brain" })
             )
           ),
-          !overflowFlags.hideScript && withTooltip(
-            tooltipText(
-              toolSnap.scriptAnalysisEnabled
-                ? "\u5173\u95ed\u6570\u636e\u5206\u6790\\n\u5f53\u524d\uff1aAI \u53ef\u4ee5\u6267\u884c\u811a\u672c\u5206\u6790\u7b14\u8bb0\u6570\u636e"
-                : "\u5f00\u542f\u6570\u636e\u5206\u6790\\n\u5f00\u542f\u540e\uff1aAI \u53ef\u4ee5\u7edf\u8ba1\u8bcd\u9891\u3001\u641c\u7d22\u6b21\u6570\u7b49\uff0c\u8fd4\u56de\u771f\u5b9e\u6570\u636e"
-            ),
-            createElement(
-              Button,
-              {
-                variant: "plain",
-                onClick: toggleScriptAnalysis,
-                style: {
-                  padding: "4px",
-                  color: toolSnap.scriptAnalysisEnabled ? "var(--orca-color-success, #10b981)" : undefined,
-                  background: toolSnap.scriptAnalysisEnabled ? "rgba(16, 185, 129, 0.1)" : undefined,
-                  borderRadius: "4px",
-                },
-              },
-              createElement("i", { className: "ti ti-chart-bar" })
-            )
-          ),
         ),
 
         createElement(
@@ -1806,28 +1782,7 @@ export default function ChatInput({
                       )
                     )
                   ),
-                  overflowFlags.hideScript && createElement(
-                    "div",
-                    { style: overflowItemStyle },
-                    createElement("span", { style: overflowItemLabelStyle }, "\u6570\u636e\u5206\u6790"),
-                    withTooltip(
-                      toolSnap.scriptAnalysisEnabled ? "\u5173\u95ed\u6570\u636e\u5206\u6790" : "\u5f00\u542f\u6570\u636e\u5206\u6790",
-                      createElement(
-                        Button,
-                        {
-                          variant: "plain",
-                          onClick: toggleScriptAnalysis,
-                          style: {
-                            ...overflowToggleButtonStyle,
-                            color: toolSnap.scriptAnalysisEnabled ? "var(--orca-color-success, #10b981)" : undefined,
-                            background: toolSnap.scriptAnalysisEnabled ? "rgba(16, 185, 129, 0.1)" : undefined,
-                          },
-                        },
-                        createElement("i", { className: "ti ti-chart-bar" })
-                      )
-                    )
-                  ),
-                ),
+              ),
             },
             (openMenu: (e: any) => void) =>
               withTooltip(

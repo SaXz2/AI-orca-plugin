@@ -47,13 +47,13 @@ export const TOOL_DISPLAY_NAMES: Record<string, string> = {};
 
 // ─── MCP 工具自动注册 ────────────────────────────────────────────────────────
 
-const MCP_CATEGORY_NAME = "mcp-tools";
-const MCP_CATEGORY_LABEL = "MCP 外部工具";
+const MCP_CATEGORY_PREFIX = "mcp:";
 
-function ensureMcpCategory(): ToolCategory {
-  let cat = TOOL_CATEGORIES.find((c) => c.name === MCP_CATEGORY_NAME);
+function ensureMcpCategory(serverId: string, serverLabel: string): ToolCategory {
+  const categoryName = `${MCP_CATEGORY_PREFIX}${serverId}`;
+  let cat = TOOL_CATEGORIES.find((c) => c.name === categoryName);
   if (!cat) {
-    cat = { name: MCP_CATEGORY_NAME, label: MCP_CATEGORY_LABEL, tools: [] };
+    cat = { name: categoryName, label: serverLabel, tools: [] };
     TOOL_CATEGORIES.push(cat);
   }
   return cat;
@@ -62,6 +62,7 @@ function ensureMcpCategory(): ToolCategory {
 /** 注册一组 MCP 工具到工具管理 */
 export function registerMcpTools(
   serverId: string,
+  serverLabel: string,
   tools: Array<{ openaiName: string; displayName: string }>
 ): void {
   // 先注销该服务器的旧工具
@@ -69,7 +70,7 @@ export function registerMcpTools(
 
   if (tools.length === 0) return;
 
-  const cat = ensureMcpCategory();
+  const cat = ensureMcpCategory(serverId, serverLabel);
   for (const tool of tools) {
     TOOL_DISPLAY_NAMES[tool.openaiName] = tool.displayName;
     cat.tools.push(tool.openaiName);
@@ -90,19 +91,9 @@ export function unregisterMcpServerTools(serverId: string): void {
     }
   }
   // 清理 CATEGORIES
-  const cat = TOOL_CATEGORIES.find((c) => c.name === MCP_CATEGORY_NAME);
-  if (cat) {
-    cat.tools = cat.tools.filter((t) => {
-      if (!t.startsWith(prefix)) return true;
-      const rest = t.slice(prefix.length);
-      const sep = rest.indexOf("__");
-      return sep === -1 || rest.slice(0, sep) !== serverId;
-    });
-    if (cat.tools.length === 0) {
-      const idx = TOOL_CATEGORIES.indexOf(cat);
-      if (idx !== -1) TOOL_CATEGORIES.splice(idx, 1);
-    }
-  }
+  const categoryName = `${MCP_CATEGORY_PREFIX}${serverId}`;
+  const idx = TOOL_CATEGORIES.findIndex((c) => c.name === categoryName);
+  if (idx !== -1) TOOL_CATEGORIES.splice(idx, 1);
 }
 
 /**
@@ -130,18 +121,14 @@ interface ToolStore {
   showPanel: boolean;
   /** 联网搜索开关 */
   webSearchEnabled: boolean;
-  /** 图像搜索开关 */
+  /** 图片搜索开关 */
   imageSearchEnabled: boolean;
+  /** 维基百科搜索开关 */
+  wikipediaEnabled: boolean;
   /** Agentic RAG 开关（深度检索模式） */
   agenticRAGEnabled: boolean;
   /** Agentic RAG 配置 */
   agenticRAGConfig: AgenticRAGConfig;
-  /** 脚本分析开关（数据分析能力） */
-  scriptAnalysisEnabled: boolean;
-  /** Wikipedia 搜索开关 */
-  wikipediaEnabled: boolean;
-  /** 汇率查询开关 */
-  currencyEnabled: boolean;
 }
 
 export const toolStore = proxy<ToolStore>({
@@ -149,14 +136,12 @@ export const toolStore = proxy<ToolStore>({
   showPanel: false,
   webSearchEnabled: false,
   imageSearchEnabled: true,
+  wikipediaEnabled: true,
   agenticRAGEnabled: false,
   agenticRAGConfig: {
     maxIterations: 5,
     enableReflection: true,
   },
-  scriptAnalysisEnabled: false,
-  wikipediaEnabled: true,
-  currencyEnabled: true,
 });
 
 /**
@@ -217,7 +202,7 @@ export function isWebSearchEnabled(): boolean {
 }
 
 /**
- * 切换图像搜索开关
+ * 切换图片搜索开关
  */
 export function toggleImageSearch(): void {
   toolStore.imageSearchEnabled = !toolStore.imageSearchEnabled;
@@ -225,10 +210,25 @@ export function toggleImageSearch(): void {
 }
 
 /**
- * 获取图像搜索状态
+ * 获取图片搜索状态
  */
 export function isImageSearchEnabled(): boolean {
   return toolStore.imageSearchEnabled;
+}
+
+/**
+ * 切换维基百科搜索开关
+ */
+export function toggleWikipedia(): void {
+  toolStore.wikipediaEnabled = !toolStore.wikipediaEnabled;
+  saveToolSettings();
+}
+
+/**
+ * 获取维基百科搜索状态
+ */
+export function isWikipediaEnabled(): boolean {
+  return toolStore.wikipediaEnabled;
 }
 
 /**
@@ -254,51 +254,6 @@ export function getAgenticRAGConfig(): AgenticRAGConfig {
 }
 
 /**
- * 切换脚本分析开关
- */
-export function toggleScriptAnalysis(): void {
-  toolStore.scriptAnalysisEnabled = !toolStore.scriptAnalysisEnabled;
-  saveToolSettings();
-}
-
-/**
- * 获取脚本分析状态
- */
-export function isScriptAnalysisEnabled(): boolean {
-  return toolStore.scriptAnalysisEnabled;
-}
-
-/**
- * 切换 Wikipedia 开关
- */
-export function toggleWikipedia(): void {
-  toolStore.wikipediaEnabled = !toolStore.wikipediaEnabled;
-  saveToolSettings();
-}
-
-/**
- * 获取 Wikipedia 状态
- */
-export function isWikipediaEnabled(): boolean {
-  return toolStore.wikipediaEnabled;
-}
-
-/**
- * 切换汇率查询开关
- */
-export function toggleCurrency(): void {
-  toolStore.currencyEnabled = !toolStore.currencyEnabled;
-  saveToolSettings();
-}
-
-/**
- * 获取汇率查询状态
- */
-export function isCurrencyEnabled(): boolean {
-  return toolStore.currencyEnabled;
-}
-
-/**
  * 保存工具设置到本地存储
  */
 async function saveToolSettings(): Promise<void> {
@@ -307,11 +262,9 @@ async function saveToolSettings(): Promise<void> {
       toolStatus: toolStore.toolStatus,
       webSearchEnabled: toolStore.webSearchEnabled,
       imageSearchEnabled: toolStore.imageSearchEnabled,
+      wikipediaEnabled: toolStore.wikipediaEnabled,
       agenticRAGEnabled: toolStore.agenticRAGEnabled,
       agenticRAGConfig: toolStore.agenticRAGConfig,
-      scriptAnalysisEnabled: toolStore.scriptAnalysisEnabled,
-      wikipediaEnabled: toolStore.wikipediaEnabled,
-      currencyEnabled: toolStore.currencyEnabled,
     };
     
     // 同时使用 Orca 插件存储和 localStorage（双重保障）
@@ -351,10 +304,8 @@ export async function loadToolSettings(): Promise<void> {
           toolStore.toolStatus = parsed.toolStatus;
           toolStore.webSearchEnabled = parsed.webSearchEnabled ?? false;
           toolStore.imageSearchEnabled = parsed.imageSearchEnabled ?? true;
-          toolStore.agenticRAGEnabled = parsed.agenticRAGEnabled ?? false;
-          toolStore.scriptAnalysisEnabled = parsed.scriptAnalysisEnabled ?? false;
           toolStore.wikipediaEnabled = parsed.wikipediaEnabled ?? true;
-          toolStore.currencyEnabled = parsed.currencyEnabled ?? true;
+          toolStore.agenticRAGEnabled = parsed.agenticRAGEnabled ?? false;
           if (parsed.agenticRAGConfig) {
             toolStore.agenticRAGConfig = {
               ...toolStore.agenticRAGConfig,
