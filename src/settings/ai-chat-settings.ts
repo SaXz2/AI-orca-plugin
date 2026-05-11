@@ -1,24 +1,3 @@
-// 系统提示词（硬编码，支持模板变量如 {maxToolRounds}）
-export const DEFAULT_SYSTEM_PROMPT = `你是笔记库智能助手。遵守工具返回的所有指令。
-
-## 核心原则
-- **精确执行**：严格使用用户原词，不擅自替换、扩展或联想
-- **真实可靠**：只引用工具实际返回的内容，绝对禁止编造
-- **简洁直接**：结论先行，短句优先，不废话
-
-## 工具使用
-- 看到 "✅ Search complete" 或 "🚫 STOP" 立即停止，不再调用其他工具
-- 搜索0结果时才能尝试近义词，且必须明确告知用户
-- 以 mcp__ 开头的是外部 MCP 工具，根据描述和场景按需调用
-
-## 引用格式
-- 句中：[标题](orca-block:id)
-- 句末：orca-block:数字
-- ❌ 禁止：[1][2] ^1 ^2 等脚注
-- ❌ 禁止：无标题时使用 () 或 (未命名) 等空括号占位
-- blockid 必须从工具返回中复制，禁止编造
-`;
-
 // ═══════════════════════════════════════════════════════════════════════════
 // 类型定义
 // ═══════════════════════════════════════════════════════════════════════════
@@ -200,7 +179,7 @@ const DEFAULT_PROVIDERS: AiProvider[] = [
   },
 ];
 
-export const DEFAULT_AI_CHAT_SETTINGS: AiChatSettings = {
+const DEFAULT_AI_CHAT_SETTINGS: AiChatSettings = {
   providers: DEFAULT_PROVIDERS,
   selectedProviderId: "openai",
   selectedModelId: "gpt-4o-mini",
@@ -629,34 +608,6 @@ export function getCurrentApiConfig(settings: AiChatSettings): {
   };
 }
 
-/** 获取当前模型的完整配置（包括模型级别的设置，回退到全局默认值） */
-export function getModelConfig(settings: AiChatSettings, modelId?: string): {
-  temperature: number;
-  maxTokens: number;
-  maxToolRounds: number;
-  currency: CurrencyType;
-  inputPrice: number;
-  outputPrice: number;
-} {
-  const targetModelId = modelId || settings.selectedModelId;
-  
-  // 查找模型
-  let model: ProviderModel | undefined;
-  for (const provider of settings.providers) {
-    model = provider.models.find(m => m.id === targetModelId);
-    if (model) break;
-  }
-  
-  return {
-    temperature: model?.temperature ?? settings.temperature,
-    maxTokens: model?.maxTokens ?? settings.maxTokens,
-    maxToolRounds: model?.maxToolRounds ?? settings.maxToolRounds,
-    currency: model?.currency ?? settings.currency,
-    inputPrice: model?.inputPrice ?? 0,
-    outputPrice: model?.outputPrice ?? 0,
-  };
-}
-
 /** 验证当前配置是否完整 */
 export function validateCurrentConfig(settings: AiChatSettings): string | null {
   const provider = getSelectedProvider(settings);
@@ -778,76 +729,7 @@ export function getModelApiConfig(
   return { apiUrl: current.apiUrl, apiKey: current.apiKey, protocol: current.protocol, anthropicApiPath: current.anthropicApiPath };
 }
 
-/** @deprecated 使用 validateCurrentConfig */
-export function validateModelApiConfig(
-  settings: AiChatSettings,
-  modelName: string,
-): string | null {
-  const config = getModelApiConfig(settings, modelName);
-  if (!config.apiUrl) return "Missing API URL";
-  if (!config.apiKey) return "Missing API Key";
-  if (!modelName.trim()) return "Missing model name";
-  return null;
-}
-
-/** 构建模型选项列表（用于下拉菜单） */
-export type AiModelOption = {
-  value: string;
-  label: string;
-  group?: string;
-  providerId?: string;
-  apiUrl?: string;
-  apiKey?: string;
-  inputPrice?: number;
-  outputPrice?: number;
-  capabilities?: ModelCapability[];
-};
-
-export function buildAiModelOptions(settings: AiChatSettings): AiModelOption[] {
-  const options: AiModelOption[] = [];
-  
-  for (const provider of settings.providers) {
-    if (!provider.enabled) continue;
-    
-    for (const model of provider.models) {
-      options.push({
-        value: model.id,
-        label: model.label || model.id,
-        group: provider.name,
-        providerId: provider.id,
-        apiUrl: provider.apiUrl,
-        apiKey: provider.apiKey,
-        inputPrice: model.inputPrice,
-        outputPrice: model.outputPrice,
-        capabilities: model.capabilities,
-      });
-    }
-  }
-  
-  return options;
-}
-
 /** @deprecated */
 export function resolveAiModel(settings: AiChatSettings): string {
   return settings.selectedModelId;
 }
-
-/** @deprecated */
-export function validateAiChatSettings(settings: AiChatSettings): string | null {
-  return validateCurrentConfig(settings);
-}
-
-/** @deprecated */
-export function validateAiChatSettingsWithModel(
-  settings: AiChatSettings,
-  modelOverride: string,
-): string | null {
-  const config = getModelApiConfig(settings, modelOverride);
-  if (!config.apiUrl) return "Missing API URL";
-  if (!config.apiKey) return "Missing API Key";
-  if (!modelOverride.trim()) return "Missing model";
-  return null;
-}
-
-// 兼容旧版类型
-export type AiModelPreset = ProviderModel;

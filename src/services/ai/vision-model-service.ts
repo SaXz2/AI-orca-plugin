@@ -148,13 +148,6 @@ export function getVisionModelConfig(): VisionModelConfig {
   return cachedVisionConfig || DEFAULT_VISION_MODEL_CONFIG;
 }
 
-/**
- * 清除缓存（用于测试或刷新）
- */
-export function clearVisionConfigCache(): void {
-  cachedVisionConfig = null;
-}
-
 // ═══════════════════════════════════════════════════════════════════════════
 // 模型检测
 // ═══════════════════════════════════════════════════════════════════════════
@@ -399,21 +392,6 @@ export async function describeImages(
     success: errors.length === 0,
     descriptions,
     error: errors.length > 0 ? errors.join("; ") : undefined,
-  };
-}
-
-/**
- * 将 FileRef 转换为可描述的图片格式
- */
-export function fileRefToImageRef(file: FileRef): ImageRef | null {
-  if (!file.mimeType?.startsWith("image/")) {
-    return null;
-  }
-
-  return {
-    path: file.path,
-    name: file.name,
-    mimeType: file.mimeType,
   };
 }
 

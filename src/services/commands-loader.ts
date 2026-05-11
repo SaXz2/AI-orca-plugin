@@ -207,17 +207,6 @@ export async function getAllCommandsInfo(): Promise<Array<{ name: string; descri
 }
 
 /**
- * 清除指定命令的缓存
- */
-export function clearCommandCache(commandName?: string): void {
-  if (commandName) {
-    commandCache.delete(commandName);
-  } else {
-    commandCache.clear();
-  }
-}
-
-/**
  * 初始化命令目录
  * 确保所有默认文件都已复制到用户目录
  */

@@ -14,6 +14,7 @@ import {
   getCurrentApiConfig,
   validateCurrentConfig,
 } from "../../settings/ai-chat-settings";
+import { buildChatUrlCandidates, readErrorMessage, extractJsonFromResponse } from "./api-helpers";
 
 // ============================================================================
 // Types
@@ -289,96 +290,6 @@ async function callExtractionAPI(params: ExtractionAPIParams): Promise<string> {
   return content;
 }
 
-/**
- * Build the chat completions URL from base API URL
- */
-function buildChatCompletionsUrl(apiUrl: string): string {
-  const trimmed = apiUrl.trim().replace(/\/+$/, "");
-  if (trimmed.toLowerCase().endsWith("/chat/completions")) {
-    return trimmed;
-  }
-  return `${trimmed}/chat/completions`;
-}
-
-function buildChatCompletionsUrlCandidates(apiUrl: string): string[] {
-  const trimmed = apiUrl.trim().replace(/\/+$/, "");
-  const lower = trimmed.toLowerCase();
-  if (lower.endsWith("/chat/completions")) return [trimmed];
-  if (lower.endsWith("/v1")) return [`${trimmed}/chat/completions`];
-  return [`${trimmed}/v1/chat/completions`, `${trimmed}/chat/completions`];
-}
-
-function buildAnthropicMessagesUrl(apiUrl: string): string {
-  const trimmed = apiUrl.trim().replace(/\/+$/, "");
-  const lower = trimmed.toLowerCase();
-  if (lower.endsWith("/messages")) {
-    return trimmed;
-  }
-  if (lower.endsWith("/v1")) {
-    return `${trimmed}/messages`;
-  }
-  return `${trimmed}/v1/messages`;
-}
-
-function buildChatUrl(apiUrl: string, protocol: "openai" | "anthropic" | "xml-tools"): string {
-  return protocol === "anthropic"
-    ? buildAnthropicMessagesUrl(apiUrl)
-    : buildChatCompletionsUrl(apiUrl);  // xml-tools 使用 OpenAI 兼容端点
-}
-
-function buildAnthropicMessagesUrlCandidates(apiUrl: string, anthropicApiPath?: string): string[] {
-  const override = typeof anthropicApiPath === "string" ? anthropicApiPath.trim() : "";
-  if (override) {
-    if (/^https?:\/\//i.test(override)) return [override];
-    const trimmed = apiUrl.trim().replace(/\/+$/, "");
-    return [`${trimmed}/${override.replace(/^\/+/, "")}`];
-  }
-
-  const trimmed = apiUrl.trim().replace(/\/+$/, "");
-  const lower = trimmed.toLowerCase();
-  if (lower.endsWith("/messages")) return [trimmed];
-  if (lower.endsWith("/v1")) return [`${trimmed}/messages`, trimmed];
-  // 兼容代理：有些 baseUrl 不需要 /v1
-  // 额外回退：有些第三方把“baseUrl 本身”当作最终 messages 入口
-  return [`${trimmed}/v1/messages`, `${trimmed}/messages`, trimmed];
-}
-
-function buildChatUrlCandidates(apiUrl: string, protocol: "openai" | "anthropic" | "xml-tools", anthropicApiPath?: string): string[] {
-  return protocol === "anthropic"
-    ? buildAnthropicMessagesUrlCandidates(apiUrl, anthropicApiPath)
-    : buildChatCompletionsUrlCandidates(apiUrl);  // xml-tools 使用 OpenAI 兼容端点
-}
-
-/**
- * Read error message from failed response
- */
-async function readErrorMessage(response: Response): Promise<string> {
-  const contentType = response.headers.get("content-type") ?? "";
-  try {
-    if (contentType.includes("application/json")) {
-      const json = await response.json();
-      const msg = json?.error?.message ?? json?.message;
-      if (typeof msg === "string" && msg.trim()) {
-        return msg.trim();
-      }
-      return JSON.stringify(json);
-    }
-  } catch {
-    // Ignore parse errors
-  }
-
-  try {
-    const text = await response.text();
-    if (text.trim()) {
-      return text.trim();
-    }
-  } catch {
-    // Ignore read errors
-  }
-
-  return `HTTP ${response.status}`;
-}
-
 // ============================================================================
 // Response Parsing
 // ============================================================================
@@ -418,27 +329,6 @@ function parseExtractionResponse(response: string): ExtractedMemory[] {
     console.error("[MemoryExtraction] Failed to parse JSON:", error);
     return [];
   }
-}
-
-/**
- * Extract JSON array from response text
- * Handles cases where AI might include extra text around the JSON
- */
-function extractJsonFromResponse(response: string): string | null {
-  const trimmed = response.trim();
-  
-  // If it starts with [ and ends with ], it's likely pure JSON
-  if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
-    return trimmed;
-  }
-
-  // Try to find JSON array in the response
-  const jsonMatch = trimmed.match(/\[[\s\S]*\]/);
-  if (jsonMatch) {
-    return jsonMatch[0];
-  }
-
-  return null;
 }
 
 /**

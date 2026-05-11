@@ -42,7 +42,6 @@ import {
   updateAiChatSettings,
   validateCurrentConfig,
   modelSupportsTools,
-  DEFAULT_SYSTEM_PROMPT,
   type AiChatSettings,
 } from "../settings/ai-chat-settings";
 import { buildDynamicSystemPrompt, getCurrentRepoId } from "../services/ai/dynamic-prompt";
@@ -73,7 +72,7 @@ import { nowId, safeText } from "../utils/text-utils";
 import { buildConversationMessages } from "../services/ai/message-builder";
 import { streamChatWithRetry, type ToolCallInfo } from "../services/ai/chat-stream-handler";
 import type { OpenAIChatMessage } from "../services/ai/openai-client";
-import { executeAgenticRAG, formatRAGSteps, getToolDisplayName } from "../services/ai/agentic-rag-service";
+import { executeAgenticRAG, getToolDisplayName } from "../services/ai/agentic-rag-service";
 import { normalizeWebSearchResults, type WebSearchSource } from "../utils/source-attribution";
 import {
   panelContainerStyle,
@@ -2733,7 +2732,7 @@ ${userInput}`;
     });
 
     // 计算系统开销 token（系统提示 + 记忆 + 上下文）
-    const systemPromptTokens = estimateTokens(DEFAULT_SYSTEM_PROMPT || "");
+    const systemPromptTokens = estimateTokens(buildDynamicSystemPrompt());
     const memoryTokens = estimateTokens(memoryStore.getFullMemoryText() || "");
     // 上下文 token 在 ChatInput 中已经显示，这里只计算基础开销
     const baseOverheadTokens = systemPromptTokens + memoryTokens;

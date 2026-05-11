@@ -210,14 +210,6 @@ export function toggleWebSearch(): void {
 }
 
 /**
- * 设置联网搜索状态
- */
-export function setWebSearchEnabled(enabled: boolean): void {
-  toolStore.webSearchEnabled = enabled;
-  saveToolSettings();
-}
-
-/**
  * 获取联网搜索状态
  */
 export function isWebSearchEnabled(): boolean {
@@ -229,14 +221,6 @@ export function isWebSearchEnabled(): boolean {
  */
 export function toggleImageSearch(): void {
   toolStore.imageSearchEnabled = !toolStore.imageSearchEnabled;
-  saveToolSettings();
-}
-
-/**
- * 设置图像搜索状态
- */
-export function setImageSearchEnabled(enabled: boolean): void {
-  toolStore.imageSearchEnabled = enabled;
   saveToolSettings();
 }
 
@@ -256,26 +240,10 @@ export function toggleAgenticRAG(): void {
 }
 
 /**
- * 设置 Agentic RAG 状态
- */
-export function setAgenticRAGEnabled(enabled: boolean): void {
-  toolStore.agenticRAGEnabled = enabled;
-  saveToolSettings();
-}
-
-/**
  * 获取 Agentic RAG 状态
  */
 export function isAgenticRAGEnabled(): boolean {
   return toolStore.agenticRAGEnabled;
-}
-
-/**
- * 更新 Agentic RAG 配置
- */
-export function updateAgenticRAGConfig(config: Partial<AgenticRAGConfig>): void {
-  toolStore.agenticRAGConfig = { ...toolStore.agenticRAGConfig, ...config };
-  saveToolSettings();
 }
 
 /**
@@ -290,14 +258,6 @@ export function getAgenticRAGConfig(): AgenticRAGConfig {
  */
 export function toggleScriptAnalysis(): void {
   toolStore.scriptAnalysisEnabled = !toolStore.scriptAnalysisEnabled;
-  saveToolSettings();
-}
-
-/**
- * 设置脚本分析状态
- */
-export function setScriptAnalysisEnabled(enabled: boolean): void {
-  toolStore.scriptAnalysisEnabled = enabled;
   saveToolSettings();
 }
 
@@ -317,14 +277,6 @@ export function toggleWikipedia(): void {
 }
 
 /**
- * 设置 Wikipedia 状态
- */
-export function setWikipediaEnabled(enabled: boolean): void {
-  toolStore.wikipediaEnabled = enabled;
-  saveToolSettings();
-}
-
-/**
  * 获取 Wikipedia 状态
  */
 export function isWikipediaEnabled(): boolean {
@@ -336,14 +288,6 @@ export function isWikipediaEnabled(): boolean {
  */
 export function toggleCurrency(): void {
   toolStore.currencyEnabled = !toolStore.currencyEnabled;
-  saveToolSettings();
-}
-
-/**
- * 设置汇率查询状态
- */
-export function setCurrencyEnabled(enabled: boolean): void {
-  toolStore.currencyEnabled = enabled;
   saveToolSettings();
 }
 

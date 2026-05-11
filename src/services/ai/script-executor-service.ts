@@ -23,14 +23,6 @@ const DEFAULT_CONFIG: ScriptExecutorConfig = {
 
 let currentConfig: ScriptExecutorConfig = { ...DEFAULT_CONFIG };
 
-export function updateScriptExecutorConfig(config: Partial<ScriptExecutorConfig>): void {
-  currentConfig = { ...currentConfig, ...config };
-}
-
-export function getScriptExecutorConfig(): ScriptExecutorConfig {
-  return { ...currentConfig };
-}
-
 export async function checkScriptEnvironment(): Promise<{
   available: boolean;
   version?: string;

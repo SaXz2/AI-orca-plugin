@@ -153,25 +153,6 @@ export async function ocrImage(imageRef: ImageRef): Promise<string | null> {
 }
 
 /**
- * 获取图片的显示 URL（用于 UI 预览）
- * @param imageRef 图片引用
- * @returns file:// URL
- */
-export function getImageDisplayUrl(imageRef: ImageRef): string {
-  let fullPath = imageRef.path;
-  
-  if (imageRef.path.startsWith("./") || imageRef.path.startsWith("../")) {
-    const repoDir = orca.state.repoDir;
-    if (repoDir) {
-      const relativePath = imageRef.path.replace(/^\.\//, "");
-      fullPath = `${repoDir}/assets/${relativePath}`;
-    }
-  }
-
-  return `file:///${fullPath.replace(/\\/g, "/")}`;
-}
-
-/**
  * 验证文件是否为支持的图片类型
  */
 export function isValidImageFile(file: File): boolean {

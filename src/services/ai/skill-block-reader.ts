@@ -22,12 +22,6 @@ const BLOCK_SKILLS_CACHE_TTL = 30_000;
 /** 缓存状态 */
 let blockSkillsCache: { skills: Skill[]; timestamp: number } | null = null;
 
-/** 清除缓存 */
-export function clearBlockSkillsCache(): void {
-  blockSkillsCache = null;
-  console.log("[SkillBlockReader] Cache cleared");
-}
-
 /** 解析结果 */
 export interface BlockSkillParseResult {
   skills: Skill[];

@@ -78,8 +78,3 @@ export interface Skill {
   metadata?: SkillMetadata;
 }
 
-/** 向后兼容：从旧 SkillRef 转换 */
-export function toSkillRef(skill: { id: string; name?: string; isGlobal?: boolean; scope?: SkillScope }): SkillRef {
-  if (skill.scope) return { id: skill.id, name: skill.name || skill.id, scope: skill.scope };
-  return { id: skill.id, name: skill.name || skill.id, scope: skill.isGlobal ? "global" : "local" };
-}

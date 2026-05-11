@@ -23,8 +23,6 @@ export interface SearchResponse {
 // 搜索引擎类型定义
 // ═══════════════════════════════════════════════════════════════════════════
 
-export type SearchProvider = "tavily" | "bing" | "duckduckgo" | "brave" | "searxng" | "google" | "serpapi";
-
 export interface TavilyConfig {
   apiKey: string;
   searchDepth?: "basic" | "advanced";
@@ -975,7 +973,7 @@ export function formatSearchResults(response: SearchResponse): string {
 // 故障转移搜索 - 支持多个搜索引擎实例
 // ═══════════════════════════════════════════════════════════════════════════
 
-import type { SearchProviderInstance } from "../../settings/ai-chat-settings";
+import type { SearchProvider, SearchProviderInstance } from "../../settings/ai-chat-settings";
 
 /**
  * 从实例配置构建 SearchConfig

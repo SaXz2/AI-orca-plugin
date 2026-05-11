@@ -157,14 +157,6 @@ async function buildSkillIndex(): Promise<SkillIndex[]> {
   return index;
 }
 
-/**
- * 清除索引缓存（Skill 更新后调用）
- */
-export function clearSkillIndexCache(): void {
-  skillIndexCache = null;
-  skillIndexTimestamp = 0;
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // 推荐算法
 // ─────────────────────────────────────────────────────────────────────────────

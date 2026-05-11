@@ -170,16 +170,3 @@ export function getCurrentRepoId(): string {
   }
 }
 
-/**
- * 从工具列表分析当前可用的能力
- */
-export function analyzeToolCapabilities(tools: OpenAITool[]): PromptOptions {
-  const toolNames = tools.map((t) => t.function.name);
-
-  return {
-    hasMcpTools: toolNames.some((n) => n.startsWith("mcp__")),
-    hasTodoistTools: toolNames.some((n) => n.startsWith("todoist_")),
-    hasWebSearch: toolNames.includes("webSearch"),
-    hasDraggedContext: false, // 由调用方覆盖
-  };
-}

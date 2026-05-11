@@ -1608,21 +1608,6 @@ export function injectChatStyles(): () => void {
 }
 
 /**
- * 检查样式是否存在，如果不存在则自动注入
- */
-export function checkStylesExist(): boolean {
-  const domElement = document.getElementById("ai-chat-styles");
-  const exists = !!domElement;
-  
-  // 如果 DOM 中存在但变量丢失，恢复引用
-  if (domElement && !styleElement) {
-    styleElement = domElement as HTMLStyleElement;
-  }
-  
-  return exists;
-}
-
-/**
  * 确保样式存在（用于块渲染器）
  * 每次调用都会检查 DOM 中是否存在样式，如果不存在则重新注入
  */
@@ -1642,13 +1627,3 @@ export function ensureChatStyles(): void {
   }
 }
 
-/**
- * 强制移除样式（仅在插件卸载时调用）
- */
-export function removeChatStyles(): void {
-  if (styleElement) {
-    document.head.removeChild(styleElement);
-    styleElement = null;
-  }
-  refCount = 0;
-}

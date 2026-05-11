@@ -158,10 +158,6 @@ export function setServerStatus(id: string, status: Partial<MCPServerStatus>): v
   mcpStore.serverStatuses[id] = { ...existing, ...status };
 }
 
-export function getMcpServers(): MCPServerConfig[] {
-  return mcpStore.servers;
-}
-
 // ─── 已发现工具缓存 ───────────────────────────────────────────────────────────
 
 /** 替换指定服务器的已发现工具 */

@@ -280,9 +280,6 @@ export const listItemStyle: React.CSSProperties = {
   userSelect: "text", // Allow selection/copy of Markdown content
 };
 
-// Compatibility alias: list item content remains selectable for copy-paste.
-export const listItemStyle2: React.CSSProperties = listItemStyle;
-
 export const paragraphStyle: React.CSSProperties = {
   marginTop: "8px",
   marginBottom: "8px",

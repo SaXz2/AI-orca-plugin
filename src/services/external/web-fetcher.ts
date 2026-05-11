@@ -324,20 +324,3 @@ export async function fetchMultipleUrls(
   return results;
 }
 
-/**
- * 格式化抓取结果
- */
-export function formatFetchedContent(result: FetchedWebContent): string {
-  const lines: string[] = [];
-  
-  lines.push(`# ${result.title}`);
-  lines.push('');
-  lines.push(`🔗 来源: ${result.url}`);
-  lines.push(`📊 内容长度: ${result.contentLength.toLocaleString()} 字符`);
-  lines.push('');
-  lines.push('---');
-  lines.push('');
-  lines.push(result.content);
-  
-  return lines.join('\n');
-}

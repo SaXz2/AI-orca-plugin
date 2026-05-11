@@ -230,17 +230,6 @@ export function getSupportedExtensions(): string {
 }
 
 /**
- * 获取支持的 MIME 类型列表
- */
-export function getSupportedMimeTypes(): string[] {
-  const mimeTypes: string[] = [];
-  for (const config of Object.values(FILE_TYPE_CONFIGS)) {
-    mimeTypes.push(...config.mimeTypes);
-  }
-  return mimeTypes;
-}
-
-/**
  * 读取文本文件内容
  */
 export async function readTextFile(file: File): Promise<string> {

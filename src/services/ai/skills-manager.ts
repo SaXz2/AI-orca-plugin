@@ -10,7 +10,7 @@
 
 import { getAiChatPluginName } from "../../ui/ai-chat-ui";
 import { readBlockSkills, listBlockSkillRefs, getBlockSkill } from "./skill-block-reader";
-import type { Skill, SkillRef, SkillScope } from "../../types/skills";
+import type { Skill, SkillRef, SkillScope, SkillMetadata, SkillFile } from "../../types/skills";
 
 const SKILLS_ROOT = "skills";
 const SKILL_METADATA_FILE = "SKILL.md";
@@ -113,29 +113,6 @@ const BUILT_IN_SKILLS: Skill[] = [
     tags: ["周报", "总结", "汇总", "报告"],
   },
 ];
-
-// ───────────────────────────────────────────────────────────────────────────────
-// Types (backward compat — primary types are in src/types/skills.ts)
-// ───────────────────────────────────────────────────────────────────────────────
-
-/** @deprecated Use SkillMetadata from types/skills.ts */
-export interface SkillMetadata {
-  id: string;
-  name: string;
-  description?: string;
-  version?: string;
-  author?: string;
-  tags?: string[];
-  [key: string]: any;
-}
-
-/** @deprecated Use SkillFile from types/skills.ts */
-export interface SkillFile {
-  path: string;
-  name: string;
-  isDir: boolean;
-  size?: number;
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Internal Helpers

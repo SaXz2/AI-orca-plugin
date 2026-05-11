@@ -6,6 +6,7 @@
  */
 
 import type { OpenAITool } from "./openai-client";
+import type { BlockInfo } from "../export-service";
 import {
   getAllDiscoveredTools,
   isExternalMcpTool,
@@ -191,17 +192,6 @@ function setJournalExportCache(cacheId: string, rangeLabel: string, entries: any
     journalExportDataCache.delete(sorted[i][0]);
   }
 }
-
-/**
- * 从块树中提取每个块的详细信息（包括时间）
- */
-type BlockInfo = {
-  id: number;
-  content: string;
-  created?: string;
-  modified?: string;
-  depth: number;
-};
 
 function extractBlocksFromTree(tree: any, depth: number = 0, maxBlocks: number = 200): BlockInfo[] {
   const blocks: BlockInfo[] = [];
@@ -1191,10 +1181,6 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
 /** 技能工具缓存：toolName → { instruction, ref } */
 const skillToolCache = new Map<string, { instruction: string; ref: { id: string; scope: string } }>();
 
-/** 清除技能工具缓存 */
-export function clearSkillToolCache(): void {
-  skillToolCache.clear();
-}
 
 /**
  * 获取所有已启用技能的 OpenAI 工具定义
