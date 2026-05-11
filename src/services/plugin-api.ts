@@ -22,9 +22,9 @@
 
 import { getAiChatSettings, getModelApiConfig, validateCurrentConfig, DEFAULT_SYSTEM_PROMPT } from "../settings/ai-chat-settings";
 import { getAiChatPluginName } from "../ui/ai-chat-ui";
-import { buildConversationMessages } from "./message-builder";
-import { streamChatWithRetry, type StreamChunk, type ToolCallInfo } from "./chat-stream-handler";
-import { TOOLS, executeTool, getTools } from "./ai-tools";
+import { buildConversationMessages } from "./ai/message-builder";
+import { streamChatWithRetry, type StreamChunk, type ToolCallInfo } from "./ai/chat-stream-handler";
+import { TOOLS, executeTool, getTools } from "./ai/ai-tools";
 import type { Message } from "./session-service";
 import { nowId } from "../utils/text-utils";
 

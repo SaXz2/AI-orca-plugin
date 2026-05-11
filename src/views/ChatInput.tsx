@@ -26,9 +26,9 @@ import { multiModelStore } from "../store/multi-model-store";
 import ToolPanel from "../components/ToolPanel";
 import { loadToolSettings, toolStore, toggleWebSearch, toggleAgenticRAG, toggleScriptAnalysis } from "../store/tool-store";
 import { getAllCommandsInfo } from "../services/commands-loader";
-import { listSkills } from "../services/skills-manager";
+import { listSkills } from "../services/ai/skills-manager";
 import type { SkillRef } from "../types/skills";
-import { recommendSkills, type SkillRecommendation, getSkillSummary } from "../services/skill-recommender";
+import { recommendSkills, type SkillRecommendation, getSkillSummary } from "../services/ai/skill-recommender";
 
 const React = window.React as unknown as {
   createElement: typeof window.React.createElement;

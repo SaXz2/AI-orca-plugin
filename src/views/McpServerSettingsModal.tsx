@@ -12,7 +12,7 @@ import {
   connectToServer,
   disconnectFromServer,
   getToolsForServer,
-} from "../services/mcp-server-manager";
+} from "../services/external/mcp-server-manager";
 
 const React = window.React as unknown as {
   createElement: typeof window.React.createElement;

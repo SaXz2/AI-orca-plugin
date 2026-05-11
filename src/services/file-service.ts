@@ -11,9 +11,9 @@
  */
 
 import type { FileRef } from "./session-service";
-import { buildVideoContentForApi, isVideoFile, generateVideoThumbnail } from "./video-service";
-import { isAnimatedImage, buildAnimatedImageContentForApi } from "./animated-image-service";
-import { parseDocument } from "./document-parser";
+import { buildVideoContentForApi, isVideoFile, generateVideoThumbnail } from "./external/video-service";
+import { isAnimatedImage, buildAnimatedImageContentForApi } from "./external/animated-image-service";
+import { parseDocument } from "./notes/document-parser";
 
 /**
  * 文件类型分类

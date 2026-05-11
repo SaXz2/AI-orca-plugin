@@ -2,8 +2,8 @@
  * Instagram Helper - 便捷的 Instagram 处理工具
  */
 
-import { parseInstagramUrl, extractAndParseInstagramUrls } from "../services/instagram-parser";
-import { proxyImage, needsProxy } from "../services/image-proxy";
+import { parseInstagramUrl, extractAndParseInstagramUrls } from "../services/external/instagram-parser";
+import { proxyImage, needsProxy } from "../services/external/image-proxy";
 
 /**
  * 快速获取 Instagram 图片 URL

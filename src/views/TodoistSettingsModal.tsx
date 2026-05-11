@@ -8,7 +8,7 @@ import {
   setTodoistToken,
   validateToken,
   clearTokenCache,
-} from "../services/todoist-service";
+} from "../services/external/todoist-service";
 import { getAiChatPluginName } from "../ui/ai-chat-ui";
 
 const { createElement, useState, useCallback, useEffect } = window.React as any;

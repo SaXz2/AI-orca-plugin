@@ -1,13 +1,13 @@
 import type { PanelProps } from "../orca.d.ts";
 
-import { buildContextForSend } from "../services/context-builder";
+import { buildContextForSend } from "../services/notes/context-builder";
 import { contextStore, type ContextRef } from "../store/context-store";
 import { closeAiChatPanel, getAiChatPluginName } from "../ui/ai-chat-ui";
 import { uiStore } from "../store/ui-store";
 import { memoryStore } from "../store/memory-store";
 import { getMode } from "../store/chat-mode-store";
 import { findViewPanelById } from "../utils/panel-tree";
-import { generateSuggestedReplies } from "../services/suggestion-service";
+import { generateSuggestedReplies } from "../services/ai/suggestion-service";
 import { estimateTokens, formatTokenCount } from "../utils/token-utils";
 import { isSameDay, formatDateSeparator, getTimeGreeting } from "../utils/chat-ui-utils";
 import { withTooltip } from "../utils/orca-tooltip";
@@ -45,7 +45,7 @@ import {
   DEFAULT_SYSTEM_PROMPT,
   type AiChatSettings,
 } from "../settings/ai-chat-settings";
-import { buildDynamicSystemPrompt, getCurrentRepoId } from "../services/dynamic-prompt";
+import { buildDynamicSystemPrompt, getCurrentRepoId } from "../services/ai/dynamic-prompt";
 import { getDiscoveredTools } from "../store/mcp-store";
 import {
   loadSessions,
@@ -64,16 +64,16 @@ import {
 } from "../services/session-service";
 import { exportSessionAsFile, saveSessionToJournal, saveMessagesToJournal } from "../services/export-service";
 import { sessionStore, updateSessionStore, clearSessionStore } from "../store/session-store";
-import { FLASHCARD_TOOL, executeTool, getToolsForDraggedContext, getTools, extractSearchResultsFromToolResults, getSkillToolsAsync, getSkillInstructionsAsync, getSkillToolName, resolveSkillIdFromToolName } from "../services/ai-tools";
+import { FLASHCARD_TOOL, executeTool, getToolsForDraggedContext, getTools, extractSearchResultsFromToolResults, getSkillToolsAsync, getSkillInstructionsAsync, getSkillToolName, resolveSkillIdFromToolName } from "../services/ai/ai-tools";
 import { getToolStatus, isToolDisabled, shouldAskForTool, isAgenticRAGEnabled, getAgenticRAGConfig, isWebSearchEnabled } from "../store/tool-store";
-import { listSkills, getSkill } from "../services/skills-manager";
+import { listSkills, getSkill } from "../services/ai/skills-manager";
 import type { Skill, SkillRef } from "../types/skills";
-import { getAutoTriggerSkill } from "../services/skill-recommender";
+import { getAutoTriggerSkill } from "../services/ai/skill-recommender";
 import { nowId, safeText } from "../utils/text-utils";
-import { buildConversationMessages } from "../services/message-builder";
-import { streamChatWithRetry, type ToolCallInfo } from "../services/chat-stream-handler";
-import type { OpenAIChatMessage } from "../services/openai-client";
-import { executeAgenticRAG, formatRAGSteps, getToolDisplayName } from "../services/agentic-rag-service";
+import { buildConversationMessages } from "../services/ai/message-builder";
+import { streamChatWithRetry, type ToolCallInfo } from "../services/ai/chat-stream-handler";
+import type { OpenAIChatMessage } from "../services/ai/openai-client";
+import { executeAgenticRAG, formatRAGSteps, getToolDisplayName } from "../services/ai/agentic-rag-service";
 import { normalizeWebSearchResults, type WebSearchSource } from "../utils/source-attribution";
 import {
   panelContainerStyle,
@@ -97,7 +97,7 @@ import {
   createInitialResponses,
   updateModelResponse,
   getModelDisplayInfo,
-} from "../services/multi-model-service";
+} from "../services/ai/multi-model-service";
 
 const React = window.React as unknown as {
   createElement: typeof window.React.createElement;
@@ -1057,7 +1057,7 @@ export default function AiChatPanel({ panelId }: PanelProps) {
 	      
 	      // 尝试加载 Skill
 	      try {
-	        const { listSkills, getSkill } = await import("../services/skills-manager");
+	        const { listSkills, getSkill } = await import("../services/ai/skills-manager");
 	        const allSkills = await listSkills();
 	        
 		// 查找匹配的 Skill（优先按名称匹配，其次按 ID）

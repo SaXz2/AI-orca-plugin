@@ -5,7 +5,7 @@
  * Maps tool names to user-friendly icons, animations, and text.
  */
 
-import { skillToolNameToSkillIdCache } from "../services/ai-tools";
+import { skillToolNameToSkillIdCache } from "../services/ai/ai-tools";
 import { TOOL_DISPLAY_NAMES } from "../store/tool-store";
 
 // 检查是否是 Skill 工具

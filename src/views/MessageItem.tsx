@@ -16,7 +16,7 @@ import EnhancedMarkdownMessage from "../components/EnhancedMarkdownMessage";
 import ToolStatusIndicator from "../components/ToolStatusIndicator";
 import SuggestedReplies from "../components/SuggestedReplies";
 import ExtractMemoryButton from "./ExtractMemoryButton";
-import type { ExtractedMemory } from "../services/memory-extraction";
+import type { ExtractedMemory } from "../services/ai/memory-extraction";
 import { getFileDisplayUrl, getFileIcon, getFileFullPath } from "../services/file-service";
 import { saveSingleMessageToJournal } from "../services/export-service";
 import {
@@ -28,7 +28,7 @@ import {
   messageTimeStyle,
 } from "../styles/ai-chat-styles";
 import type { Message } from "../services/session-service";
-import type { ToolCallInfo } from "../services/chat-stream-handler";
+import type { ToolCallInfo } from "../services/ai/chat-stream-handler";
 import { formatTokenCount } from "../utils/token-utils";
 import { tooltipText, withTooltip } from "../utils/orca-tooltip";
 import { groupSourcesByDomain, normalizeWebSearchResults, type SourceGroup, type WebSearchSource } from "../utils/source-attribution";
@@ -1311,7 +1311,7 @@ export default function MessageItem({
     }
     
     // Import and extract search results
-    import("../services/ai-tools").then(({ extractSearchResultsFromToolResults }) => {
+    import("../services/ai/ai-tools").then(({ extractSearchResultsFromToolResults }) => {
       const results = normalizeWebSearchResults(extractSearchResultsFromToolResults(toolResults));
       const groups = groupSourcesByDomain(results);
       setSourceGroups(groups);

@@ -30,7 +30,7 @@ import {
   importSkill,
   isSkillEnabled,
   setSkillEnabled,
-} from "../services/skills-manager";
+} from "../services/ai/skills-manager";
 import type { Skill, SkillRef, SkillScope } from "../types/skills";
 import MarkdownMessage from "../components/MarkdownMessage";
 

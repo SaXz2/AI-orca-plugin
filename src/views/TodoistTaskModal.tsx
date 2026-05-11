@@ -17,7 +17,7 @@ import {
   setTodoistToken,
   validateToken,
   getProjects,
-} from "../services/todoist-service";
+} from "../services/external/todoist-service";
 import { getAiChatPluginName } from "../ui/ai-chat-ui";
 import { withTooltip } from "../utils/orca-tooltip";
 import { todoistModalStore, type TodoistViewMode } from "../store/todoist-store";

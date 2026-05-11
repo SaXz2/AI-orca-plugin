@@ -6,8 +6,8 @@
  */
 
 import { proxy } from "valtio";
-import type { MCPServerConfig } from "../services/mcp-client";
-import type { OpenAITool } from "../services/openai-client";
+import type { MCPServerConfig } from "../services/external/mcp-client";
+import type { OpenAITool } from "../services/ai/openai-client";
 
 // ─── 类型 ────────────────────────────────────────────────────────────────────
 

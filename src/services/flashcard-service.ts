@@ -6,7 +6,7 @@
  */
 
 import type { Flashcard } from "../components/FlashcardReview";
-import { getTodayJournal } from "./search-service";
+import { getTodayJournal } from "./notes/search-service";
 
 /**
  * 解析 AI 返回的闪卡格式

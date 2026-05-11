@@ -5,8 +5,8 @@ import { loadMemoryStore } from "./store/memory-store";
 import { AiChatPluginAPI } from "./services/plugin-api";
 
 import { initCommands } from "./services/commands-loader";
-import { loadVisionModelConfig } from "./services/vision-model-service";
-import { initMcpServers } from "./services/mcp-server-manager";
+import { loadVisionModelConfig } from "./services/ai/vision-model-service";
+import { initMcpServers } from "./services/external/mcp-server-manager";
 import { loadMcpSettings, ensureDefaultMcpServer } from "./store/mcp-store";
 
 let pluginName: string;

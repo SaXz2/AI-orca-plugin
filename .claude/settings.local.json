@@ -23,7 +23,9 @@
       "Bash(cd D:\\\\\\\\orca-plugins\\\\\\\\B\\\\\\\\AI-orca-plugin)",
       "WebFetch(domain:github.com)",
       "WebFetch(domain:raw.githubusercontent.com)",
-      "Bash(npm install *)"
+      "Bash(npm install *)",
+      "Bash(node update-imports.mjs)",
+      "Bash(node fix-remaining.mjs)"
     ]
   }
 }
