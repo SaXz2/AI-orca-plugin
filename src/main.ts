@@ -1,5 +1,5 @@
 import { registerAiChatSettingsSchema, initAiChatSettings } from "./settings/ai-chat-settings";
-import { registerAiChatUI, unregisterAiChatUI } from "./ui/ai-chat-ui";
+import { registerAiChatUI, unregisterAiChatUI, openAiChatPanel } from "./ui/ai-chat-ui";
 import { registerAiChatRenderer, unregisterAiChatRenderer } from "./ui/ai-chat-renderer";
 import { loadMemoryStore } from "./store/memory-store";
 import { AiChatPluginAPI } from "./services/plugin-api";
@@ -11,6 +11,30 @@ import { loadMcpSettings, ensureDefaultMcpServer } from "./store/mcp-store";
 
 let pluginName: string;
 let hideableObserver: MutationObserver | null = null;
+const AI_CHAT_OPEN_COMMAND_SUFFIX = "openAiChatPanel";
+
+function getAiChatOpenCommandId(): string {
+  return `${pluginName}.${AI_CHAT_OPEN_COMMAND_SUFFIX}`;
+}
+
+function getDefaultAiChatShortcut(): string {
+  if (typeof navigator !== "undefined") {
+    const platform = navigator.platform || "";
+    if (/Mac|iPhone|iPad|iPod/i.test(platform)) {
+      return "meta+shift+k";
+    }
+  }
+  return "ctrl+shift+k";
+}
+
+function findShortcutForCommand(commandId: string): string | null {
+  const shortcuts = orca.state?.shortcuts;
+  if (!shortcuts) return null;
+  for (const [shortcut, id] of Object.entries(shortcuts)) {
+    if (id === commandId) return shortcut;
+  }
+  return null;
+}
 
 /**
  * 为 .orca-hideable 的直接子元素根据功能添加对应的类名
@@ -88,6 +112,28 @@ export async function load(_name: string) {
   registerAiChatUI(pluginName);
   registerAiChatRenderer();
 
+  const openCommandId = getAiChatOpenCommandId();
+  orca.commands.registerCommand(
+    openCommandId,
+    () => {
+      openAiChatPanel();
+    },
+    "Open AI Chat Panel",
+  );
+
+  const defaultShortcut = getDefaultAiChatShortcut();
+  const existingShortcut = findShortcutForCommand(openCommandId);
+  if (!existingShortcut && orca.shortcuts?.assign) {
+    const boundCommand = orca.state?.shortcuts?.[defaultShortcut];
+    if (!boundCommand || boundCommand === openCommandId) {
+      await orca.shortcuts.assign(defaultShortcut, openCommandId);
+    } else {
+      console.warn(
+        `[AiChat] Shortcut ${defaultShortcut} already bound to ${boundCommand}, skipping assignment.`,
+      );
+    }
+  }
+
   // Load persisted memory data
   await loadMemoryStore();
 
@@ -115,6 +161,17 @@ export async function load(_name: string) {
 
 export async function unload() {
   stopHideableObserver();
+  const openCommandId = getAiChatOpenCommandId();
+  if (orca.shortcuts?.assign) {
+    try {
+      await orca.shortcuts.assign("", openCommandId);
+    } catch (err) {
+      console.warn("[AiChat] Failed to clear shortcut for AI Chat:", err);
+    }
+  }
+  if (orca.commands?.unregisterCommand) {
+    orca.commands.unregisterCommand(openCommandId);
+  }
   unregisterAiChatUI();
   unregisterAiChatRenderer();
 }
