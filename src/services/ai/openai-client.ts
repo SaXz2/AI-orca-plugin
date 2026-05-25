@@ -303,10 +303,10 @@ const INVOKE_BLOCK_RE = /<(?:｜DSML｜)?invoke[\s>][\s\S]*?<\/(?:｜DSML｜)?in
 const INVOKE_TAG_RE = /<\/(?:｜DSML｜)?invoke\s*>|<(?:｜DSML｜)?invoke[^>]*>/gi;
 // 匹配 parameter 标签（含可选 ｜DSML｜ 前缀）
 const PARAM_TAG_RE = /<\/?(?:｜DSML｜)?parameter[^>]*>/gi;
-// 匹配 ｜DSML｜function_calls 块
-const DSML_FC_BLOCK_RE = /<｜DSML｜function_calls>[\s\S]*?<\/｜DSML｜function_calls>/gi;
+// 匹配 ｜DSML｜function_calls / tool_calls 块（V3.2 / V4 兼容）
+const DSML_FC_BLOCK_RE = /<｜DSML｜(?:function_calls|tool_calls)>[\s\S]*?<\/｜DSML｜(?:function_calls|tool_calls)>/gi;
 // 移除含 invoke/parameter 残片的整行（处理跨 chunk 截断导致的不完整标签）
-const INVOKE_LINE_RE = /^.*<(?:｜DSML｜)?(?:\/?(?:invoke|parameter|function_calls))[^>]*>.*$/gim;
+const INVOKE_LINE_RE = /^.*<(?:｜DSML｜)?(?:\/?(?:invoke|parameter|function_calls|tool_calls))[^>]*>.*$/gim;
 // 孤立的属性残片
 const STRING_ATTR_RE = /^\s*string="(?:true|false)"\s*$/gim;
 // 自闭合 ｜DSML｜ 标签

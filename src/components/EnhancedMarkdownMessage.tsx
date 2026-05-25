@@ -156,21 +156,21 @@ export default function EnhancedMarkdownMessage({
     let contentToUse = rawContent;
     
     // 只有当内容包含工具调用标记时才进行清理
-    if (contentToUse.includes('<｜DSML｜') || contentToUse.includes('<function_calls>') || contentToUse.includes('<orca-tool')) {
-      // 清理完整的工具调用块 - 匹配从开始到结束的完整结构
-      contentToUse = contentToUse.replace(/<｜DSML｜function_calls>[\s\S]*?<\/｜DSML｜function_calls>/g, '');
-      
-      // 清理单独的invoke标签（没有被function_calls包围的情况）
+    if (contentToUse.includes('<｜DSML｜') || contentToUse.includes('<function_calls>') || contentToUse.includes('<tool_calls>') || contentToUse.includes('<orca-tool')) {
+      // 清理完整的工具调用块 — V3.2 (function_calls) / V4 (tool_calls) 兼容
+      contentToUse = contentToUse.replace(/<｜DSML｜(?:function_calls|tool_calls)>[\s\S]*?<\/｜DSML｜(?:function_calls|tool_calls)>/g, '');
+
+      // 清理单独的invoke标签（没有被function_calls/tool_calls包围的情况）
       contentToUse = contentToUse.replace(/<｜DSML｜invoke[\s\S]*?<\/｜DSML｜invoke>/g, '');
-      
+
       // 清理单独的parameter标签
       contentToUse = contentToUse.replace(/<｜DSML｜parameter[\s\S]*?<\/｜DSML｜parameter>/g, '');
-      
+
       // 清理自闭合的invoke标签（如果存在）
       contentToUse = contentToUse.replace(/<｜DSML｜invoke[^>]*\/>/g, '');
-      
-      // 清理其他可能的工具调用格式
-      contentToUse = contentToUse.replace(/<function_calls>[\s\S]*?<\/function_calls>/g, '');
+
+      // 清理其他可能的工具调用格式（无 DSML 前缀）
+      contentToUse = contentToUse.replace(/<(?:function_calls|tool_calls)>[\s\S]*?<\/(?:function_calls|tool_calls)>/g, '');
       contentToUse = contentToUse.replace(/<invoke[\s\S]*?<\/invoke>/g, '');
       
       // 清理 orca-tool 格式的工具调用标记（自闭合和成对标签）

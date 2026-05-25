@@ -63,7 +63,7 @@ import {
 } from "../services/session-service";
 import { exportSessionAsFile, saveSessionToJournal, saveMessagesToJournal } from "../services/export-service";
 import { sessionStore, updateSessionStore, clearSessionStore } from "../store/session-store";
-import { FLASHCARD_TOOL, executeTool, getToolsForDraggedContext, getTools, extractSearchResultsFromToolResults, getSkillToolsAsync, getSkillInstructionsAsync, getSkillToolName, resolveSkillIdFromToolName } from "../services/ai/ai-tools";
+import { FLASHCARD_TOOL, executeTool, getToolsForDraggedContext, getTools, extractSearchResultsFromToolResults, getSkillToolsAsync, getSkillInstructionsAsync, getSkillToolName, resolveSkillIdFromToolName, getSkillToolMode } from "../services/ai/ai-tools";
 import { getToolStatus, isToolDisabled, shouldAskForTool, isAgenticRAGEnabled, getAgenticRAGConfig, isWebSearchEnabled } from "../store/tool-store";
 import { listSkills, getSkill } from "../services/ai/skills-manager";
 import type { Skill, SkillRef } from "../types/skills";
@@ -1006,7 +1006,7 @@ export default function AiChatPanel({ panelId }: PanelProps) {
 	      const allSkillRefs = await listSkills();
 	      for (const ref of allSkillRefs) {
 	        const skill = await getSkill(ref.id, ref.scope === "global");
-	        if (skill && skill.enabled) {
+	        if (skill && skill.mode !== "disabled") {
 	          enabledSkills.push({
 	            name: skill.name || skill.id,
 	            description: skill.description || "",
@@ -2178,33 +2178,42 @@ graph TD
                 if (!resolvedSkillId) {
                   result = `Error: Skill not found for tool: ${toolName}`;
                 } else {
-                  try {
-                    const skill = await getSkill(resolvedSkillId.id, (resolvedSkillId as any).isGlobal);
-                    if (!skill) {
+                  const skillMode = getSkillToolMode(toolName) || "auto";
+
+                  if (skillMode === "disabled") {
+                    result = `Error: Skill is disabled: ${resolvedSkillId.id}`;
+                  } else if (skillMode === "auto") {
+                    // 自动执行：无需确认，直接加载指令
+                    const instructions = await getSkillInstructionsAsync(resolvedSkillId);
+                    if (!instructions) {
                       result = `Error: Skill not found: ${resolvedSkillId.id}`;
                     } else {
-                      const { createToolConfirmPromise } = await import("../components/ToolConfirmDialog");
-                      const userApproved = await createToolConfirmPromise(
-                        `skill: ${skill.name}`,
-                        { skillId: resolvedSkillId.id, input: args.input || "" }
-                      );
-                      if (!userApproved) {
-                        result = `用户拒绝执行 Skill。请尝试其他方式或直接回答用户的问题。`;
+                      const userInput = args.input || "";
+                      result = `${instructions}\n\n## 用户输入\n${userInput}`;
+                    }
+                  } else {
+                    // ask 模式：在对话中内联确认（非模态弹窗）
+                    try {
+                      const skill = await getSkill(resolvedSkillId.id, (resolvedSkillId as any).isGlobal);
+                      if (!skill) {
+                        result = `Error: Skill not found: ${resolvedSkillId.id}`;
                       } else {
-                        const instructions = await getSkillInstructionsAsync(resolvedSkillId);
-                        if (!instructions) {
-                          result = `Error: Skill not found: ${resolvedSkillId.id}`;
+                        const userApproved = await requestSkillConfirm(skill);
+                        if (!userApproved) {
+                          result = `用户拒绝执行技能「${skill.name}」。请尝试其他方式或直接回答用户的问题。`;
                         } else {
-                          const userInput = args.input || "";
-                          result = `${instructions}
-
-## 用户输入
-${userInput}`;
+                          const instructions = await getSkillInstructionsAsync(resolvedSkillId);
+                          if (!instructions) {
+                            result = `Error: Skill not found: ${resolvedSkillId.id}`;
+                          } else {
+                            const userInput = args.input || "";
+                            result = `${instructions}\n\n## 用户输入\n${userInput}`;
+                          }
                         }
                       }
+                    } catch (err: any) {
+                      result = `Error: Failed to execute skill ${resolvedSkillId.id}: ${err?.message || "Unknown error"}`;
                     }
-                  } catch (err: any) {
-                    result = `Error: Failed to execute skill ${resolvedSkillId.id}: ${err?.message || "Unknown error"}`;
                   }
                 }
               } catch (err: any) {
@@ -2263,7 +2272,14 @@ ${userInput}`;
         const confirmTools: ToolCallInfo[] = [];
         const parallelTools: ToolCallInfo[] = [];
         for (const tc of newToolCalls) {
-          if (tc.function.name.startsWith("skill_") || shouldAskForTool(tc.function.name)) {
+          if (tc.function.name.startsWith("skill_")) {
+            const mode = getSkillToolMode(tc.function.name);
+            if (mode === "ask") {
+              confirmTools.push(tc);  // 需内联确认，顺序执行
+            } else {
+              parallelTools.push(tc); // auto 模式，无需确认，可并行
+            }
+          } else if (shouldAskForTool(tc.function.name)) {
             confirmTools.push(tc);
           } else {
             parallelTools.push(tc);

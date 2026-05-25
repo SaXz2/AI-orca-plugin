@@ -7,6 +7,7 @@
 
 import type { OpenAITool } from "./openai-client";
 import type { BlockInfo } from "../export-service";
+import type { SkillMode } from "../../types/skills";
 import {
   getAllDiscoveredTools,
   isExternalMcpTool,
@@ -1127,8 +1128,8 @@ export async function executeTool(toolName: string, args: any): Promise<string> 
 // 将已启用的技能注册为 OpenAI function calling 工具，使 AI 能主动调用技能
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** 技能工具缓存：toolName → { instruction, ref } */
-const skillToolCache = new Map<string, { instruction: string; ref: { id: string; scope: string } }>();
+/** 技能工具缓存：toolName → { instruction, ref, mode } */
+const skillToolCache = new Map<string, { instruction: string; ref: { id: string; scope: string }; mode: SkillMode }>();
 
 
 /**
@@ -1144,7 +1145,7 @@ export async function getSkillToolsAsync(): Promise<OpenAITool[]> {
     for (const ref of refs) {
       try {
         const skill = await getSkill(ref.id, ref.scope === "global");
-        if (!skill || !skill.enabled) continue;
+        if (!skill || skill.mode === "disabled") continue;
 
         const toolName = getSkillToolName(skill.id);
         const desc = skill.description
@@ -1155,6 +1156,7 @@ export async function getSkillToolsAsync(): Promise<OpenAITool[]> {
         skillToolCache.set(toolName, {
           instruction: skill.instruction,
           ref: { id: skill.id, scope: skill.scope },
+          mode: skill.mode,
         });
 
         // 生成工具的参数 schema（可选 input 参数）
@@ -1215,6 +1217,7 @@ export async function getSkillInstructionsAsync(
     skillToolCache.set(toolName, {
       instruction: skill.instruction,
       ref: { id: skill.id, scope: skill.scope },
+      mode: skill.mode,
     });
 
     return skill.instruction;
@@ -1275,6 +1278,7 @@ export async function resolveSkillIdFromToolName(
       skillToolCache.set(toolName, {
         instruction: skill.instruction,
         ref: { id: skill.id, scope: skill.scope },
+        mode: skill.mode,
       });
       return { id: skillId, isGlobal: skill.scope === "global" };
     }
@@ -1283,4 +1287,14 @@ export async function resolveSkillIdFromToolName(
   }
 
   return null;
+}
+
+/**
+ * 从工具名称获取技能的执行模式
+ * 仅在工具名以 skill_ 开头时有效
+ */
+export function getSkillToolMode(toolName: string): SkillMode | null {
+  if (!toolName.startsWith("skill_")) return null;
+  const cached = skillToolCache.get(toolName);
+  return cached?.mode ?? null;
 }

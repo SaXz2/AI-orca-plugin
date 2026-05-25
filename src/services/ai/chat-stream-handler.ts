@@ -175,7 +175,7 @@ const DSML = "(?:｜DSML｜)?";
  * 检查内容是否包含 DSML 或纯 invoke 格式的工具调用
  */
 export function hasDsmlToolCalls(content: string): boolean {
-  return /<｜DSML｜function_calls>/.test(content)
+  return /<｜DSML｜(?:function_calls|tool_calls)>/.test(content)
     || /<｜DSML｜invoke/.test(content)
     || /<invoke[\s>]/.test(content);
 }
@@ -237,8 +237,8 @@ export function parseDsmlToolCalls(content: string): ToolCallInfo[] {
  * 从内容中移除 DSML 或纯 invoke 工具调用块
  */
 export function stripDsmlToolCalls(content: string): string {
-  // 移除 DSML function_calls 块
-  let result = content.replace(/<｜DSML｜function_calls>[\s\S]*?<\/｜DSML｜function_calls>/g, "");
+  // 移除 DSML function_calls / tool_calls 块（V3.2 / V4 兼容）
+  let result = content.replace(/<｜DSML｜(?:function_calls|tool_calls)>[\s\S]*?<\/｜DSML｜(?:function_calls|tool_calls)>/g, "");
   // 移除 invoke 块（带或不带 DSML 前缀）
   result = result.replace(/<(?:｜DSML｜)?invoke[\s\S]*?<\/(?:｜DSML｜)?invoke>/g, "");
   // 移除 parameter 标签残余
