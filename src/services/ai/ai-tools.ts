@@ -1225,10 +1225,29 @@ export async function getSkillInstructionsAsync(
 }
 
 /**
+ * 将 skillId 中的非 ASCII 字符替换为 Unicode 码点编码
+ * 确保生成的工具名称符合 OpenAI/DeepSeek API 的 ^[a-zA-Z0-9_-]+$ 格式
+ */
+function sanitizeSkillIdForToolName(skillId: string): string {
+  if (/^[a-zA-Z0-9_-]+$/.test(skillId)) return skillId;
+  return skillId.replace(/[^a-zA-Z0-9_-]/g, (c) =>
+    "_x" + c.codePointAt(0)!.toString(16) + "_"
+  );
+}
+
+/** 反向解码被 sanitizeSkillIdForToolName 编码的 ID */
+function desanitizeSkillIdFromToolName(safe: string): string {
+  if (!safe.includes("_x")) return safe;
+  return safe.replace(/_x([0-9a-f]+)_/g, (_, hex) =>
+    String.fromCodePoint(parseInt(hex, 16))
+  );
+}
+
+/**
  * 获取技能的工具名称
  */
 export function getSkillToolName(skillId: string): string {
-  return `skill_${skillId}`;
+  return `skill_${sanitizeSkillIdForToolName(skillId)}`;
 }
 
 /**
@@ -1239,7 +1258,8 @@ export async function resolveSkillIdFromToolName(
 ): Promise<{ id: string; isGlobal: boolean } | null> {
   if (!toolName.startsWith("skill_")) return null;
 
-  const skillId = toolName.slice(6);
+  const safePart = toolName.slice(6);
+  const skillId = desanitizeSkillIdFromToolName(safePart);
 
   // 优先从缓存获取
   const cached = skillToolCache.get(toolName);
