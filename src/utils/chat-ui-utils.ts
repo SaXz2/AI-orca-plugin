@@ -331,15 +331,7 @@ export function getRecentCommands(): string[] {
  */
 export function addRecentCommand(command: string): void {
   const commands = getRecentCommands();
-  
-  // Remove if already exists
-  const filtered = commands.filter((cmd) => cmd !== command);
-  
-  // Add to front
-  filtered.unshift(command);
-  
-  // Limit to max items
-  const limited = filtered.slice(0, MAX_RECENT_COMMANDS);
+  const limited = addRecentCommandPure(commands, command, MAX_RECENT_COMMANDS);
   
   // Save to localStorage
   const store: RecentCommandsStore = {
@@ -352,6 +344,16 @@ export function addRecentCommand(command: string): void {
   } catch {
     // Ignore storage errors
   }
+}
+
+export function addRecentCommandPure(
+  existingCommands: string[],
+  command: string,
+  maxItems: number = MAX_RECENT_COMMANDS
+): string[] {
+  const filtered = existingCommands.filter((cmd) => cmd !== command);
+  filtered.unshift(command);
+  return filtered.slice(0, Math.max(0, maxItems));
 }
 
 /**

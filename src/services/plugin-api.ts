@@ -26,6 +26,10 @@ import { getAiChatPluginName } from "../ui/ai-chat-ui";
 import { buildConversationMessages } from "./ai/message-builder";
 import { streamChatWithRetry, type StreamChunk, type ToolCallInfo } from "./ai/chat-stream-handler";
 import { TOOLS, executeTool, getTools } from "./ai/ai-tools";
+import {
+  createToolCallSignature,
+  resolveToolCallName,
+} from "./ai/tool-call-router";
 import type { Message } from "./session-service";
 import { nowId } from "../utils/text-utils";
 
@@ -52,7 +56,7 @@ export interface PluginApiOptions {
   contextText?: string;
   /** 超时时间（毫秒），默认 60000 */
   timeoutMs?: number;
-  /** 最大工具调用轮数，默认 5 */
+  /** 最大工具调用轮数，0 表示不设置固定上限 */
   maxToolRounds?: number;
   /** 启用 Todoist AI 工具模式 */
   todoistEnabled?: boolean;
@@ -183,13 +187,17 @@ export const AiChatPluginAPI = {
       history = [],
       contextText = "",
       timeoutMs = 60000,
-      maxToolRounds = settings.maxToolRounds || 5,
+      maxToolRounds = settings.maxToolRounds,
       todoistEnabled = false,
       signal,
     } = options;
 
     // 动态获取工具列表（包含外部 MCP 工具）
     const tools = options.tools ?? getTools(false, todoistEnabled);
+    const toolRoundLimit = Number.isFinite(maxToolRounds)
+      ? Math.max(0, Math.floor(maxToolRounds))
+      : 0;
+    const canRunToolRound = (completedRounds: number) => toolRoundLimit <= 0 || completedRounds < toolRoundLimit;
 
     // 获取 API 配置
     const apiConfig = getModelApiConfig(settings, model);
@@ -259,28 +267,86 @@ export const AiChatPluginAPI = {
       // 处理工具调用（多轮）
       let toolRound = 0;
       let currentToolCalls = toolCalls;
+      const executedToolSignatures = new Set<string>();
 
-      while (currentToolCalls.length > 0 && toolRound < maxToolRounds) {
+      while (currentToolCalls.length > 0 && canRunToolRound(toolRound)) {
         toolRound++;
 
-        // 添加 assistant 消息到对话
-        conversation.push({
+        // 添加 assistant 消息到对话；后续会用路由后的工具名更新，保证 tool 消息有配对 tool_call。
+        const assistantMessage: Message = {
           id: nowId(),
           role: "assistant",
           content: currentContent,
           createdAt: Date.now(),
           tool_calls: currentToolCalls,
-        });
+        };
+        conversation.push(assistantMessage);
+
+        let hasToolError = false;
+        const routedToolCalls: ToolCallInfo[] = [];
 
         // 执行工具
-        for (const toolCall of currentToolCalls) {
-          const toolName = toolCall.function.name;
+        for (const rawToolCall of currentToolCalls) {
+          const resolution = resolveToolCallName(rawToolCall, tools);
+          let toolCall = rawToolCall;
+          let toolName = rawToolCall.function.name;
           let args: any = {};
+
+          if (resolution.status === "invalid") {
+            hasToolError = true;
+            routedToolCalls.push(rawToolCall);
+            const result = resolution.message;
+            toolResults.push({ name: toolName, result });
+            yield { type: "tool_result", name: toolName, result };
+            conversation.push({
+              id: nowId(),
+              role: "tool",
+              content: result,
+              tool_call_id: rawToolCall.id,
+              name: toolName,
+              createdAt: Date.now(),
+            });
+            continue;
+          }
+
+          toolCall = resolution.toolCall;
+          toolName = toolCall.function.name;
+          routedToolCalls.push(toolCall);
+
+          const signature = createToolCallSignature(toolCall);
+          if (executedToolSignatures.has(signature)) {
+            hasToolError = true;
+            const result = `Error: Repeated tool call skipped: ${toolName}. Use prior tool results and answer directly.`;
+            toolResults.push({ name: toolName, result });
+            yield { type: "tool_result", name: toolName, result };
+            conversation.push({
+              id: nowId(),
+              role: "tool",
+              content: result,
+              tool_call_id: toolCall.id,
+              name: toolName,
+              createdAt: Date.now(),
+            });
+            continue;
+          }
+          executedToolSignatures.add(signature);
 
           try {
             args = JSON.parse(toolCall.function.arguments);
-          } catch {
-            args = {};
+          } catch (err: any) {
+            hasToolError = true;
+            const result = `Error: Invalid JSON in tool arguments: ${err?.message || String(err)}`;
+            toolResults.push({ name: toolName, result });
+            yield { type: "tool_result", name: toolName, result };
+            conversation.push({
+              id: nowId(),
+              role: "tool",
+              content: result,
+              tool_call_id: toolCall.id,
+              name: toolName,
+              createdAt: Date.now(),
+            });
+            continue;
           }
 
           yield { type: "tool_call", name: toolName, args };
@@ -290,6 +356,9 @@ export const AiChatPluginAPI = {
             result = await executeTool(toolName, args);
           } catch (err: any) {
             result = `Error: ${err?.message || String(err)}`;
+          }
+          if (/^Error[:：]/i.test(result) || /^Unknown tool[:：]/i.test(result)) {
+            hasToolError = true;
           }
 
           toolResults.push({ name: toolName, result });
@@ -306,10 +375,17 @@ export const AiChatPluginAPI = {
           });
         }
 
+        if (routedToolCalls.length > 0) {
+          assistantMessage.tool_calls = routedToolCalls;
+        }
+
         // 构建下一轮消息
+        const nextSystemPrompt = hasToolError
+          ? `${systemPrompt}\n\n## Tool Recovery\nThe previous tool call failed, repeated, or used an unavailable name. Do not call any more tools. Answer directly from the available conversation and tool results.`
+          : systemPrompt;
         const { standard: nextMessages, fallback: nextFallback } = await buildConversationMessages({
           messages: conversation,
-          systemPrompt,
+          systemPrompt: nextSystemPrompt,
           contextText,
           chatMode: enableTools ? "agent" : "ask",
           modelId: model,
@@ -318,7 +394,7 @@ export const AiChatPluginAPI = {
         // 下一轮流式响应
         currentContent = "";
         currentToolCalls = [];
-        const enableNextTools = toolRound < maxToolRounds;
+        const enableNextTools = enableTools && !hasToolError && canRunToolRound(toolRound);
 
         for await (const chunk of streamChatWithRetry(
           {
@@ -340,7 +416,7 @@ export const AiChatPluginAPI = {
           } else if (chunk.type === "reasoning") {
             currentReasoning += chunk.reasoning;
             yield { type: "reasoning", reasoning: chunk.reasoning };
-          } else if (chunk.type === "tool_calls") {
+          } else if (chunk.type === "tool_calls" && enableNextTools) {
             currentToolCalls = chunk.toolCalls;
           }
         }
@@ -413,7 +489,7 @@ export const AiChatPluginAPI = {
       model: settings.selectedModelId,
       temperature: settings.temperature,
       maxTokens: settings.maxTokens,
-      maxToolRounds: settings.maxToolRounds || 5,
+      maxToolRounds: settings.maxToolRounds,
     };
   },
 };

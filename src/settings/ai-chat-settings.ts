@@ -25,7 +25,7 @@ export type ProviderModel = {
   // 模型级别的设置
   temperature?: number;    // 温度（0-2）
   maxTokens?: number;      // 最大输出 token
-  maxToolRounds?: number;  // 工具调用最大轮数
+  maxToolRounds?: number;  // 工具调用最大轮数（0=不限制）
   currency?: CurrencyType; // 价格币种
   contextLength?: number;  // 模型上下文长度（tokens），用于本地模型防溢出
 };
@@ -126,7 +126,7 @@ export type AiChatSettings = {
   // 以下为全局默认值，模型可以覆盖
   temperature: number;
   maxTokens: number;
-  maxToolRounds: number;
+  maxToolRounds: number;            // 工具调用最大轮数（0=不限制）
   currency: CurrencyType;
   // Token 优化设置
   maxHistoryMessages: number;        // 最大历史消息数（0=不限制）
@@ -158,10 +158,10 @@ const DEFAULT_PROVIDERS: AiProvider[] = [
     enabled: true,
     isBuiltin: true,
     models: [
-      { id: "gpt-4o", label: "GPT-4o", inputPrice: 2.5, outputPrice: 10, capabilities: ["vision", "tools"], temperature: 0.7, maxTokens: 4096, maxToolRounds: 5, currency: "USD" },
-      { id: "gpt-4o-mini", label: "GPT-4o Mini", inputPrice: 0.15, outputPrice: 0.6, capabilities: ["vision", "tools"], temperature: 0.7, maxTokens: 4096, maxToolRounds: 5, currency: "USD" },
-      { id: "o1", label: "o1", inputPrice: 15, outputPrice: 60, capabilities: ["reasoning"], temperature: 1, maxTokens: 8192, maxToolRounds: 3, currency: "USD" },
-      { id: "o1-mini", label: "o1 Mini", inputPrice: 3, outputPrice: 12, capabilities: ["reasoning"], temperature: 1, maxTokens: 8192, maxToolRounds: 3, currency: "USD" },
+      { id: "gpt-4o", label: "GPT-4o", inputPrice: 2.5, outputPrice: 10, capabilities: ["vision", "tools"], temperature: 0.7, maxTokens: 4096, maxToolRounds: 0, currency: "USD" },
+      { id: "gpt-4o-mini", label: "GPT-4o Mini", inputPrice: 0.15, outputPrice: 0.6, capabilities: ["vision", "tools"], temperature: 0.7, maxTokens: 4096, maxToolRounds: 0, currency: "USD" },
+      { id: "o1", label: "o1", inputPrice: 15, outputPrice: 60, capabilities: ["reasoning"], temperature: 1, maxTokens: 8192, maxToolRounds: 0, currency: "USD" },
+      { id: "o1-mini", label: "o1 Mini", inputPrice: 3, outputPrice: 12, capabilities: ["reasoning"], temperature: 1, maxTokens: 8192, maxToolRounds: 0, currency: "USD" },
     ],
   },
   {
@@ -173,8 +173,8 @@ const DEFAULT_PROVIDERS: AiProvider[] = [
     enabled: true,
     isBuiltin: true,
     models: [
-      { id: "deepseek-chat", label: "DeepSeek Chat", inputPrice: 0.14, outputPrice: 0.28, capabilities: ["tools"], temperature: 0.7, maxTokens: 4096, maxToolRounds: 5, currency: "USD" },
-      { id: "deepseek-reasoner", label: "DeepSeek Reasoner", inputPrice: 0.55, outputPrice: 2.19, capabilities: ["reasoning"], temperature: 1, maxTokens: 8192, maxToolRounds: 3, currency: "USD" },
+      { id: "deepseek-chat", label: "DeepSeek Chat", inputPrice: 0.14, outputPrice: 0.28, capabilities: ["tools"], temperature: 0.7, maxTokens: 4096, maxToolRounds: 0, currency: "USD" },
+      { id: "deepseek-reasoner", label: "DeepSeek Reasoner", inputPrice: 0.55, outputPrice: 2.19, capabilities: ["reasoning"], temperature: 1, maxTokens: 8192, maxToolRounds: 0, currency: "USD" },
     ],
   },
 ];
@@ -186,7 +186,7 @@ const DEFAULT_AI_CHAT_SETTINGS: AiChatSettings = {
   // 全局默认值（模型未设置时使用）
   temperature: 0.7,
   maxTokens: 4096,
-  maxToolRounds: 5,
+  maxToolRounds: 0,
   currency: "USD",
   // Token 优化默认值
   maxHistoryMessages: 0,           // 0=不限制（改用动态压缩）
@@ -525,7 +525,9 @@ export function getAiChatSettings(pluginName: string): AiChatSettings {
 
   merged.temperature = Math.max(0, Math.min(2, merged.temperature));
   merged.maxTokens = Math.max(1, Math.floor(merged.maxTokens));
-  merged.maxToolRounds = Math.max(3, Math.min(10, Math.floor(merged.maxToolRounds)));
+  merged.maxToolRounds = Number.isFinite(merged.maxToolRounds)
+    ? Math.max(0, Math.min(100, Math.floor(merged.maxToolRounds)))
+    : 0;
   // Token 优化设置范围限制
   merged.maxHistoryMessages = Math.max(0, Math.floor(merged.maxHistoryMessages));
   merged.maxToolResultChars = Math.max(0, Math.floor(merged.maxToolResultChars));

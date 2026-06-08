@@ -73,6 +73,11 @@ import { buildConversationMessages } from "../services/ai/message-builder";
 import { streamChatWithRetry, type ToolCallInfo } from "../services/ai/chat-stream-handler";
 import type { OpenAIChatMessage } from "../services/ai/openai-client";
 import { sanitizeContent } from "../services/ai/openai-client";
+import {
+  createSyntheticToolErrorMessage,
+  createToolCallSignature,
+  resolveToolCallName,
+} from "../services/ai/tool-call-router";
 import { executeAgenticRAG, getToolDisplayName } from "../services/ai/agentic-rag-service";
 import { normalizeWebSearchResults, type WebSearchSource } from "../utils/source-attribution";
 import {
@@ -997,8 +1002,12 @@ export default function AiChatPanel({ panelId }: PanelProps) {
 
 	    const pluginName = getAiChatPluginName();
 	    const settings = getAiChatSettings(pluginName);
-	    // 工具调用最大轮数：可在设置中配置；若缺失则默认 5（向后兼容）
-	    const MAX_TOOL_ROUNDS = settings.maxToolRounds || 5;
+	    // 0 表示不设置固定工具轮数上限，依靠重复/错误/取消等状态退出（Codex 式 agent loop）。
+	    const toolRoundLimit = Number.isFinite(settings.maxToolRounds)
+	      ? Math.max(0, Math.floor(settings.maxToolRounds))
+	      : 0;
+	    const hasToolRoundLimit = toolRoundLimit > 0;
+	    const canRunToolRound = (completedRounds: number) => !hasToolRoundLimit || completedRounds < toolRoundLimit;
 
 	    // 加载已启用的技能，注入系统提示词让 AI 自动识别并调用
 	    const enabledSkills: Array<{ name: string; description: string; instruction: string }> = [];
@@ -1035,7 +1044,7 @@ export default function AiChatPanel({ panelId }: PanelProps) {
 	      }
 	    }
 
-	    // 系统提示词模板变量：支持 {maxToolRounds}，按当前 MAX_TOOL_ROUNDS 注入
+	    // 系统提示词
 	    let systemPrompt = buildDynamicSystemPrompt({
       hasMcpTools: getDiscoveredTools().length > 0,
       hasTodoistTools: enableTodoistTools,
@@ -1709,6 +1718,54 @@ graph TD
       const getSearchResultsForMessage = () => (
         aggregatedSearchResults.length > 0 ? aggregatedSearchResults : undefined
       );
+      const isToolErrorResult = (message: Message) => {
+        const content = (message.content || "").trim();
+        return /^Error[:：]/i.test(content)
+          || /^Unknown tool[:：]/i.test(content)
+          || /^Tool not found[:：]/i.test(content)
+          || content.includes("Invalid JSON in tool arguments")
+          || content.includes("Tool execution timed out")
+          || content.includes("Repeated tool call skipped");
+      };
+
+      const buildToolContractSystemPrompt = (
+        basePrompt: string,
+        availableTools: Array<{ function: { name: string } }> | undefined,
+      ) => {
+        if (!availableTools?.length) return basePrompt;
+        const names = availableTools
+          .map((tool) => tool.function.name)
+          .filter(Boolean)
+          .sort();
+        const listed = names.join("\n");
+        return `${basePrompt}
+
+## Tool Name Contract
+When calling a tool, the function name must be copied exactly from this allowlist. Do not invent, translate, pluralize, abbreviate, or change punctuation in tool names. MCP tools are especially strict: one character difference means a different tool.
+
+${listed}`;
+      };
+
+      const buildToolRecoverySystemPrompt = (basePrompt: string, reason: string) => `${basePrompt}
+
+## Tool Recovery
+Reason: ${reason}
+
+Do not call any more tools in this response. Do not output DSML, XML, <invoke>, <parameter>, <tool_call>, <tool_calls>, or <function_calls> markup. Use the available conversation and tool results/errors to answer the user directly. If the requested action could not be completed, say that plainly and give the best useful next step.`;
+
+      const buildEmptyToolRecoveryText = (reason: string, toolMessages: Message[]) => {
+        const errorSummary = toolMessages
+          .filter(isToolErrorResult)
+          .map((m) => (m.content || "").split("\n")[0])
+          .filter(Boolean)
+          .slice(0, 3)
+          .join("\n");
+        return [
+          `工具调用没有成功完成，我已停止继续调用工具。原因：${reason}`,
+          errorSummary ? `\n${sanitizeContent(errorSummary)}` : "",
+          "\n请检查工具是否已连接、工具名是否仍然存在，或换一种更明确的说法重试。",
+        ].join("").trim();
+      };
 
       // Stream initial response with timeout protection
       let currentContent = "";
@@ -1723,16 +1780,6 @@ graph TD
 
       // 获取模型特定的 API 配置
       const apiConfig = getModelApiConfig(settings, model);
-
-      const { standard: apiMessages, fallback: apiMessagesFallback } = await buildConversationMessages({
-        messages: conversation,
-        systemPrompt,
-        contextText,
-        customMemory: memoryText,
-        chatMode: currentChatMode,
-        maxHistoryMessages: settings.maxHistoryMessages,
-        modelId: model,
-      });
 
       // 根据是否有拖入的块来选择工具列表
       // 有拖入块时禁用搜索类工具，强制 AI 使用已提供的上下文
@@ -1768,6 +1815,22 @@ graph TD
       }
       // 只有当模型支持 tools 时才传递工具，避免不支持的模型输出 XML 格式
       const toolsToUse = includeTools && supportsTools && filteredTools.length > 0 ? filteredTools : undefined;
+      const availableExecutionTools = includeTools ? filteredTools : [];
+
+      const toolAwareSystemPrompt = buildToolContractSystemPrompt(
+        systemPrompt,
+        availableExecutionTools.length > 0 ? availableExecutionTools : toolsToUse,
+      );
+
+      const { standard: apiMessages, fallback: apiMessagesFallback } = await buildConversationMessages({
+        messages: conversation,
+        systemPrompt: toolAwareSystemPrompt,
+        contextText,
+        customMemory: memoryText,
+        chatMode: currentChatMode,
+        maxHistoryMessages: settings.maxHistoryMessages,
+        modelId: model,
+      });
 
       // ─────────────────────────────────────────────────────────────────────────
       // Agentic RAG 模式：AI 自主规划检索策略，多轮迭代
@@ -2042,9 +2105,9 @@ graph TD
 		      let currentToolCalls = toolCalls;
 		      let currentAssistantId = assistantId;
 		      const allToolResultMessages: Message[] = [];
-          const executedSkillToolNames = new Set<string>();
+          const executedToolSignatures = new Set<string>();
 
-      while (currentToolCalls.length > 0 && toolRound < MAX_TOOL_ROUNDS) {
+      while (currentToolCalls.length > 0 && canRunToolRound(toolRound)) {
         toolRound++;
 
         updateMessage(currentAssistantId, { tool_calls: currentToolCalls });
@@ -2062,6 +2125,46 @@ graph TD
         }
         
         if (newToolCalls.length < currentToolCalls.length) {
+        }
+
+        const preToolResultMessages: Message[] = [];
+        const routedToolCallsForConversation: ToolCallInfo[] = [];
+        const executableToolCalls: ToolCallInfo[] = [];
+
+        for (const tc of newToolCalls) {
+          const resolution = resolveToolCallName(tc, availableExecutionTools);
+          if (resolution.status === "invalid") {
+            routedToolCallsForConversation.push(tc);
+            preToolResultMessages.push(createSyntheticToolErrorMessage(tc, resolution.message) as Message);
+            continue;
+          }
+
+          if (resolution.status === "renamed") {
+            console.warn(
+              `[Tool Call] Normalized tool name "${resolution.originalName}" -> "${resolution.resolvedName}" (${resolution.reason})`
+            );
+          }
+
+          const routedToolCall = resolution.toolCall;
+          routedToolCallsForConversation.push(routedToolCall);
+          const signature = createToolCallSignature(routedToolCall);
+          if (executedToolSignatures.has(signature)) {
+            preToolResultMessages.push(createSyntheticToolErrorMessage(
+              routedToolCall,
+              `Error: Repeated tool call skipped: ${routedToolCall.function.name}. Use prior tool results and answer directly.`,
+            ) as Message);
+            continue;
+          }
+
+          executedToolSignatures.add(signature);
+          executableToolCalls.push(routedToolCall);
+        }
+
+        if (routedToolCallsForConversation.length > 0) {
+          currentToolCalls = routedToolCallsForConversation;
+          updateMessage(currentAssistantId, { tool_calls: currentToolCalls });
+          const routedAssistantIdx = conversation.findIndex((m) => m.id === currentAssistantId);
+          if (routedAssistantIdx >= 0) conversation[routedAssistantIdx].tool_calls = currentToolCalls;
         }
 
         // ── JSON 修复辅助函数 ──────────────────────────────────────────────
@@ -2271,7 +2374,7 @@ graph TD
         // ── 分组：需确认 vs 无需确认 ────────────────────────────────────
         const confirmTools: ToolCallInfo[] = [];
         const parallelTools: ToolCallInfo[] = [];
-        for (const tc of newToolCalls) {
+        for (const tc of executableToolCalls) {
           if (tc.function.name.startsWith("skill_")) {
             const mode = getSkillToolMode(tc.function.name);
             if (mode === "ask") {
@@ -2287,7 +2390,7 @@ graph TD
         }
 
         // ── 并行执行无需确认的工具 ──────────────────────────────────────
-        const toolResultMessages: Message[] = [];
+        const toolResultMessages: Message[] = [...preToolResultMessages];
         if (parallelTools.length > 0) {
           const parallelResults = await Promise.all(
             parallelTools.map(tc => executeSingleToolCall(tc))
@@ -2328,6 +2431,14 @@ graph TD
         captureSearchResults(toolResultMessages);
         allToolResultMessages.push(...toolResultMessages);
         conversation.push(...toolResultMessages);
+        const hasToolError = toolResultMessages.some(isToolErrorResult);
+        const reachedToolRoundLimit = !canRunToolRound(toolRound);
+        const recoveryReason = hasToolError
+          ? "A tool call failed, used an unknown tool, had malformed arguments, or repeated a previous call."
+          : reachedToolRoundLimit
+          ? `The configured tool round limit (${toolRoundLimit}) has been reached.`
+          : "";
+        const enableTools = !hasToolError && !reachedToolRoundLimit;
 
         setMessages((prev) => [...prev, ...toolResultMessages]);
         queueMicrotask(scrollToBottom);
@@ -2335,7 +2446,9 @@ graph TD
         // Build messages for next response including all prior tool results
         const { standard, fallback } = await buildConversationMessages({
           messages: conversation,
-          systemPrompt,
+          systemPrompt: recoveryReason
+            ? buildToolRecoverySystemPrompt(toolAwareSystemPrompt, recoveryReason)
+            : toolAwareSystemPrompt,
           contextText,
           customMemory: memoryText,
           chatMode: currentChatMode,
@@ -2349,7 +2462,6 @@ graph TD
         let nextToolCalls: ToolCallInfo[] = [];
         let nextReasoningMessageId: string | null = null;
         let nextReasoningCreatedAt: number | null = null;
-        const enableTools = toolRound < MAX_TOOL_ROUNDS;
 
         // 获取模型特定的 API 配置
         const toolApiConfig = getModelApiConfig(settings, model);
@@ -2365,7 +2477,7 @@ graph TD
               temperature: settings.temperature,
               maxTokens: settings.maxTokens,
               signal: aborter.signal,
-              tools: enableTools ? filteredTools : undefined, // Last round: disable tools to force an answer
+              tools: enableTools ? toolsToUse : undefined,
               timeoutMs: settings.streamTimeout,
               maxContextTokens: toolContextLength,
             },
@@ -2439,7 +2551,7 @@ graph TD
                   updateMessage(nextReasoningMessageId, { content: nextContent });
                 }
               }
-              if (chunk.result.toolCalls?.length) {
+              if (enableTools && chunk.result.toolCalls?.length) {
                 nextToolCalls = chunk.result.toolCalls;
               }
             }
@@ -2454,26 +2566,37 @@ graph TD
         const nextAssistantId = nextReasoningMessageId || nowId();
         const nextAssistantCreatedAt = nextReasoningCreatedAt || Date.now();
 
-        // 如果只有 reasoning 没有 content，需要创建 assistant 消息
-        if (!nextContent && toolCalls.length === 0 && !nextReasoningMessageId) {
-          setMessages((prev) => [...prev, { 
-            id: nextAssistantId, 
-            role: "assistant", 
-            content: "(empty response)", 
+        if (nextToolCalls.length > 0) {
+          if (nextReasoningMessageId) {
+            updateMessage(nextReasoningMessageId, { tool_calls: nextToolCalls });
+          } else {
+            setMessages((prev) => [...prev, {
+              id: nextAssistantId,
+              role: "assistant",
+              content: sanitizeContent(nextContent),
+              createdAt: nextAssistantCreatedAt,
+              model,
+              tool_calls: nextToolCalls,
+              searchResults: getSearchResultsForMessage(),
+            }]);
+          }
+        } else if (nextContent.trim().length > 0 && !nextReasoningMessageId) {
+          setMessages((prev) => [...prev, {
+            id: nextAssistantId,
+            role: "assistant",
+            content: sanitizeContent(nextContent),
             createdAt: nextAssistantCreatedAt,
             model,
             searchResults: getSearchResultsForMessage(),
           }]);
         }
 
-        if (nextToolCalls.length > 0 && nextReasoningMessageId) {
-          updateMessage(nextReasoningMessageId, { tool_calls: nextToolCalls });
-        }
-
-        // If the model returned nothing, surface tool outputs so the user isn't left with an empty bubble.
+        // If the model returned nothing, surface a controlled fallback so the user isn't left with an empty bubble.
         if (nextContent.trim().length === 0 && nextToolCalls.length === 0) {
-          const toolFallback = allToolResultMessages.map((m) => m.content).join("\n\n").trim();
-          const fallbackText = toolFallback || "(empty response from API)";
+          const toolFallback = sanitizeContent(allToolResultMessages.map((m) => m.content).join("\n\n").trim());
+          const fallbackText = recoveryReason
+            ? buildEmptyToolRecoveryText(recoveryReason, toolResultMessages)
+            : toolFallback || "(empty response from API)";
           if (nextReasoningMessageId) {
             updateMessage(nextReasoningMessageId, { content: fallbackText, searchResults: getSearchResultsForMessage() });
           } else {
@@ -2499,26 +2622,11 @@ graph TD
         });
 
         // Check if model wants to call more tools
-        if (nextToolCalls.length > 0 && toolRound < MAX_TOOL_ROUNDS) {
+        if (nextToolCalls.length > 0 && canRunToolRound(toolRound)) {
           currentToolCalls = nextToolCalls;
           currentAssistantId = nextAssistantId;
           // Continue loop
         } else {
-          // No more tool calls or reached max rounds
-          if (nextToolCalls.length > 0) {
-            const toolFallback = allToolResultMessages.map((m) => m.content).join("\n\n").trim();
-            const warning = [
-              nextContent?.trim(),
-              toolFallback ? `\n\n${toolFallback}` : "",
-              "\n\n_[已达到最大工具调用轮数限制]_",
-            ]
-              .join("")
-              .trim();
-            if (nextReasoningMessageId) {
-              updateMessage(nextReasoningMessageId, { content: warning || "_[已达到最大工具调用轮数限制]_" });
-            }
-          }
-
           break;
         }
       }

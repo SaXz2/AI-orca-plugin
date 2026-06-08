@@ -418,8 +418,8 @@ function ModelEditPanel({
         createElement("input", { type: "number", value: maxTokens, onChange: (e: any) => setMaxTokens(e.target.value), placeholder: "4096", style: inputStyle })
       ),
       createElement("div", { style: { flex: 1 } },
-        createElement("label", { style: labelStyle }, "工具轮数"),
-        createElement("input", { type: "number", min: "1", max: "10", value: maxToolRounds, onChange: (e: any) => setMaxToolRounds(e.target.value), placeholder: "5", style: inputStyle })
+        createElement("label", { style: labelStyle }, "工具轮数 (0=不限)"),
+        createElement("input", { type: "number", min: "0", max: "100", value: maxToolRounds, onChange: (e: any) => setMaxToolRounds(e.target.value), placeholder: "0", style: inputStyle })
       )
     ),
 
