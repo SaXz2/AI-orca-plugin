@@ -20,16 +20,17 @@
  * ```
  */
 
-import { getAiChatSettings, getModelApiConfig, validateCurrentConfig } from "../settings/ai-chat-settings";
+import { getAiChatSettings, getModelApiConfig, getModelRuntimeConfig, validateCurrentConfig } from "../settings/ai-chat-settings";
 import { buildDynamicSystemPrompt } from "./ai/dynamic-prompt";
 import { getAiChatPluginName } from "../ui/ai-chat-ui";
 import { buildConversationMessages } from "./ai/message-builder";
-import { streamChatWithRetry, type StreamChunk, type ToolCallInfo } from "./ai/chat-stream-handler";
+import { streamChatWithRetry, type ToolCallInfo } from "./ai/chat-stream-handler";
 import { TOOLS, executeTool, getTools } from "./ai/ai-tools";
 import {
   createToolCallSignature,
   resolveToolCallName,
 } from "./ai/tool-call-router";
+import { createToolRoundLimit } from "./ai/tool-round-limit";
 import type { Message } from "./session-service";
 import { nowId } from "../utils/text-utils";
 
@@ -114,12 +115,10 @@ export const AiChatPluginAPI = {
    * ```
    */
   async sendMessage(content: string, options: PluginApiOptions = {}): Promise<PluginApiResult> {
-    const chunks: PluginApiStreamChunk[] = [];
     let finalResult: PluginApiResult | null = null;
 
     try {
       for await (const chunk of this.streamMessage(content, options)) {
-        chunks.push(chunk);
         if (chunk.type === "done") {
           finalResult = chunk.result;
         }
@@ -182,22 +181,20 @@ export const AiChatPluginAPI = {
       model = settings.selectedModelId,
       systemPrompt = buildDynamicSystemPrompt(),
       enableTools = true,
-      temperature = settings.temperature,
-      maxTokens = settings.maxTokens,
       history = [],
       contextText = "",
       timeoutMs = 60000,
-      maxToolRounds = settings.maxToolRounds,
       todoistEnabled = false,
       signal,
     } = options;
+    const runtimeConfig = getModelRuntimeConfig(settings, model);
+    const temperature = options.temperature ?? runtimeConfig.temperature;
+    const maxTokens = options.maxTokens ?? runtimeConfig.maxTokens;
+    const maxToolRounds = options.maxToolRounds ?? runtimeConfig.maxToolRounds;
 
     // 动态获取工具列表（包含外部 MCP 工具）
     const tools = options.tools ?? getTools(false, todoistEnabled);
-    const toolRoundLimit = Number.isFinite(maxToolRounds)
-      ? Math.max(0, Math.floor(maxToolRounds))
-      : 0;
-    const canRunToolRound = (completedRounds: number) => toolRoundLimit <= 0 || completedRounds < toolRoundLimit;
+    const toolRoundLimit = createToolRoundLimit(maxToolRounds);
 
     // 获取 API 配置
     const apiConfig = getModelApiConfig(settings, model);
@@ -259,7 +256,7 @@ export const AiChatPluginAPI = {
         } else if (chunk.type === "reasoning") {
           currentReasoning += chunk.reasoning;
           yield { type: "reasoning", reasoning: chunk.reasoning };
-        } else if (chunk.type === "tool_calls") {
+        } else if (chunk.type === "tool_calls" && enableTools) {
           toolCalls = chunk.toolCalls;
         }
       }
@@ -269,7 +266,7 @@ export const AiChatPluginAPI = {
       let currentToolCalls = toolCalls;
       const executedToolSignatures = new Set<string>();
 
-      while (currentToolCalls.length > 0 && canRunToolRound(toolRound)) {
+      while (currentToolCalls.length > 0 && toolRoundLimit.canRun(toolRound)) {
         toolRound++;
 
         // 添加 assistant 消息到对话；后续会用路由后的工具名更新，保证 tool 消息有配对 tool_call。
@@ -394,13 +391,15 @@ export const AiChatPluginAPI = {
         // 下一轮流式响应
         currentContent = "";
         currentToolCalls = [];
-        const enableNextTools = enableTools && !hasToolError && canRunToolRound(toolRound);
+        const enableNextTools = enableTools && !hasToolError && toolRoundLimit.canRun(toolRound);
 
         for await (const chunk of streamChatWithRetry(
           {
             apiUrl: apiConfig.apiUrl,
             apiKey: apiConfig.apiKey,
             model,
+            protocol: apiConfig.protocol,
+            anthropicApiPath: apiConfig.anthropicApiPath,
             temperature,
             maxTokens,
             signal: aborter.signal,
@@ -485,11 +484,12 @@ export const AiChatPluginAPI = {
   getConfig() {
     const pluginName = getAiChatPluginName();
     const settings = getAiChatSettings(pluginName);
+    const runtimeConfig = getModelRuntimeConfig(settings, settings.selectedModelId);
     return {
       model: settings.selectedModelId,
-      temperature: settings.temperature,
-      maxTokens: settings.maxTokens,
-      maxToolRounds: settings.maxToolRounds,
+      temperature: runtimeConfig.temperature,
+      maxTokens: runtimeConfig.maxTokens,
+      maxToolRounds: runtimeConfig.maxToolRounds,
     };
   },
 };

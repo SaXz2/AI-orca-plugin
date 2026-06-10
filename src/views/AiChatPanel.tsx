@@ -1,7 +1,7 @@
 import type { PanelProps } from "../orca.d.ts";
 
 import { buildContextForSend } from "../services/notes/context-builder";
-import { contextStore, type ContextRef } from "../store/context-store";
+import { contextKey, contextStore, type ContextRef } from "../store/context-store";
 import { closeAiChatPanel, getAiChatPluginName } from "../ui/ai-chat-ui";
 import { uiStore } from "../store/ui-store";
 import { memoryStore } from "../store/memory-store";
@@ -42,6 +42,7 @@ import {
   updateAiChatSettings,
   validateCurrentConfig,
   modelSupportsTools,
+  getModelRuntimeConfig,
   type AiChatSettings,
 } from "../settings/ai-chat-settings";
 import { buildDynamicSystemPrompt, getCurrentRepoId } from "../services/ai/dynamic-prompt";
@@ -79,6 +80,8 @@ import {
   resolveToolCallName,
 } from "../services/ai/tool-call-router";
 import { executeAgenticRAG, getToolDisplayName } from "../services/ai/agentic-rag-service";
+import { createToolRoundLimit } from "../services/ai/tool-round-limit";
+import { ensureMcpServersReady } from "../services/external/mcp-server-manager";
 import { normalizeWebSearchResults, type WebSearchSource } from "../utils/source-attribution";
 import {
   panelContainerStyle,
@@ -345,6 +348,7 @@ function EditableTitle({ title, onSave }: EditableTitleProps) {
 export default function AiChatPanel({ panelId }: PanelProps) {
   const orcaSnap = useSnapshot(orca.state);
   const uiSnap = useSnapshot(uiStore);
+  const contextSnap = useSnapshot(contextStore);
   const [sending, setSending] = useState(false);
   const [streamingMessageId, setStreamingMessageId] = useState<string | null>(null);
 
@@ -805,7 +809,7 @@ export default function AiChatPanel({ panelId }: PanelProps) {
       const sessionToCache: SavedSession = {
         ...currentSession,
         messages,
-        contexts: [...contextStore.selected],
+        contexts: [...contextSnap.selected],
         scrollPosition: listRef.current?.scrollTop ?? currentSession.scrollPosition,
         flashcardState,
       };
@@ -819,15 +823,15 @@ export default function AiChatPanel({ panelId }: PanelProps) {
         clearTimeout(autoCacheTimeoutRef.current);
       }
     };
-  }, [messages, currentSession, sessionsLoaded, flashcardMode, pendingFlashcards, flashcardIndex, flashcardKeptCount, flashcardSkippedCount]);
+  }, [messages, currentSession, sessionsLoaded, flashcardMode, pendingFlashcards, flashcardIndex, flashcardKeptCount, flashcardSkippedCount, contextSnap.selected]);
 
   // Sync state to session store for auto-save on close
   useEffect(() => {
     const hasRealMessages = messages.some((m) => !m.localOnly);
     if (hasRealMessages) {
-      updateSessionStore(currentSession, messages, [...contextStore.selected]);
+      updateSessionStore(currentSession, messages, [...contextSnap.selected]);
     }
-  }, [messages, currentSession]);
+  }, [messages, currentSession, contextSnap.selected]);
 
   useEffect(() => {
     // 注入样式，但不返回清理函数，避免面板关闭时影响样式
@@ -1002,12 +1006,16 @@ export default function AiChatPanel({ panelId }: PanelProps) {
 
 	    const pluginName = getAiChatPluginName();
 	    const settings = getAiChatSettings(pluginName);
+	    const model = (currentSession.model || "").trim() || settings.selectedModelId;
+	    const runtimeConfig = getModelRuntimeConfig(settings, model);
+	    try {
+	      await ensureMcpServersReady();
+	    } catch (err) {
+	      console.warn("[handleSend] MCP readiness check failed:", err);
+	    }
 	    // 0 表示不设置固定工具轮数上限，依靠重复/错误/取消等状态退出（Codex 式 agent loop）。
-	    const toolRoundLimit = Number.isFinite(settings.maxToolRounds)
-	      ? Math.max(0, Math.floor(settings.maxToolRounds))
-	      : 0;
-	    const hasToolRoundLimit = toolRoundLimit > 0;
-	    const canRunToolRound = (completedRounds: number) => !hasToolRoundLimit || completedRounds < toolRoundLimit;
+	    const toolRoundLimit = runtimeConfig.maxToolRounds;
+	    const toolRoundController = createToolRoundLimit(toolRoundLimit);
 
 	    // 加载已启用的技能，注入系统提示词让 AI 自动识别并调用
 	    const enabledSkills: Array<{ name: string; description: string; instruction: string }> = [];
@@ -1120,8 +1128,21 @@ export default function AiChatPanel({ panelId }: PanelProps) {
 	    }
 	    
 	    // /timeline - 时间线格式
-	    if (content.includes("/timeline")) {
-	      processedContent = processedContent.replace(/\/timeline/g, "").trim();
+	    const wantsTimelineFormat = /\/timeline|用\s*timeline\s*格式展示|timeline\s*格式|时间线格式/.test(content);
+	    if (wantsTimelineFormat) {
+	      const timelineRequest = processedContent
+	        .replace(/\/timeline|用\s*timeline\s*格式展示|timeline\s*格式|时间线格式/g, "")
+	        .trim();
+	      if (timelineRequest) {
+	        processedContent = timelineRequest;
+	      } else {
+	        const priorAssistantMessage = [...(historyOverride || messages)]
+	          .reverse()
+	          .find((message) => message.role === "assistant" && !message.localOnly && message.content.trim());
+	        processedContent = priorAssistantMessage
+	          ? `请把下面这段内容重新整理为 timeline 格式，不要重新问候，不要询问我要展示什么。\n\n${sanitizeContent(priorAssistantMessage.content)}`
+	          : "请用 timeline 格式展示最近一次可用的对话内容；如果没有可用内容，简短询问需要展示的日期或主题。";
+	      }
 	      systemPrompt += `\n\n【格式要求 - 时间线】用户要求使用时间线格式展示结果。
 格式：
 \`\`\`timeline
@@ -1134,7 +1155,11 @@ export default function AiChatPanel({ panelId }: PanelProps) {
 4. 描述要详细，包含关键内容摘要
 5. 类型用中文，可选值：工作、娱乐、学习、生活、健康、旅行、财务、社交
 6. 根据内容智能判断类型，如日记默认生活，任务默认工作
-7. 按时间顺序排列`;
+7. 按时间顺序排列
+8. 最终回答必须包含一个 fenced code block，语言名必须是 timeline，不要用普通 Markdown 列表替代：
+\`\`\`timeline
+日期时间 | 标题 | 描述 | 类型
+\`\`\``;
 	    }
 	    
 	    // /brief - 简洁回答
@@ -1437,8 +1462,8 @@ graph TD
               model,
               protocol: apiConfig.protocol,
               anthropicApiPath: apiConfig.anthropicApiPath,
-              temperature: settings.temperature,
-              maxTokens: settings.maxTokens,
+              temperature: runtimeConfig.temperature,
+              maxTokens: runtimeConfig.maxTokens,
               signal: aborter.signal,
               tools: [FLASHCARD_TOOL],
             },
@@ -1528,7 +1553,6 @@ graph TD
 	    const currentChatMode = getMode();
 	    const includeTools = currentChatMode !== 'ask';
 
-	    const model = (currentSession.model || "").trim() || settings.selectedModelId;
 	    const validationError = validateCurrentConfig(settings);
 	    if (validationError) {
 	      orca.notify("warn", validationError);
@@ -1538,12 +1562,26 @@ graph TD
     setSending(true);
 
     // 获取高优先级上下文（拖入的块）用于显示
-    const highPriorityContexts = contextStore.selected
-      .filter(c => (c.priority ?? 0) > 0)
-      .map(c => ({
-        title: c.kind === 'page' ? c.title : `#${c.tag}`,
+    const highPrioritySourceContexts = contextStore.selected.filter(c => (c.priority ?? 0) > 0);
+    const contextPreviewMap = new Map<string, string>();
+    await Promise.all(highPrioritySourceContexts.map(async (ctx) => {
+      const key = contextKey(ctx);
+      try {
+        const result = await buildContextForSend([ctx], {
+          maxChars: Math.min(settings.maxContextChars || 60_000, 8_000),
+          maxBlocks: 120,
+        });
+        contextPreviewMap.set(key, result.text);
+      } catch (err: any) {
+        contextPreviewMap.set(key, `Context preview failed: ${String(err?.message ?? err ?? "unknown error")}`);
+      }
+    }));
+
+    const highPriorityContexts = highPrioritySourceContexts.map(c => ({
+        title: c.kind === 'tag' ? `#${c.tag}` : c.title,
         kind: c.kind,
-        blockId: c.kind === 'page' ? c.rootBlockId : undefined,
+        blockId: c.kind === 'page' ? c.rootBlockId : c.kind === 'block' ? c.blockId : undefined,
+        preview: contextPreviewMap.get(contextKey(c)),
       }));
 
     // 先添加用户消息到列表
@@ -1629,8 +1667,6 @@ graph TD
           modelKeys: selectedModels,
           messages: apiMessages,
           fallbackMessages: apiMessagesFallback,
-          temperature: settings.temperature,
-          maxTokens: settings.maxTokens,
           signal: aborter.signal,
         })) {
           setMultiModelResponses(prev => updateModelResponse(prev, update));
@@ -1725,7 +1761,8 @@ graph TD
           || /^Tool not found[:：]/i.test(content)
           || content.includes("Invalid JSON in tool arguments")
           || content.includes("Tool execution timed out")
-          || content.includes("Repeated tool call skipped");
+          || content.includes("Repeated tool call skipped")
+          || content.includes("用户拒绝执行");
       };
 
       const buildToolContractSystemPrompt = (
@@ -1738,12 +1775,24 @@ graph TD
           .filter(Boolean)
           .sort();
         const listed = names.join("\n");
+        const mcpNames = names.filter((name) => name.startsWith("mcp__"));
+        const orcaNoteNames = mcpNames.filter((name) => name.startsWith("mcp__orca-note__"));
+        const mcpGuidance = mcpNames.length
+          ? `
+
+## MCP Tool Routing
+- MCP tools in the allowlist are available external tools. Do not claim MCP tools are unavailable when an allowlisted mcp__ name matches the task.
+- For Orca Note notes, journals, pages, blocks, tags, timeline extraction, or local repository content, prefer the matching mcp__orca-note__* tool over skill_* tools.
+- Copy the complete MCP tool name exactly, including server prefix and any suffix. Do not add "s", change singular/plural, translate, abbreviate, or infer a missing tool name.
+- If no allowlisted tool matches the requested action, answer directly instead of inventing a function name.
+${orcaNoteNames.length ? `\nAvailable Orca Note MCP tools:\n${orcaNoteNames.join("\n")}` : ""}`
+          : "";
         return `${basePrompt}
 
 ## Tool Name Contract
 When calling a tool, the function name must be copied exactly from this allowlist. Do not invent, translate, pluralize, abbreviate, or change punctuation in tool names. MCP tools are especially strict: one character difference means a different tool.
 
-${listed}`;
+${listed}${mcpGuidance}`;
       };
 
       const buildToolRecoverySystemPrompt = (basePrompt: string, reason: string) => `${basePrompt}
@@ -1904,7 +1953,7 @@ Do not call any more tools in this response. Do not output DSML, XML, <invoke>, 
           
           // 执行 Agentic RAG
           const ragResult = await executeAgenticRAG(processedContent, callLLM, {
-            maxIterations: ragConfig.maxIterations,
+            maxIterations: ragConfig.maxIterations || runtimeConfig.maxToolRounds,
             enableReflection: ragConfig.enableReflection,
             onProgress,
           });
@@ -1976,8 +2025,8 @@ Do not call any more tools in this response. Do not output DSML, XML, <invoke>, 
           model,
           protocol: apiConfig.protocol,
           anthropicApiPath: apiConfig.anthropicApiPath,
-          temperature: settings.temperature,
-          maxTokens: settings.maxTokens,
+          temperature: runtimeConfig.temperature,
+          maxTokens: runtimeConfig.maxTokens,
           signal: aborter.signal,
           tools: toolsToUse,
           timeoutMs: settings.streamTimeout,
@@ -2044,7 +2093,7 @@ Do not call any more tools in this response. Do not output DSML, XML, <invoke>, 
             currentContent = sanitizeContent(currentContent + chunk.content);
             updateMessage(reasoningMessageId, { content: currentContent });
           }
-        } else if (chunk.type === "tool_calls") {
+        } else if (chunk.type === "tool_calls" && includeTools) {
           toolCalls = chunk.toolCalls;
         } else if (chunk.type === "done" && chunk.result) {
           // 使用 DSML 清洗后的最终内容，确保 invoke 标签不进入历史
@@ -2054,7 +2103,7 @@ Do not call any more tools in this response. Do not output DSML, XML, <invoke>, 
               updateMessage(reasoningMessageId, { content: currentContent });
             }
           }
-          if (chunk.result.toolCalls?.length) {
+          if (includeTools && chunk.result.toolCalls?.length) {
             toolCalls = chunk.result.toolCalls;
           }
         }
@@ -2074,6 +2123,16 @@ Do not call any more tools in this response. Do not output DSML, XML, <invoke>, 
           id: assistantId, 
           role: "assistant", 
           content: "(empty response)", 
+          createdAt: assistantCreatedAt,
+          model,
+          searchResults: getSearchResultsForMessage(),
+        }]);
+      } else if (!hasAssistantMessage && currentContent) {
+        // 有些兼容网关只在 done 阶段返回最终正文，此时也需要补建消息气泡。
+        setMessages((prev) => [...prev, {
+          id: assistantId,
+          role: "assistant",
+          content: sanitizeContent(currentContent),
           createdAt: assistantCreatedAt,
           model,
           searchResults: getSearchResultsForMessage(),
@@ -2107,7 +2166,7 @@ Do not call any more tools in this response. Do not output DSML, XML, <invoke>, 
 		      const allToolResultMessages: Message[] = [];
           const executedToolSignatures = new Set<string>();
 
-      while (currentToolCalls.length > 0 && canRunToolRound(toolRound)) {
+      while (currentToolCalls.length > 0 && toolRoundController.canRun(toolRound)) {
         toolRound++;
 
         updateMessage(currentAssistantId, { tool_calls: currentToolCalls });
@@ -2124,9 +2183,6 @@ Do not call any more tools in this response. Do not output DSML, XML, <invoke>, 
           break;
         }
         
-        if (newToolCalls.length < currentToolCalls.length) {
-        }
-
         const preToolResultMessages: Message[] = [];
         const routedToolCallsForConversation: ToolCallInfo[] = [];
         const executableToolCalls: ToolCallInfo[] = [];
@@ -2354,9 +2410,9 @@ Do not call any more tools in this response. Do not output DSML, XML, <invoke>, 
           }
 
           // 强制截断过长的工具结果，防止原始数据污染对话
-          const maxChars = Math.max(settings.maxToolResultChars || 8000, 500);
+          const maxChars = Math.max(settings.maxToolResultChars, 0);
           let finalContent = result || "Error: Tool execution returned empty result";
-          if (finalContent.length > maxChars) {
+          if (maxChars > 0 && finalContent.length > maxChars) {
             finalContent = finalContent.slice(0, maxChars) +
               `\n\n...[已截断，原长度 ${finalContent.length} 字符]`;
           }
@@ -2432,11 +2488,11 @@ Do not call any more tools in this response. Do not output DSML, XML, <invoke>, 
         allToolResultMessages.push(...toolResultMessages);
         conversation.push(...toolResultMessages);
         const hasToolError = toolResultMessages.some(isToolErrorResult);
-        const reachedToolRoundLimit = !canRunToolRound(toolRound);
+        const reachedToolRoundLimit = toolRoundController.isReached(toolRound);
         const recoveryReason = hasToolError
           ? "A tool call failed, used an unknown tool, had malformed arguments, or repeated a previous call."
           : reachedToolRoundLimit
-          ? `The configured tool round limit (${toolRoundLimit}) has been reached.`
+          ? `The configured tool round limit (${toolRoundController.limit}) has been reached.`
           : "";
         const enableTools = !hasToolError && !reachedToolRoundLimit;
 
@@ -2474,8 +2530,8 @@ Do not call any more tools in this response. Do not output DSML, XML, <invoke>, 
               apiKey: toolApiConfig.apiKey,
               model,
               protocol: toolApiConfig.protocol,
-              temperature: settings.temperature,
-              maxTokens: settings.maxTokens,
+              temperature: runtimeConfig.temperature,
+              maxTokens: runtimeConfig.maxTokens,
               signal: aborter.signal,
               tools: enableTools ? toolsToUse : undefined,
               timeoutMs: settings.streamTimeout,
@@ -2622,7 +2678,7 @@ Do not call any more tools in this response. Do not output DSML, XML, <invoke>, 
         });
 
         // Check if model wants to call more tools
-        if (nextToolCalls.length > 0 && canRunToolRound(toolRound)) {
+        if (nextToolCalls.length > 0 && toolRoundController.canRun(toolRound)) {
           currentToolCalls = nextToolCalls;
           currentAssistantId = nextAssistantId;
           // Continue loop
@@ -3596,7 +3652,7 @@ Do not call any more tools in this response. Do not output DSML, XML, <invoke>, 
       onSend: (text: string, files?: FileRef[], clearContext?: boolean) => {
         // clearContext=true 时，传递空历史给 handleSend，但不清空显示的消息
         // 这样 AI 会把这条消息当作新对话的开始，但用户仍能看到之前的消息
-        handleSend(text, files, clearContext ? [] : undefined);
+        return handleSend(text, files, clearContext ? [] : undefined);
       },
       onStop: stop,
       disabled: sending, // 生成时显示停止按钮

@@ -303,7 +303,7 @@ export function createSyntheticToolErrorMessage(
   createdAt: number;
 } {
   return {
-    id: `tool_error_${createdAt}_${Math.random().toString(36).slice(2, 8)}`,
+    id: `tool_error_${toolCall.id || "unknown"}_${createdAt}`,
     role: "tool",
     content,
     tool_call_id: toolCall.id,

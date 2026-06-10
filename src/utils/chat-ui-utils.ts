@@ -351,9 +351,13 @@ export function addRecentCommandPure(
   command: string,
   maxItems: number = MAX_RECENT_COMMANDS
 ): string[] {
-  const filtered = existingCommands.filter((cmd) => cmd !== command);
-  filtered.unshift(command);
-  return filtered.slice(0, Math.max(0, maxItems));
+  const seen = new Set<string>([command]);
+  const deduped = existingCommands.filter((cmd) => {
+    if (seen.has(cmd)) return false;
+    seen.add(cmd);
+    return true;
+  });
+  return [command, ...deduped].slice(0, Math.max(0, maxItems));
 }
 
 /**
@@ -378,7 +382,7 @@ export function clearRecentCommands(): void {
 export interface EnhancedContextChip {
   id: string;
   title: string;
-  kind: "page" | "tag";
+  kind: "page" | "block" | "tag";
   tokenCount: number;
   preview?: string;
 }
